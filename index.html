@@ -1582,9 +1582,10 @@
   });
   window.addEventListener("blur", stopSizeHold);
 
+  // マウス＋ペンタブ（Pointer Events）。タッチは専用ハンドラで処理するので除外。
   let dragging = false, lastX = 0, lastY = 0;
-  els.viewport.addEventListener("mousedown", e => {
-    if (activeIndex < 0) return;
+  els.viewport.addEventListener("pointerdown", e => {
+    if (activeIndex < 0 || e.pointerType === "touch") return;
     if (e.button === 1) { // 中ボタンドラッグでパン（Figma風のつかみ移動）
       e.preventDefault();
       dragging = true; lastX = e.clientX; lastY = e.clientY;
@@ -1606,7 +1607,8 @@
     }
   });
   els.viewport.addEventListener("auxclick", e => { if (e.button === 1) e.preventDefault(); });
-  window.addEventListener("mousemove", e => {
+  window.addEventListener("pointermove", e => {
+    if (e.pointerType === "touch") return;
     lastMouseX = e.clientX; lastMouseY = e.clientY;
     if (dragging) {
       panX += e.clientX - lastX; panY += e.clientY - lastY;
@@ -1616,16 +1618,19 @@
     }
     positionBrush(e.clientX, e.clientY);
   });
-  window.addEventListener("mouseup", () => {
+  window.addEventListener("pointerup", e => {
+    if (e.pointerType === "touch") return;
     if (painting && strokeChanged && strokeSnapshot) pushUndo(strokeSnapshot);
     strokeSnapshot = null; strokeChanged = false;
     dragging = false; painting = false; els.viewport.classList.remove("panning");
   });
-  els.viewport.addEventListener("mouseleave", () => { els.brush.style.display = "none"; });
+  els.viewport.addEventListener("pointerleave", e => { if (e.pointerType !== "touch") els.brush.style.display = "none"; });
 
   // ===== タッチ操作（スマホ / タブレット）=====
   // 1本指: ツールに応じて描画/選択/移動、2本指: ピンチズーム＋パン
   let tPainting = false, tPanning = false, tLastX = 0, tLastY = 0, gesture = null;
+  // 複数指タップ判定（2本=戻る / 3本=進む）
+  let seqActive = false, seqStart = 0, seqMaxFingers = 0, seqMoved = false;
   const tdist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
   const tPt = t => ({ clientX: t.clientX, clientY: t.clientY });
   function endTouchStroke() {
@@ -1636,6 +1641,9 @@
     if (activeIndex < 0) return;
     e.preventDefault();
     const ts = e.touches;
+    // タップ列の追跡（同時に触れた最大本数を記録）
+    if (!seqActive) { seqActive = true; seqStart = performance.now(); seqMaxFingers = ts.length; seqMoved = false; }
+    else seqMaxFingers = Math.max(seqMaxFingers, ts.length);
     if (ts.length >= 2) { // ピンチ開始
       endTouchStroke(); tPainting = false; tPanning = false;
       const a = ts[0], b = ts[1];
@@ -1658,6 +1666,7 @@
     if (gesture && ts.length >= 2) {
       const a = ts[0], b = ts[1];
       const nd = tdist(a, b), nmx = (a.clientX+b.clientX)/2, nmy = (a.clientY+b.clientY)/2;
+      if (Math.abs(nd - gesture.dist) > 12 || Math.hypot(nmx - gesture.midX, nmy - gesture.midY) > 12) seqMoved = true;
       const rect = els.viewport.getBoundingClientRect();
       const mx = gesture.midX - rect.left, my = gesture.midY - rect.top;
       const nv = Math.max(0.02, Math.min(40, gesture.view * (nd / gesture.dist)));
@@ -1667,14 +1676,22 @@
       return;
     }
     const t = ts[0];
-    if (tPanning) { panX += t.clientX - tLastX; panY += t.clientY - tLastY; tLastX = t.clientX; tLastY = t.clientY; updateTransform(); }
-    else if (tPainting) { handlePaint(tPt(t)); positionBrush(t.clientX, t.clientY); }
+    if (tPanning) { seqMoved = true; panX += t.clientX - tLastX; panY += t.clientY - tLastY; tLastX = t.clientX; tLastY = t.clientY; updateTransform(); }
+    else if (tPainting) { seqMoved = true; handlePaint(tPt(t)); positionBrush(t.clientX, t.clientY); }
   }, { passive: false });
   els.viewport.addEventListener("touchend", e => {
-    if (e.touches.length === 0) { endTouchStroke(); tPainting = false; tPanning = false; gesture = null; els.brush.style.display = "none"; }
-    else { gesture = null; tPainting = false; tPanning = false; } // 指が減ったら操作をいったん終了
+    if (e.touches.length === 0) {
+      endTouchStroke();
+      // 素早い複数指タップ：2本=戻る / 3本=進む
+      if (seqActive && !seqMoved && (performance.now() - seqStart) < 300) {
+        if (seqMaxFingers === 2) undo();
+        else if (seqMaxFingers >= 3) redo();
+      }
+      seqActive = false;
+      tPainting = false; tPanning = false; gesture = null; els.brush.style.display = "none";
+    } else { gesture = null; tPainting = false; tPanning = false; } // 指が減ったら操作をいったん終了
   }, { passive: false });
-  els.viewport.addEventListener("touchcancel", () => { endTouchStroke(); tPainting = false; tPanning = false; gesture = null; els.brush.style.display = "none"; });
+  els.viewport.addEventListener("touchcancel", () => { endTouchStroke(); seqActive = false; tPainting = false; tPanning = false; gesture = null; els.brush.style.display = "none"; });
 
   els.zoomIn.addEventListener("click", () => { const r=els.viewport.getBoundingClientRect(); zoomAt(r.width/2,r.height/2,1.25); });
   els.zoomOut.addEventListener("click", () => { const r=els.viewport.getBoundingClientRect(); zoomAt(r.width/2,r.height/2,1/1.25); });
