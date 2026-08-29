@@ -51,7 +51,8 @@
   .tbsep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
   .selmode-bar { display: none; align-items: center; gap: 4px; }
   .selmode-bar.show { display: flex; }
-  .tbtn.selmode { padding: 5px 9px; min-width: 34px; }
+  .tbtn.selmod { padding: 5px 9px; }
+  .tbtn.selmod.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
   .viewport.paint { cursor: crosshair; }
   .viewport.brush { cursor: none; }
   .brush-cursor {
@@ -236,10 +237,9 @@
       <button class="tbtn tool" data-tool="lasso" id="toolLasso">🎀 なげなわ</button>
       <span class="selmode-bar" id="selModeBar">
         <span class="tbsep"></span>
-        <button class="tbtn selmode active" data-mode="replace" title="新規選択">新規</button>
-        <button class="tbtn selmode" data-mode="add" title="追加（Shift）">＋</button>
-        <button class="tbtn selmode" data-mode="sub" title="除外（Alt）">－</button>
-        <button class="tbtn selmode" data-mode="intersect" title="交差（Shift+Alt）">∩</button>
+        <button class="tbtn selmod" data-mod="shift" title="追加（Shiftと同じ）">⇧ 追加</button>
+        <button class="tbtn selmod" data-mod="alt" title="除外（Altと同じ）">⌥ 除外</button>
+        <span class="hint" style="max-width:120px">両方ONで交差</span>
       </span>
       <button class="tbtn tool" data-tool="pen" id="toolPen">✏️ ペン</button>
       <button class="tbtn tool" data-tool="eraser" id="toolEraser">🧽 消しゴム</button>
@@ -532,7 +532,7 @@
   let lastMouseX = 0, lastMouseY = 0;
   let selection = null;         // Set<index> 選択範囲（現在のグリッド寸法に紐づく）
   let dragSel = null;           // 選択ドラッグ中の形状 {type:'rect'|'lasso', ...}
-  let selModeUI = "replace";    // 画面上の選択モード（スマホ用）: replace|add|sub|intersect
+  let touchMods = { shift: false, alt: false }; // 画面上の修飾キー（スマホ用・押しっぱなし相当）
   // 元に戻す / やり直し（編集レイヤー＋選択範囲のスナップショット）
   let undoStack = [], redoStack = [];
   let strokeSnapshot = null, strokeChanged = false;
@@ -1157,14 +1157,17 @@
     }
     return sel;
   }
-  // 合成モード（Photoshop準拠）：Shift=追加 / Alt=除外 / Shift+Alt=交差、修飾なしは画面モード(selModeUI)
+  // 合成モード（Photoshop準拠）：Shift=追加 / Alt=除外 / Shift+Alt=交差 / なし=新規
+  // 物理キー(e)と画面トグル(touchMods)のどちらでも効く
   function effectiveMode(shift, alt) {
     if (shift && alt) return "intersect";
     if (shift) return "add";
     if (alt) return "sub";
-    return selModeUI;
+    return "replace";
   }
-  function resolveMode(e) { return effectiveMode(!!(e && e.shiftKey), !!(e && e.altKey)); }
+  const modShift = e => !!((e && e.shiftKey) || touchMods.shift);
+  const modAlt = e => !!((e && e.altKey) || touchMods.alt);
+  function resolveMode(e) { return effectiveMode(modShift(e), modAlt(e)); }
   function commitSelection(region, mode) {
     if (editLayer) pushUndo(snapshot()); // 選択の変更もUndo対象
     let base = selection ? new Set(selection) : new Set();
@@ -1583,7 +1586,7 @@
   // 選択カーソルの ＋/−/∩ バッジ
   let curMods = { shift: false, alt: false };
   function selSymbol() {
-    const m = effectiveMode(curMods.shift, curMods.alt);
+    const m = effectiveMode(curMods.shift || touchMods.shift, curMods.alt || touchMods.alt);
     return m === "add" ? "＋" : m === "sub" ? "－" : m === "intersect" ? "∩" : "";
   }
   function positionSelBadge(cx, cy) {
@@ -1672,10 +1675,11 @@
     updateGauge();
   }
   document.querySelectorAll(".tbtn.tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
-  // 選択モード（新規/追加/除外/交差）ボタン（スマホ用・PCの修飾キーが優先）
-  document.querySelectorAll(".tbtn.selmode").forEach(b => b.addEventListener("click", () => {
-    selModeUI = b.dataset.mode;
-    document.querySelectorAll(".tbtn.selmode").forEach(x => x.classList.toggle("active", x === b));
+  // 画面上の修飾キー（Shift=追加 / Alt=除外）トグル。スマホ用だがPCでも併用可
+  document.querySelectorAll(".tbtn.selmod").forEach(b => b.addEventListener("click", () => {
+    const m = b.dataset.mod; // "shift" | "alt"
+    touchMods[m] = !touchMods[m];
+    b.classList.toggle("active", touchMods[m]);
     positionSelBadge(lastMouseX, lastMouseY);
   }));
   els.penSize.addEventListener("input", () => applyPenSize(+els.penSize.value));
@@ -1857,9 +1861,9 @@
     gesture = null;
     const t = ts[0];
     if (tool === "move") { tPanning = true; tLastX = t.clientX; tLastY = t.clientY; }
-    else if (tool === "wand") { const d = dotFromEvent(tPt(t)); if (d) commitSelection(floodRegion(d.gx, d.gy), selModeUI); else if (selModeUI === "replace") clearSelection(); }
+    else if (tool === "wand") { const d = dotFromEvent(tPt(t)); const m = resolveMode(null); if (d) commitSelection(floodRegion(d.gx, d.gy), m); else if (m === "replace") clearSelection(); }
     else if (tool === "rect" || tool === "lasso") {
-      selDragging = true; selMode = selModeUI;
+      selDragging = true; selMode = resolveMode(null);
       const p = dotPosF(tPt(t));
       dragSel = tool === "rect" ? { type: "rect", s: p, c: p } : { type: "lasso", pts: [p] };
       startAnts(); drawSelection();
