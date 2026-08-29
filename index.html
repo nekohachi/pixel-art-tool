@@ -213,6 +213,7 @@
       <input type="range" id="penSize" min="1" max="16" value="1" style="width:80px" title="ペンの大きさ（ドット）">
       <button class="tbtn" id="clearEdits">編集クリア</button>
       <span class="tbsep"></span>
+      <button class="tbtn" id="pasteBtn">📥 貼り付け</button>
       <button class="tbtn" id="copyImgBtn">📋 PNGをコピー</button>
       <span class="sp"></span>
       <span class="hint">ホイール=スクロール / Alt+ホイール=ズーム / 中ドラッグ=移動</span>
@@ -227,9 +228,9 @@
       </div>
       <div class="brush-cursor" id="brushCursor"></div>
       <div class="dropzone" id="dropzone">
-        <div class="big">画像をここにドラッグ＆ドロップ（複数可）</div>
-        <div>または <span class="link" id="browseLink">ファイルを選択</span></div>
-        <div class="desc">PNG / JPG / WebP / GIF など</div>
+        <div class="big">画像をドラッグ＆ドロップ（複数可）</div>
+        <div><span class="link" id="browseLink">ファイルを選択</span> / <span class="link" id="pasteLink">クリップボードから貼り付け</span></div>
+        <div class="desc">PNG / JPG / WebP / GIF など。スマホはコピー後「貼り付け」をタップ</div>
       </div>
     </div>
 
@@ -438,7 +439,7 @@
     thumbs: $("thumbs"),
     zoomIn: $("zoomIn"), zoomOut: $("zoomOut"), zoomLabel: $("zoomLabel"),
     fitBtn: $("fitBtn"), oneToOne: $("oneToOne"), grid: $("grid"), orig: $("orig"),
-    copyImg: $("copyImgBtn"),
+    copyImg: $("copyImgBtn"), pasteBtn: $("pasteBtn"), pasteLink: $("pasteLink"),
     penColor: $("penColor"), penSize: $("penSize"), penSizeVal: $("penSizeVal"), clearEdits: $("clearEdits"),
     brush: $("brushCursor"),
     palSource: $("palSource"), loadPalBtn: $("loadPalBtn"), palFile: $("palFile"),
@@ -1246,6 +1247,22 @@
       alert("クリップボードへのコピーに失敗しました。\nブラウザがhttps/localhostでない、または許可されていない可能性があります。\n（" + err.message + "）");
     }
   }
+  // クリップボードから画像を貼り付け（スマホ対応：タップで clipboard.read）
+  async function pasteFromClipboard() {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.read) throw new Error("このブラウザは貼り付け未対応です");
+      const items = await navigator.clipboard.read();
+      const files = [];
+      for (const it of items) {
+        const type = it.types.find(t => t.startsWith("image/"));
+        if (type) { const blob = await it.getType(type); files.push(new File([blob], "pasted.png", { type })); }
+      }
+      if (files.length) addFiles(files);
+      else alert("クリップボードに画像が見つかりませんでした。");
+    } catch (err) {
+      alert("貼り付けできませんでした。\nhttps環境で、クリップボードへのアクセスを許可する必要があります。\n（" + err.message + "）");
+    }
+  }
   async function saveAll() {
     const tmp = document.createElement("canvas");
     for (let i = 0; i < images.length; i++) {
@@ -1391,6 +1408,8 @@
   els.save.addEventListener("click", save);
   els.saveAll.addEventListener("click", saveAll);
   els.copyImg.addEventListener("click", copyImage);
+  els.pasteBtn.addEventListener("click", pasteFromClipboard);
+  els.pasteLink.addEventListener("click", pasteFromClipboard);
   window.addEventListener("keydown", e => {
     if ((e.ctrlKey || e.metaKey) && e.key === "c" && activeIndex >= 0 &&
         !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) {
