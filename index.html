@@ -1106,39 +1106,57 @@
       if (y < gridH - 1) stack.push(idx + gridW);
     }
     selection = sel;
+    startAnts();
     drawSelection();
   }
-  function clearSelection() { selection = null; drawSelection(); }
+  function clearSelection() { selection = null; stopAnts(); drawSelection(); }
   function deleteSelection() {
     if (!selection || !selection.size || !editLayer) return;
     pushUndo(new Map(editLayer.px));
     for (const idx of selection) editLayer.px.set(idx, [0, 0, 0, 0]); // 透明化
     recompositeOutput();
   }
+  // マーチングアンツ（Photoshop風の動く白黒点線）
+  let antRAF = null, antOffset = 0;
+  function animateAnts() {
+    antOffset = (antOffset + 0.35) % 8; // 2*D=8 周期
+    drawSelection();
+    antRAF = (selection && selection.size) ? requestAnimationFrame(animateAnts) : null;
+  }
+  function startAnts() { if (!antRAF) antRAF = requestAnimationFrame(animateAnts); }
+  function stopAnts() { if (antRAF) { cancelAnimationFrame(antRAF); antRAF = null; } }
+
   function drawSelection() {
     selCtx.clearRect(0, 0, els.selCanvas.width, els.selCanvas.height);
     if (!selection || !selection.size || !lastRender) return;
     const { gridW, scalePx } = lastRender;
     const sp = scalePx;
-    selCtx.fillStyle = "rgba(91,140,255,.22)";
+    // 薄い塗り
+    selCtx.fillStyle = "rgba(91,140,255,.16)";
     for (const idx of selection) {
       const x = (idx % gridW) * sp, y = ((idx / gridW) | 0) * sp;
       selCtx.fillRect(x, y, sp, sp);
     }
-    // 境界（選択外と接する辺）を白＋点線で描く
-    selCtx.lineWidth = Math.max(1, 1.5 / view);
-    selCtx.strokeStyle = "#fff";
-    selCtx.setLineDash([Math.max(3, 4 / view), Math.max(2, 3 / view)]);
-    selCtx.beginPath();
+    // 境界パス（選択外と接する辺）
     const has = i => selection.has(i);
+    const P = new Path2D();
     for (const idx of selection) {
       const gx = idx % gridW, gy = (idx / gridW) | 0, x = gx * sp, y = gy * sp;
-      if (!has(idx - 1) || gx === 0) { selCtx.moveTo(x, y); selCtx.lineTo(x, y + sp); }
-      if (!has(idx + 1) || gx === gridW - 1) { selCtx.moveTo(x + sp, y); selCtx.lineTo(x + sp, y + sp); }
-      if (!has(idx - gridW) || gy === 0) { selCtx.moveTo(x, y); selCtx.lineTo(x + sp, y); }
-      if (!has(idx + gridW)) { selCtx.moveTo(x, y + sp); selCtx.lineTo(x + sp, y + sp); }
+      if (!has(idx - 1) || gx === 0) { P.moveTo(x, y); P.lineTo(x, y + sp); }
+      if (!has(idx + 1) || gx === gridW - 1) { P.moveTo(x + sp, y); P.lineTo(x + sp, y + sp); }
+      if (!has(idx - gridW) || gy === 0) { P.moveTo(x, y); P.lineTo(x + sp, y); }
+      if (!has(idx + gridW)) { P.moveTo(x, y + sp); P.lineTo(x + sp, y + sp); }
     }
-    selCtx.stroke();
+    // 白黒2本の破線をオフセットをずらして重ね、流れるアリの行進に
+    const D = Math.max(2, 4 / view), off = antOffset / view;
+    selCtx.lineWidth = Math.max(1, 1.2 / view);
+    selCtx.setLineDash([D, D]);
+    selCtx.lineDashOffset = -off;
+    selCtx.strokeStyle = "rgba(0,0,0,.9)";
+    selCtx.stroke(P);
+    selCtx.lineDashOffset = -off + D;
+    selCtx.strokeStyle = "#fff";
+    selCtx.stroke(P);
     selCtx.setLineDash([]);
   }
 
