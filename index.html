@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ドット絵化ツール</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%A8%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#1b1d23">
+<style>
+  :root {
+    --bg: #1b1d23;
+    --panel: #24272f;
+    --panel2: #2c2f38;
+    --border: #3a3e49;
+    --text: #e6e8ee;
+    --muted: #9aa0ad;
+    --accent: #5b8cff;
+    --accent2: #41c98a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+    font-size: 14px;
+  }
+  body { display: flex; flex-direction: column; overflow: hidden; overscroll-behavior: none; }
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex: none;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .hint { color: var(--muted); font-size: 12px; }
+  .main { flex: 1; display: flex; min-height: 0; }
+
+  .canvas-area { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .toolbar {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
+    font-size: 12px; flex-wrap: wrap;
+  }
+  .toolbar .sp { flex: 1; }
+  .tbtn {
+    border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+    padding: 4px 9px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .tbtn:hover { border-color: var(--accent); }
+  .zoomlabel { font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; color: var(--muted); }
+  .tbtn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tbsep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+  .viewport.paint { cursor: crosshair; }
+  .viewport.brush { cursor: none; }
+  .brush-cursor {
+    position: absolute; pointer-events: none; display: none; box-sizing: border-box;
+    border: 1px solid #fff; outline: 1px solid #000; z-index: 5;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.5);
+  }
+  .valwrap { display: inline-flex; align-items: center; gap: 3px; }
+  .numin {
+    width: 52px; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px;
+    font-size: 12px; font-variant-numeric: tabular-nums; text-align: right;
+  }
+  .numin:focus { outline: none; border-color: var(--accent); }
+  .unit { font-size: 11px; color: var(--muted); }
+
+  .viewport {
+    flex: 1; position: relative; overflow: hidden; cursor: grab;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+    background-color: var(--checker-a, #1b1d23);
+    background-image:
+      linear-gradient(45deg, var(--checker-b, #21232a) 25%, transparent 25%),
+      linear-gradient(-45deg, var(--checker-b, #21232a) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, var(--checker-b, #21232a) 75%),
+      linear-gradient(-45deg, transparent 75%, var(--checker-b, #21232a) 75%);
+    background-size: var(--checker, 24px) var(--checker, 24px);
+    background-position: 0 0, 0 calc(var(--checker, 24px) / 2),
+                        calc(var(--checker, 24px) / 2) calc(var(--checker, 24px) / -2),
+                        calc(var(--checker, 24px) / -2) 0;
+  }
+  .viewport.panning { cursor: grabbing; }
+  .stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  .stage > * { position: absolute; top: 0; left: 0; image-rendering: pixelated; }
+  #outCanvas { background: transparent; box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
+  #gridCanvas { pointer-events: none; }
+  #selCanvas { pointer-events: none; }
+  #origImg { display: none; }
+
+  .dropzone {
+    position: absolute; inset: 0; margin: 30px;
+    border: 2px dashed var(--border); border-radius: 12px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: var(--muted); text-align: center; pointer-events: none; transition: .15s;
+  }
+  .viewport.dragover .dropzone { border-color: var(--accent); color: var(--accent); background: rgba(91,140,255,.08); }
+  .dropzone .big { font-size: 17px; color: var(--text); }
+  .dropzone.hidden { display: none; }
+
+  .thumbs {
+    flex: none; display: none; gap: 6px; padding: 8px; overflow-x: auto;
+    border-top: 1px solid var(--border); background: var(--panel);
+  }
+  .thumbs.show { display: flex; }
+  .thumb {
+    flex: none; width: 56px; height: 56px; border-radius: 6px; overflow: hidden;
+    border: 2px solid transparent; cursor: pointer; position: relative; background: #000;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+  .thumb.active { border-color: var(--accent); }
+  .thumb .x {
+    position: absolute; top: 1px; right: 1px; width: 16px; height: 16px; line-height: 14px;
+    text-align: center; background: rgba(0,0,0,.6); border-radius: 4px; font-size: 12px; color: #fff;
+  }
+
+  .panel {
+    width: 300px; flex: none; background: var(--panel); border-left: 1px solid var(--border);
+    padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
+  }
+  .group { display: flex; flex-direction: column; gap: 7px; }
+  .group > .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .val { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+  input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+  input[type=range]:disabled { opacity: .35; }
+  .desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .divider { height: 1px; background: var(--border); }
+  .section-title { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: .06em; }
+  .btn {
+    border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+    padding: 9px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600;
+    transition: .12s; width: 100%;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 8px; }
+  .stat { font-size: 11px; color: var(--muted); line-height: 1.6; }
+  .stat b { color: var(--text); font-weight: 600; }
+  select {
+    width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 8px; font-size: 13px;
+  }
+  select:disabled { opacity: .35; }
+  .link { color: var(--accent); cursor: pointer; text-decoration: underline; font-size: 12px; }
+  input[type=file] { display: none; }
+  .check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+  .check input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+
+  .palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+  .swatch { aspect-ratio: 1; border-radius: 4px; border: 1px solid rgba(0,0,0,.4); cursor: pointer; position: relative; transition: transform .1s; }
+  .swatch:hover { transform: scale(1.12); z-index: 1; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .swatch.locked::after { content: "🔒"; position: absolute; top: -4px; right: -4px; font-size: 9px; }
+  .swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .palette.compact { grid-template-columns: repeat(16, 1fr); gap: 2px; max-height: 160px; overflow-y: auto; }
+  .palette.compact .chip { aspect-ratio: 1; border-radius: 2px; }
+
+  /* ===== スマホ / タブレット（タッチ）向けレスポンシブ ===== */
+  @media (max-width: 820px) {
+    header { padding: 8px 12px; }
+    header h1 { font-size: 14px; }
+    header .hint { display: none; }
+    .main { flex-direction: column; }
+    .canvas-area { min-height: 44vh; }
+    .panel {
+      width: 100%; flex: none; border-left: none; border-top: 1px solid var(--border);
+      max-height: 48vh; padding: 12px;
+    }
+    .toolbar { padding: 6px 8px; gap: 6px; row-gap: 6px; }
+    .toolbar .hint { display: none; }
+    /* タッチしやすいよう各コントロールを拡大 */
+    .tbtn { padding: 8px 11px; font-size: 13px; }
+    input[type=range] { height: 26px; }
+    .numin { width: 60px; padding: 5px 6px; font-size: 14px; }
+    select, .btn { padding: 11px 12px; font-size: 14px; }
+    input[type=color] { width: 40px; height: 34px; }
+    .check { padding: 4px 0; }
+    #penSize { width: 110px !important; }
+  }
+  @media (max-width: 820px) and (orientation: landscape) {
+    .main { flex-direction: row; }
+    .panel { width: 46%; max-height: none; border-top: none; border-left: 1px solid var(--border); }
+    .canvas-area { min-height: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎨 ドット絵化ツール</h1>
+  <span class="hint">完全ローカル動作 — 画像は外部に送信されません</span>
+</header>
+
+<div class="main">
+  <div class="canvas-area">
+    <div class="toolbar">
+      <button class="tbtn" id="zoomOut">－</button>
+      <span class="zoomlabel" id="zoomLabel">100%</span>
+      <button class="tbtn" id="zoomIn">＋</button>
+      <button class="tbtn" id="fitBtn">フィット</button>
+      <button class="tbtn" id="oneToOne">100%</button>
+      <label class="check" style="margin-left:8px"><input type="checkbox" id="grid"> グリッド表示</label>
+      <label class="check"><input type="checkbox" id="orig"> 元画像と比較</label>
+      <span class="tbsep"></span>
+      <button class="tbtn tool active" data-tool="move" id="toolMove">✋ 移動</button>
+      <button class="tbtn tool" data-tool="spuit" id="toolSpuit">💧 スポイト</button>
+      <button class="tbtn tool" data-tool="wand" id="toolWand">🪄 自動選択</button>
+      <button class="tbtn tool" data-tool="pen" id="toolPen">✏️ ペン</button>
+      <button class="tbtn tool" data-tool="eraser" id="toolEraser">🧽 消しゴム</button>
+      <input type="color" id="penColor" value="#000000" title="ペンの色">
+      <span class="zoomlabel">太さ <span id="penSizeVal">1</span></span>
+      <input type="range" id="penSize" min="1" max="16" value="1" style="width:80px" title="ペンの大きさ（ドット）">
+      <button class="tbtn" id="clearEdits">編集クリア</button>
+      <span class="tbsep"></span>
+      <button class="tbtn" id="copyImgBtn">📋 PNGをコピー</button>
+      <span class="sp"></span>
+      <span class="hint">ホイール=スクロール / Alt+ホイール=ズーム / 中ドラッグ=移動</span>
+    </div>
+
+    <div class="viewport" id="viewport">
+      <div class="stage" id="stage">
+        <canvas id="outCanvas"></canvas>
+        <canvas id="selCanvas"></canvas>
+        <canvas id="gridCanvas"></canvas>
+        <img id="origImg" alt="">
+      </div>
+      <div class="brush-cursor" id="brushCursor"></div>
+      <div class="dropzone" id="dropzone">
+        <div class="big">画像をここにドラッグ＆ドロップ（複数可）</div>
+        <div>または <span class="link" id="browseLink">ファイルを選択</span></div>
+        <div class="desc">PNG / JPG / WebP / GIF など</div>
+      </div>
+    </div>
+
+    <div class="thumbs" id="thumbs"></div>
+  </div>
+
+  <aside class="panel">
+    <div class="section-title">減色 / パレット</div>
+
+    <div class="group">
+      <div class="row"><span class="label">パレット</span></div>
+      <select id="palSource">
+        <option value="auto" selected>自動（色数スライダー）</option>
+        <option value="pico8">PICO-8（16色）</option>
+        <option value="gameboy">ゲームボーイ（4色）</option>
+        <option value="nes">NES（54色）</option>
+        <option value="cga">CGA（16色）</option>
+        <option value="custom">読み込んだパレット…</option>
+      </select>
+      <button class="btn" id="loadPalBtn" style="display:none">パレットファイルを読み込む</button>
+      <div class="desc">固定パレットを選ぶと色数スライダーは無効になり、その色だけにマッピングします。.hex / .gpl / JASC .pal / 画像 を読み込めます。</div>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">減色アルゴリズム</span></div>
+      <select id="quantAlgo">
+        <option value="kmeans" selected>k-means（色がなじむ・高品質）</option>
+        <option value="median">メディアンカット（高速）</option>
+      </select>
+      <div class="desc">k-meansは代表色がきれいに分散します（自動パレット時のみ）。</div>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">色数</span><span class="val" id="colorsVal">16</span></div>
+      <input type="range" id="colors" min="2" max="128" step="1" value="16">
+      <div class="desc">パレットの最大色数（2〜128色／自動時のみ）</div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="section-title">ドット化</div>
+
+    <div class="group">
+      <div class="row"><span class="label">ドットの粗さ（1ドット=Npx）</span><span class="val" id="dotVal">4 px</span></div>
+      <input type="range" id="dotSize" min="1" max="32" step="1" value="4">
+      <div class="desc">元画像の N×N ピクセルを1ドットに集約します。大きいほど粗いドット絵に。</div>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">平滑化（ノイズ低減）</span><span class="val" id="smoothVal">0%</span></div>
+      <input type="range" id="smooth" min="0" max="100" step="1" value="0">
+      <div class="desc">ドット化の前に軽くぼかし、グラデやノイズを整理して色面をきれいにします。</div>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">代表色の決め方</span></div>
+      <select id="sampleMode">
+        <option value="average" selected>平均（なめらか）</option>
+        <option value="majority">最頻色・多数決（くっきり）</option>
+        <option value="point">点サンプル（monopro互換）</option>
+      </select>
+      <div class="desc">最頻色は各ドット内で一番多い色を採用。点サンプルは各ドットの代表1点を抜き取る方式（monoproと同じ）。どちらもディザリングは無効になります。</div>
+      <button class="btn" id="monoproBtn">monopro互換の設定にする</button>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">出力倍率</span></div>
+      <select id="outScale">
+        <option value="auto" selected>自動（上限いっぱい）</option>
+        <option value="1">×1（ドット等倍）</option>
+        <option value="2">×2</option>
+        <option value="3">×3</option>
+        <option value="4">×4</option>
+        <option value="6">×6</option>
+        <option value="8">×8</option>
+        <option value="16">×16</option>
+      </select>
+      <div class="desc">1ドットを出力画像で何ピクセルの正方形として描くか。出力サイズ上限を超える分は自動で抑えます。</div>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">ドット絵スタイル</span></div>
+      <select id="dither">
+        <option value="none" selected>ベタ塗り（くっきり）</option>
+        <option value="fs">ディザリング：誤差拡散（高品質）</option>
+        <option value="bayer">ディザリング：パターン（網点風）</option>
+      </select>
+    </div>
+    <div class="group">
+      <div class="row"><span class="label">ディザ強度</span><span class="val" id="dstrVal">100%</span></div>
+      <input type="range" id="dstr" min="0" max="100" step="1" value="100">
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">シャープネス</span><span class="val" id="sharpVal">0%</span></div>
+      <input type="range" id="sharp" min="0" max="100" step="1" value="0">
+      <div class="desc">縮小でボケた輪郭を先鋭化します。</div>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">アウトライン</span><span class="val" id="outlineVal">0%</span></div>
+      <input type="range" id="outline" min="0" max="100" step="1" value="0">
+      <div class="desc">輪郭を検出して暗い線を加え、ドット絵のメリハリを出します。</div>
+    </div>
+    <div class="group">
+      <div class="row"><span class="label">輪郭線を太く（膨張）</span></div>
+      <select id="dilate">
+        <option value="0" selected>なし</option>
+        <option value="1">弱（十字 n4）</option>
+        <option value="2">強（3×3 n8）</option>
+      </select>
+      <div class="desc">暗部を広げる最小値フィルタ（cv2.erode相当）で輪郭線を太くします。monoproの「輪郭線を膨張」と同方式。アウトライン強度とは独立で、単独でも使えます。</div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="section-title">色調整（非破壊）</div>
+
+    <div class="group">
+      <div class="row"><span class="label">明度</span><span class="val" id="briVal">100%</span></div>
+      <input type="range" id="brightness" min="0" max="300" step="1" value="100">
+    </div>
+    <div class="group">
+      <div class="row"><span class="label">彩度</span><span class="val" id="satVal">100%</span></div>
+      <input type="range" id="saturation" min="0" max="300" step="1" value="100">
+    </div>
+    <div class="group">
+      <div class="row"><span class="label">コントラスト</span><span class="val" id="conVal">100%</span></div>
+      <input type="range" id="contrast" min="0" max="300" step="1" value="100">
+    </div>
+    <div class="group">
+      <div class="row"><span class="label">色相</span><span class="val" id="hueVal">0°</span></div>
+      <input type="range" id="hue" min="-180" max="180" step="1" value="0">
+    </div>
+
+    <div class="divider"></div>
+    <div class="section-title">透過 / 表示</div>
+
+    <div class="group">
+      <label class="check"><input type="checkbox" id="keepAlpha" checked> 透過部分を透過のまま出力</label>
+      <div class="row" id="bgRow" style="display:none">
+        <span class="label">背景色（透過OFF時）</span>
+        <input type="color" id="bgColor" value="#ffffff">
+      </div>
+    </div>
+    <div class="group">
+      <div class="row"><span class="label">透過しきい値</span><span class="val" id="athVal">128</span></div>
+      <input type="range" id="alphaTh" min="1" max="255" step="1" value="128">
+      <div class="desc">この不透明度以上を不透明、未満を透明にします（フチの残り具合）。</div>
+    </div>
+    <div class="group">
+      <div class="row"><span class="label">市松模様のサイズ</span><span class="val" id="checkerVal">24 px</span></div>
+      <input type="range" id="checker" min="4" max="64" step="1" value="24">
+      <div class="row" style="margin-top:6px">
+        <span class="label">市松模様の色</span>
+        <span style="display:flex;gap:6px">
+          <input type="color" id="checkerA" value="#1b1d23" title="色1（背景）">
+          <input type="color" id="checkerB" value="#21232a" title="色2（マス）">
+        </span>
+      </div>
+      <div class="desc">プレビュー背景の市松模様（サイズ・2色）。出力には影響しません。</div>
+    </div>
+
+    <div class="group">
+      <div class="row"><span class="label">出力サイズ上限</span></div>
+      <select id="maxSize">
+        <option value="1920x1080" selected>1920 × 1080（最大）</option>
+        <option value="1280x720">1280 × 720</option>
+        <option value="960x540">960 × 540</option>
+        <option value="640x360">640 × 360</option>
+      </select>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="group" id="paletteGroup" style="display:none">
+      <div class="row">
+        <span class="label">パレット <span id="paletteCount" style="text-transform:none;color:var(--muted)"></span></span>
+        <span class="link" id="copyPalette">コピー</span>
+      </div>
+      <div class="palette" id="palette"></div>
+      <div class="desc">クリックで色を編集（出力に即反映・右クリックで解除）。※129色以上は閲覧専用表示です。</div>
+    </div>
+
+    <div class="stat" id="stat"></div>
+
+    <div class="divider"></div>
+
+    <div class="btn-row">
+      <button class="btn" id="resetBtn">調整リセット</button>
+      <button class="btn" id="loadBtn">画像を開く</button>
+    </div>
+    <button class="btn primary" id="saveBtn" disabled>このPNGを保存</button>
+    <button class="btn" id="saveAllBtn" disabled>全部まとめて保存</button>
+
+    <input type="file" id="fileInput" accept="image/*" multiple>
+    <input type="file" id="palFile" accept=".hex,.gpl,.pal,.txt,image/*">
+  </aside>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const els = {
+    viewport: $("viewport"), stage: $("stage"), canvas: $("outCanvas"),
+    gridCanvas: $("gridCanvas"), selCanvas: $("selCanvas"), origImg: $("origImg"), drop: $("dropzone"),
+    thumbs: $("thumbs"),
+    zoomIn: $("zoomIn"), zoomOut: $("zoomOut"), zoomLabel: $("zoomLabel"),
+    fitBtn: $("fitBtn"), oneToOne: $("oneToOne"), grid: $("grid"), orig: $("orig"),
+    copyImg: $("copyImgBtn"),
+    penColor: $("penColor"), penSize: $("penSize"), penSizeVal: $("penSizeVal"), clearEdits: $("clearEdits"),
+    brush: $("brushCursor"),
+    palSource: $("palSource"), loadPalBtn: $("loadPalBtn"), palFile: $("palFile"),
+    quantAlgo: $("quantAlgo"),
+    colors: $("colors"), colorsVal: $("colorsVal"),
+    dot: $("dotSize"), dotVal: $("dotVal"),
+    smooth: $("smooth"), smoothVal: $("smoothVal"),
+    sampleMode: $("sampleMode"), monoproBtn: $("monoproBtn"),
+    outScale: $("outScale"),
+    dither: $("dither"), dstr: $("dstr"), dstrVal: $("dstrVal"),
+    sharp: $("sharp"), sharpVal: $("sharpVal"),
+    outline: $("outline"), outlineVal: $("outlineVal"), dilate: $("dilate"),
+    bri: $("brightness"), briVal: $("briVal"),
+    sat: $("saturation"), satVal: $("satVal"),
+    con: $("contrast"), conVal: $("conVal"),
+    hue: $("hue"), hueVal: $("hueVal"),
+    keepAlpha: $("keepAlpha"), bgColor: $("bgColor"), bgRow: $("bgRow"),
+    alphaTh: $("alphaTh"), athVal: $("athVal"),
+    checker: $("checker"), checkerVal: $("checkerVal"),
+    checkerA: $("checkerA"), checkerB: $("checkerB"),
+    maxSize: $("maxSize"), stat: $("stat"),
+    file: $("fileInput"), browse: $("browseLink"),
+    load: $("loadBtn"), save: $("saveBtn"), saveAll: $("saveAllBtn"), reset: $("resetBtn"),
+    paletteGroup: $("paletteGroup"), palette: $("palette"),
+    paletteCount: $("paletteCount"), copyPalette: $("copyPalette"),
+  };
+
+  const outCtx = els.canvas.getContext("2d");
+  const gridCtx = els.gridCanvas.getContext("2d");
+  const selCtx = els.selCanvas.getContext("2d");
+  const work = document.createElement("canvas");
+  const workCtx = work.getContext("2d", { willReadFrequently: true });
+  const fitCv = document.createElement("canvas");
+  const fitCtx = fitCv.getContext("2d", { willReadFrequently: true });
+
+  // 状態
+  let images = [];          // {img, name, url}
+  let activeIndex = -1;
+  let lockedColors = {};
+  let lastNColors = +els.colors.value;
+  let customPalette = null; // 読み込んだパレット
+  let lastRender = null;    // {gridW,gridH,scalePx,outW,outH}
+  // ビュー
+  let view = 1, panX = 0, panY = 0;
+  // 編集（スポイト/ペン/消しゴム）
+  let tool = "move";            // move | spuit | pen | eraser
+  let editLayer = null;         // { w, h, px: Map<index, [r,g,b,a]> }
+  let painting = false;
+  let lastMouseX = 0, lastMouseY = 0;
+  let selection = null;         // Set<index> 選択範囲（現在のグリッド寸法に紐づく）
+  // 元に戻す / やり直し（編集レイヤーのスナップショット）
+  let undoStack = [], redoStack = [];
+  let strokeSnapshot = null, strokeChanged = false;
+  const UNDO_LIMIT = 100;
+  function pushUndo(snap) { undoStack.push(snap); if (undoStack.length > UNDO_LIMIT) undoStack.shift(); redoStack = []; }
+  function undo() {
+    if (!editLayer || !undoStack.length) return;
+    redoStack.push(new Map(editLayer.px));
+    editLayer.px = undoStack.pop();
+    recompositeOutput();
+  }
+  function redo() {
+    if (!editLayer || !redoStack.length) return;
+    undoStack.push(new Map(editLayer.px));
+    editLayer.px = redoStack.pop();
+    recompositeOutput();
+  }
+
+  const activeImg = () => activeIndex >= 0 ? images[activeIndex].img : null;
+
+  // ============ プリセットパレット ============
+  function hexList(str) {
+    return str.trim().split(/\s+/).map(h => [
+      parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)
+    ]);
+  }
+  const PRESETS = {
+    pico8: hexList(`000000 1D2B53 7E2553 008751 AB5236 5F574F C2C3C7 FFF1E8
+                    FF004D FFA300 FFEC27 00E436 29ADFF 83769C FF77A8 FFCCAA`),
+    gameboy: hexList(`0F380F 306230 8BAC0F 9BBC0F`),
+    cga: hexList(`000000 0000AA 00AA00 00AAAA AA0000 AA00AA AA5500 AAAAAA
+                  555555 5555FF 55FF55 55FFFF FF5555 FF55FF FFFF55 FFFFFF`),
+    nes: hexList(`545454 001E74 081090 300088 440064 5C0030 540400 3C1800
+                  202A00 083A00 004000 003C00 00323C 989698 084CC4 3032EC
+                  5C1EE4 8814B0 A01464 982220 783C00 545A00 287200 087C00
+                  007628 006678 ECEEEC 4C9AEC 787CEC B062EC E454EC EC58B4
+                  EC6A64 D48820 A0AA00 74C400 4CD020 38CC6C 38B4CC 3C3C3C
+                  ECEEEC A8CCEC BCBCEC D4B2EC ECAEEC ECAED4 ECB4B0 E4C490
+                  CCD278 B4DE78 A8E290 98E2B4 A0D6E4 A0A2A0`),
+  };
+  function dedupe(pal) {
+    const seen = new Set(), out = [];
+    for (const c of pal) {
+      const k = (c[0] << 16) | (c[1] << 8) | c[2];
+      if (!seen.has(k)) { seen.add(k); out.push(c); }
+    }
+    return out;
+  }
+
+  // ============ 画像読み込み（複数対応） ============
+  function addFiles(fileList) {
+    const arr = [...fileList].filter(f => f.type.startsWith("image/"));
+    arr.forEach(f => {
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      img.onload = () => {
+        images.push({ img, name: f.name.replace(/\.[^.]+$/, ""), url });
+        if (activeIndex < 0) setActive(images.length - 1);
+        else renderThumbs();
+        els.save.disabled = false; els.saveAll.disabled = images.length < 1;
+      };
+      img.src = url;
+    });
+  }
+  function setActive(i) {
+    activeIndex = i;
+    els.drop.classList.add("hidden");
+    els.canvas.style.display = "block";
+    lockedColors = {};
+    editLayer = null;   // 画像を切り替えたら編集をリセット
+    selection = null;
+    renderThumbs();
+    render();
+    fitView();
+  }
+  function removeImage(i) {
+    URL.revokeObjectURL(images[i].url);
+    images.splice(i, 1);
+    if (images.length === 0) {
+      activeIndex = -1; els.canvas.style.display = "none";
+      els.drop.classList.remove("hidden"); els.save.disabled = true; els.saveAll.disabled = true;
+      renderThumbs(); return;
+    }
+    if (activeIndex >= images.length) activeIndex = images.length - 1;
+    else if (i < activeIndex) activeIndex--;
+    setActive(activeIndex);
+  }
+  function renderThumbs() {
+    els.thumbs.classList.toggle("show", images.length > 0);
+    els.thumbs.innerHTML = "";
+    images.forEach((it, i) => {
+      const d = document.createElement("div");
+      d.className = "thumb" + (i === activeIndex ? " active" : "");
+      const im = document.createElement("img"); im.src = it.url; d.appendChild(im);
+      const x = document.createElement("div"); x.className = "x"; x.textContent = "×";
+      x.addEventListener("click", e => { e.stopPropagation(); removeImage(i); });
+      d.appendChild(x);
+      d.addEventListener("click", () => setActive(i));
+      els.thumbs.appendChild(d);
+    });
+  }
+
+  // ============ レンダリング ============
+  let renderTimer = null;
+  function scheduleRender() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 30); }
+
+  function render() {
+    const img = activeImg();
+    if (!img) return;
+    const info = processToCanvas(img, els.canvas);
+    info.base = info.gridData;        // 編集前のグリッド（編集レイヤーの土台）
+    lastRender = info;
+    ensureEditLayer(info.gridW, info.gridH);
+    renderPalette(info.palette);
+
+    // キャンバスの表示サイズと重ねる要素を同期
+    els.canvas.style.width = info.outW + "px"; els.canvas.style.height = info.outH + "px";
+    els.gridCanvas.width = info.outW; els.gridCanvas.height = info.outH;
+    els.gridCanvas.style.width = info.outW + "px"; els.gridCanvas.style.height = info.outH + "px";
+    els.selCanvas.width = info.outW; els.selCanvas.height = info.outH;
+    els.selCanvas.style.width = info.outW + "px"; els.selCanvas.style.height = info.outH + "px";
+    els.origImg.src = images[activeIndex].url;
+    els.origImg.style.width = info.outW + "px"; els.origImg.style.height = info.outH + "px";
+    els.stage.style.width = info.outW + "px"; els.stage.style.height = info.outH + "px";
+
+    recompositeOutput();   // 編集レイヤーを重ねて最終描画
+    drawGrid();
+    drawSelection();
+    updateTransform();
+
+    els.stat.innerHTML =
+      `元画像: <b>${img.width}×${img.height}</b><br>` +
+      `ドット数: <b>${info.gridW}×${info.gridH}</b>（1ドット=${info.scalePx}px）<br>` +
+      `出力サイズ: <b>${info.outW}×${info.outH}</b> px`;
+  }
+
+  // 編集レイヤーをグリッドサイズに合わせて確保（サイズが変わったら編集はリセット）
+  function ensureEditLayer(w, h) {
+    if (!editLayer || editLayer.w !== w || editLayer.h !== h) {
+      editLayer = { w, h, px: new Map() };
+      undoStack = []; redoStack = []; // グリッド寸法が変わったら履歴もリセット
+      selection = null;
+    }
+  }
+
+  // 編集前グリッド + 編集レイヤー を合成して出力キャンバスへ拡大描画
+  function recompositeOutput() {
+    if (!lastRender) return;
+    const { base, gridW, gridH, outW, outH } = lastRender;
+    const g = base.slice();
+    if (editLayer && editLayer.w === gridW && editLayer.h === gridH) {
+      for (const [idx, c] of editLayer.px) {
+        const o = idx * 4; g[o] = c[0]; g[o+1] = c[1]; g[o+2] = c[2]; g[o+3] = c[3];
+      }
+    }
+    work.width = gridW; work.height = gridH;
+    workCtx.putImageData(new ImageData(g, gridW, gridH), 0, 0);
+    els.canvas.width = outW; els.canvas.height = outH;
+    outCtx.imageSmoothingEnabled = false;
+    outCtx.clearRect(0, 0, outW, outH);
+    outCtx.drawImage(work, 0, 0, gridW, gridH, 0, 0, outW, outH);
+  }
+
+  // 画像＋現在の設定で targetCanvas に描画し、情報を返す
+  function processToCanvas(img, target) {
+    const [maxW, maxH] = els.maxSize.value.split("x").map(Number);
+    const dot = +els.dot.value;
+
+    // 1) 出力枠にアスペクト比を保って収める
+    const fitScale = Math.min(maxW / img.width, maxH / img.height, 1);
+    const fitW = Math.max(1, Math.round(img.width * fitScale));
+    const fitH = Math.max(1, Math.round(img.height * fitScale));
+
+    // 2) ドットグリッド解像度
+    const gridW = Math.max(1, Math.floor(fitW / dot));
+    const gridH = Math.max(1, Math.floor(fitH / dot));
+
+    // 3) 出力倍率（1ドット=scalePx）。上限を超えないようクランプ
+    const maxScale = Math.max(1, Math.min(Math.floor(maxW / gridW), Math.floor(maxH / gridH)));
+    let scalePx;
+    if (els.outScale.value === "auto") scalePx = maxScale;
+    else scalePx = Math.min(parseInt(els.outScale.value, 10), maxScale);
+    const outW = gridW * scalePx, outH = gridH * scalePx;
+
+    const nColors = +els.colors.value;
+    const dilate = +els.dilate.value;
+    const smooth = +els.smooth.value;
+    const sharp = +els.sharp.value;
+    const outline = +els.outline.value;
+    const applyLocks = () => { for (const i in lockedColors) if (i < palette.length) palette[i] = lockedColors[i].slice(); };
+
+    // 4) 前処理（fit解像度で 色調整 → 平滑化 → 輪郭線膨張(erode) を適用）
+    //    monoproの erode と同様、輪郭膨張は「縮小前のフル解像度」で行う
+    let colorFilter = `brightness(${els.bri.value}%) saturate(${els.sat.value}%) ` +
+                      `contrast(${els.con.value}%) hue-rotate(${els.hue.value}deg)`;
+    if (smooth > 0) colorFilter += ` blur(${(smooth / 100 * dot * 0.9).toFixed(2)}px)`;
+    fitCv.width = fitW; fitCv.height = fitH;
+    fitCtx.clearRect(0, 0, fitW, fitH);
+    fitCtx.imageSmoothingEnabled = true; fitCtx.imageSmoothingQuality = "high";
+    fitCtx.filter = colorFilter;
+    fitCtx.drawImage(img, 0, 0, fitW, fitH);
+    fitCtx.filter = "none";
+    const fitImg = fitCtx.getImageData(0, 0, fitW, fitH);
+    const fd = fitImg.data;
+    if (dilate > 0) erodeImage(fd, fitW, fitH, dilate); // 輪郭線を太く（monopro式 min フィルタ）
+
+    work.width = gridW; work.height = gridH;
+    const imgData = workCtx.createImageData(gridW, gridH);
+    const data = imgData.data;
+    let palette;
+
+    if (els.sampleMode.value === "majority") {
+      // === 最頻色（多数決）: 先に量子化 → 各セルで最頻パレット色を採用 ===
+      palette = currentPaletteForSettings(fd, nColors); applyLocks();
+      majorityDownsample(fd, fitW, fitH, data, gridW, gridH, palette);
+      let modified = false;
+      if (sharp > 0) { sharpen(data, gridW, gridH, sharp / 100); modified = true; }
+      if (outline > 0) { addOutline(data, gridW, gridH, outline / 100); modified = true; }
+      if (modified) mapImage(data, gridW, gridH, palette, "none", 1);
+    } else if (els.sampleMode.value === "point") {
+      // === 点サンプル（monopro互換）: OpenCV INTER_NEAREST と同じ座標で代表点を抜き取る ===
+      fitCtx.putImageData(fitImg, 0, 0); // (erode結果は fd に反映済み)
+      for (let gy = 0; gy < gridH; gy++) {
+        const sy = Math.min(fitH - 1, Math.floor(gy * fitH / gridH));
+        for (let gx = 0; gx < gridW; gx++) {
+          const sx = Math.min(fitW - 1, Math.floor(gx * fitW / gridW));
+          const si = (sy * fitW + sx) * 4, di = (gy * gridW + gx) * 4;
+          data[di] = fd[si]; data[di+1] = fd[si+1]; data[di+2] = fd[si+2]; data[di+3] = fd[si+3];
+        }
+      }
+      if (sharp > 0) sharpen(data, gridW, gridH, sharp / 100);
+      if (outline > 0) addOutline(data, gridW, gridH, outline / 100);
+      palette = currentPaletteForSettings(data, nColors); applyLocks();
+      mapImage(data, gridW, gridH, palette, "none", 1); // ディザ無効
+    } else {
+      // === 平均（なめらか）: グリッドへ平均縮小 → 量子化 → マッピング ===
+      fitCtx.putImageData(fitImg, 0, 0); // erode結果を縮小元へ反映
+      workCtx.clearRect(0, 0, gridW, gridH);
+      workCtx.imageSmoothingEnabled = true; workCtx.imageSmoothingQuality = "high";
+      workCtx.drawImage(fitCv, 0, 0, gridW, gridH);
+      const small = workCtx.getImageData(0, 0, gridW, gridH);
+      data.set(small.data);
+      if (sharp > 0) sharpen(data, gridW, gridH, sharp / 100);
+      if (outline > 0) addOutline(data, gridW, gridH, outline / 100);
+      palette = currentPaletteForSettings(data, nColors); applyLocks();
+      mapImage(data, gridW, gridH, palette, els.dither.value, +els.dstr.value / 100);
+    }
+
+    // 透過処理
+    applyAlpha(data, els.keepAlpha.checked, els.bgColor.value, +els.alphaTh.value);
+
+    workCtx.putImageData(imgData, 0, 0);
+
+    // 9) 出力倍率でニアレスト拡大
+    target.width = outW; target.height = outH;
+    const tctx = target.getContext("2d");
+    tctx.imageSmoothingEnabled = false;
+    tctx.clearRect(0, 0, outW, outH);
+    tctx.drawImage(work, 0, 0, gridW, gridH, 0, 0, outW, outH);
+
+    return { palette, gridW, gridH, scalePx, outW, outH, gridData: imgData.data };
+  }
+
+  function currentPaletteForSettings(data, nColors) {
+    const src = els.palSource.value;
+    if (src === "custom" && customPalette && customPalette.length) return customPalette;
+    if (PRESETS[src]) return PRESETS[src];
+    const entries = getEntries(data);
+    return els.quantAlgo.value === "median" ? medianCut(entries, nColors) : kmeans(entries, nColors);
+  }
+
+  // ============ シャープ / アウトライン ============
+  function sharpen(data, w, h, amount) {
+    const src = data.slice();
+    const a = amount; // 0..1
+    const at = (x, y, c) => {
+      x = x < 0 ? 0 : x >= w ? w - 1 : x; y = y < 0 ? 0 : y >= h ? h - 1 : y;
+      return src[(y * w + x) * 4 + c];
+    };
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (src[i + 3] < 8) continue;
+      for (let c = 0; c < 3; c++) {
+        const v = (1 + 4 * a) * src[i + c]
+          - a * (at(x - 1, y, c) + at(x + 1, y, c) + at(x, y - 1, c) + at(x, y + 1, c));
+        data[i + c] = v < 0 ? 0 : v > 255 ? 255 : v;
+      }
+    }
+  }
+
+  // アウトライン（独自機能）：エッジを検出して暗くする。膨張(erodeImage)とは独立。
+  function addOutline(data, w, h, strength) {
+    if (strength <= 0) return;
+    const src = data.slice();
+    const lum = (x, y) => {
+      x = x < 0 ? 0 : x >= w ? w - 1 : x; y = y < 0 ? 0 : y >= h ? h - 1 : y;
+      const i = (y * w + x) * 4;
+      if (src[i + 3] < 8) return -1; // 透明はエッジ扱い
+      return 0.299 * src[i] + 0.587 * src[i + 1] + 0.114 * src[i + 2];
+    };
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (src[i + 3] < 8) continue;
+      const tl=lum(x-1,y-1), t=lum(x,y-1), tr=lum(x+1,y-1);
+      const l=lum(x-1,y), r=lum(x+1,y);
+      const bl=lum(x-1,y+1), b=lum(x,y+1), br=lum(x+1,y+1);
+      const vals=[tl,t,tr,l,r,bl,b,br];
+      let edge;
+      if (vals.some(v => v < 0)) edge = 1;
+      else {
+        const gx = (tr+2*r+br) - (tl+2*l+bl);
+        const gy = (bl+2*b+br) - (tl+2*t+tr);
+        edge = Math.min(1, Math.sqrt(gx*gx + gy*gy) / 255);
+      }
+      const d = Math.min(0.92, edge * strength);
+      if (d > 0.01) { const f = 1 - d; data[i]=src[i]*f; data[i+1]=src[i+1]*f; data[i+2]=src[i+2]*f; }
+    }
+  }
+
+  // 輪郭線を太く（monopro式 cv2.erode 相当）：RGBの最小値フィルタ。
+  // 暗い輪郭ほど値が低いため、min フィルタで暗部が広がり線が太くなる。
+  // mode 1 = n4（十字・弱）, mode 2 = n8（3x3・強）。透明ピクセルは無視。
+  function erodeImage(data, w, h, mode) {
+    const src = data.slice();
+    const offs = mode === 1
+      ? [[0,-1],[-1,0],[0,0],[1,0],[0,1]]
+      : [[-1,-1],[0,-1],[1,-1],[-1,0],[0,0],[1,0],[-1,1],[0,1],[1,1]];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (src[i + 3] < 8) continue; // 透明は対象外
+      let mr = 255, mg = 255, mb = 255;
+      for (const [dx, dy] of offs) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        const j = (ny * w + nx) * 4;
+        if (src[j + 3] < 8) continue; // 透明な近傍は無視（暗部のにじみ防止）
+        if (src[j] < mr) mr = src[j];
+        if (src[j + 1] < mg) mg = src[j + 1];
+        if (src[j + 2] < mb) mb = src[j + 2];
+      }
+      data[i] = mr; data[i + 1] = mg; data[i + 2] = mb;
+    }
+  }
+
+  // ============ 量子化 ============
+  // ヒストグラム（shiftで量子化粒度を下げて高速化。各binは平均色を保持）
+  function buildHist(data, shift) {
+    const map = new Map();
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 8) continue;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const key = ((r >> shift) << 16) | ((g >> shift) << 8) | (b >> shift);
+      let e = map.get(key);
+      if (!e) { e = { r: 0, g: 0, b: 0, count: 0 }; map.set(key, e); }
+      e.r += r; e.g += g; e.b += b; e.count++;
+    }
+    const arr = [];
+    for (const e of map.values()) arr.push({ r: e.r/e.count, g: e.g/e.count, b: e.b/e.count, count: e.count });
+    return arr;
+  }
+  function getEntries(data) {
+    let e = buildHist(data, 0);
+    if (e.length > 40000) e = buildHist(data, 2); // 巨大グリッドは粗ヒストグラムで高速化
+    return e;
+  }
+
+  // メディアンカット
+  function medianCut(entries, nColors) {
+    if (entries.length === 0) return [[0, 0, 0]];
+    if (entries.length <= nColors)
+      return entries.map(e => [Math.round(e.r), Math.round(e.g), Math.round(e.b)]);
+
+    let boxes = [makeBox(entries)];
+    while (boxes.length < nColors) {
+      let target = -1, best = -1;
+      for (let i = 0; i < boxes.length; i++) {
+        const b = boxes[i];
+        if (b.items.length < 2) continue;
+        const score = b.volume * b.weight;
+        if (score > best) { best = score; target = i; }
+      }
+      if (target < 0) break;
+      const b = boxes[target], ch = b.longest;
+      b.items.sort((x, y) => x[ch] - y[ch]);
+      const half = b.weight / 2;
+      let acc = 0, split = 1;
+      for (let i = 0; i < b.items.length; i++) {
+        acc += b.items[i].count;
+        if (acc >= half) { split = Math.max(1, Math.min(i + 1, b.items.length - 1)); break; }
+      }
+      boxes.splice(target, 1, makeBox(b.items.slice(0, split)), makeBox(b.items.slice(split)));
+    }
+    return boxes.map(b => {
+      let r = 0, g = 0, bl = 0, w = 0;
+      for (const it of b.items) { r += it.r*it.count; g += it.g*it.count; bl += it.b*it.count; w += it.count; }
+      return [Math.round(r/w), Math.round(g/w), Math.round(bl/w)];
+    });
+  }
+  function makeBox(items) {
+    let rmin=255,rmax=0,gmin=255,gmax=0,bmin=255,bmax=0,weight=0;
+    for (const it of items) {
+      if (it.r<rmin)rmin=it.r; if (it.r>rmax)rmax=it.r;
+      if (it.g<gmin)gmin=it.g; if (it.g>gmax)gmax=it.g;
+      if (it.b<bmin)bmin=it.b; if (it.b>bmax)bmax=it.b;
+      weight+=it.count;
+    }
+    const rr=rmax-rmin, gr=gmax-gmin, br=bmax-bmin;
+    const longest = (gr>=rr&&gr>=br)?"g":(rr>=br?"r":"b");
+    return { items, weight, volume:(rr+1)*(gr+1)*(br+1), longest };
+  }
+
+  // k-means（メディアンカットで初期化 → 重み付き反復）
+  function kmeans(entries, nColors) {
+    if (entries.length === 0) return [[0, 0, 0]];
+    if (entries.length <= nColors)
+      return entries.map(e => [Math.round(e.r), Math.round(e.g), Math.round(e.b)]);
+    let cent = medianCut(entries, nColors).map(c => [c[0], c[1], c[2]]);
+    const k = cent.length;
+    for (let iter = 0; iter < 8; iter++) {
+      const sr = new Float64Array(k), sg = new Float64Array(k), sb = new Float64Array(k), cn = new Float64Array(k);
+      for (const e of entries) {
+        let bi = 0, bd = Infinity;
+        for (let i = 0; i < k; i++) {
+          const dr=e.r-cent[i][0], dg=e.g-cent[i][1], db=e.b-cent[i][2], d=dr*dr+dg*dg+db*db;
+          if (d < bd) { bd = d; bi = i; }
+        }
+        sr[bi]+=e.r*e.count; sg[bi]+=e.g*e.count; sb[bi]+=e.b*e.count; cn[bi]+=e.count;
+      }
+      for (let i = 0; i < k; i++) if (cn[i] > 0) cent[i] = [sr[i]/cn[i], sg[i]/cn[i], sb[i]/cn[i]];
+    }
+    return cent.map(c => [Math.round(c[0]), Math.round(c[1]), Math.round(c[2])]);
+  }
+
+  // ============ マッピング ============
+  function nearest(palette, r, g, b) {
+    let bestD = Infinity, best = palette[0];
+    for (const c of palette) {
+      const dr=r-c[0], dg=g-c[1], db=b-c[2], d=dr*dr+dg*dg+db*db;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
+  function nearestCached(palette, cache, r, g, b) {
+    r = r<0?0:r>255?255:r|0; g = g<0?0:g>255?255:g|0; b = b<0?0:b>255?255:b|0;
+    const key = (r<<16)|(g<<8)|b;
+    let p = cache.get(key);
+    if (p === undefined) { p = nearest(palette, r, g, b); cache.set(key, p); }
+    return p;
+  }
+  const BAYER = [0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5].map(v => v/16 - 0.5);
+
+  function mapImage(data, w, h, palette, mode, strength) {
+    if (mode === "fs") return mapFS(data, w, h, palette, strength);
+    if (mode === "bayer") return mapBayer(data, w, h, palette, strength);
+    const cache = new Map();
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 8) continue;
+      const p = nearestCached(palette, cache, data[i], data[i+1], data[i+2]);
+      data[i]=p[0]; data[i+1]=p[1]; data[i+2]=p[2];
+    }
+  }
+  function mapFS(data, w, h, palette, strength) {
+    const cache = new Map();
+    const buf = new Float32Array(w * h * 3);
+    for (let i=0,j=0;i<data.length;i+=4,j+=3){ buf[j]=data[i]; buf[j+1]=data[i+1]; buf[j+2]=data[i+2]; }
+    const push = (x,y,er,eg,eb,f) => {
+      if (x<0||x>=w||y<0||y>=h) return;
+      const j=(y*w+x)*3; buf[j]+=er*f; buf[j+1]+=eg*f; buf[j+2]+=eb*f;
+    };
+    for (let y=0;y<h;y++) for (let x=0;x<w;x++){
+      const i=(y*w+x)*4; if (data[i+3]<8) continue;
+      const j=(y*w+x)*3, or=buf[j],og=buf[j+1],ob=buf[j+2];
+      const p=nearestCached(palette,cache,or,og,ob);
+      data[i]=p[0]; data[i+1]=p[1]; data[i+2]=p[2];
+      const er=(or-p[0])*strength, eg=(og-p[1])*strength, eb=(ob-p[2])*strength;
+      push(x+1,y,er,eg,eb,7/16); push(x-1,y+1,er,eg,eb,3/16);
+      push(x,y+1,er,eg,eb,5/16); push(x+1,y+1,er,eg,eb,1/16);
+    }
+  }
+  function mapBayer(data, w, h, palette, strength) {
+    const cache = new Map();
+    const amp = Math.min(64, Math.max(16, 220/Math.sqrt(palette.length))) * strength;
+    for (let y=0;y<h;y++) for (let x=0;x<w;x++){
+      const i=(y*w+x)*4; if (data[i+3]<8) continue;
+      const t=BAYER[(y&3)*4+(x&3)]*amp;
+      const p=nearestCached(palette,cache,data[i]+t,data[i+1]+t,data[i+2]+t);
+      data[i]=p[0]; data[i+1]=p[1]; data[i+2]=p[2];
+    }
+  }
+
+  // 最頻色ダウンサンプル：各ドットセル内で最も多いパレット色を採用（透過も多数決）
+  function majorityDownsample(src, sw, sh, dst, gw, gh, palette) {
+    const cache = new Map();
+    for (let gy = 0; gy < gh; gy++) {
+      const y0 = Math.floor(gy * sh / gh);
+      const y1 = Math.max(y0 + 1, Math.floor((gy + 1) * sh / gh));
+      for (let gx = 0; gx < gw; gx++) {
+        const x0 = Math.floor(gx * sw / gw);
+        const x1 = Math.max(x0 + 1, Math.floor((gx + 1) * sw / gw));
+        const votes = new Map();
+        let transp = 0, opaque = 0;
+        for (let y = y0; y < y1 && y < sh; y++) {
+          for (let x = x0; x < x1 && x < sw; x++) {
+            const i = (y * sw + x) * 4;
+            if (src[i + 3] < 8) { transp++; continue; }
+            opaque++;
+            const p = nearestCached(palette, cache, src[i], src[i + 1], src[i + 2]);
+            const key = (p[0] << 16) | (p[1] << 8) | p[2];
+            votes.set(key, (votes.get(key) || 0) + 1);
+          }
+        }
+        const di = (gy * gw + gx) * 4;
+        if (opaque === 0 || transp > opaque) {
+          dst[di] = dst[di+1] = dst[di+2] = dst[di+3] = 0;
+          continue;
+        }
+        let bestKey = 0, bestN = -1;
+        for (const [k, n] of votes) if (n > bestN) { bestN = n; bestKey = k; }
+        dst[di] = (bestKey >> 16) & 255; dst[di+1] = (bestKey >> 8) & 255;
+        dst[di+2] = bestKey & 255; dst[di+3] = 255;
+      }
+    }
+  }
+
+  function applyAlpha(data, keep, bgHex, th) {
+    if (keep) {
+      for (let i=0;i<data.length;i+=4) data[i+3] = data[i+3] >= th ? 255 : 0;
+    } else {
+      const br=parseInt(bgHex.slice(1,3),16), bg=parseInt(bgHex.slice(3,5),16), bb=parseInt(bgHex.slice(5,7),16);
+      for (let i=0;i<data.length;i+=4){
+        const a=data[i+3]/255;
+        data[i]=Math.round(data[i]*a+br*(1-a));
+        data[i+1]=Math.round(data[i+1]*a+bg*(1-a));
+        data[i+2]=Math.round(data[i+2]*a+bb*(1-a));
+        data[i+3]=255;
+      }
+    }
+  }
+
+  // ============ パレット表示 ============
+  const EDITABLE_MAX = 128;
+  let currentPalette = [];
+  function renderPalette(palette) {
+    currentPalette = palette;
+    els.paletteGroup.style.display = "flex";
+    els.paletteCount.textContent = `(${palette.length}色)`;
+    els.palette.innerHTML = "";
+    const editable = palette.length <= EDITABLE_MAX && els.palSource.value === "auto";
+    if (!editable) {
+      els.palette.classList.add("compact");
+      const frag = document.createDocumentFragment();
+      palette.forEach(c => {
+        const chip = document.createElement("div");
+        chip.className = "chip";
+        chip.style.background = hex(c);
+        frag.appendChild(chip);
+      });
+      els.palette.appendChild(frag);
+      return;
+    }
+    els.palette.classList.remove("compact");
+    palette.forEach((c, idx) => {
+      const sw = document.createElement("div");
+      sw.className = "swatch" + (lockedColors[idx] ? " locked" : "");
+      sw.style.background = hex(c);
+      sw.title = hex(c) + (lockedColors[idx] ? "（固定中・右クリックで解除）" : "");
+      const input = document.createElement("input");
+      input.type = "color"; input.value = hex(c);
+      input.addEventListener("input", () => {
+        const h = input.value;
+        lockedColors[idx] = [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+        scheduleRender();
+      });
+      sw.addEventListener("contextmenu", e => { e.preventDefault(); delete lockedColors[idx]; scheduleRender(); });
+      sw.appendChild(input);
+      els.palette.appendChild(sw);
+    });
+  }
+  const hex = c => "#" + c.map(v => v.toString(16).padStart(2, "0")).join("");
+
+  // ============ グリッド & ビュー ============
+  function drawGrid() {
+    gridCtx.clearRect(0, 0, els.gridCanvas.width, els.gridCanvas.height);
+    if (!els.grid.checked || !lastRender) return;
+    const { gridW, gridH, scalePx } = lastRender;
+    if (scalePx * view < 5) return; // 細かすぎる時は描かない
+    gridCtx.strokeStyle = "rgba(0,0,0,.4)";
+    gridCtx.lineWidth = Math.max(0.5, 1 / view);
+    gridCtx.beginPath();
+    for (let x = 0; x <= gridW; x++) { const px = x*scalePx + .5; gridCtx.moveTo(px,0); gridCtx.lineTo(px, gridH*scalePx); }
+    for (let y = 0; y <= gridH; y++) { const py = y*scalePx + .5; gridCtx.moveTo(0,py); gridCtx.lineTo(gridW*scalePx, py); }
+    gridCtx.stroke();
+  }
+
+  // ============ 選択範囲（自動選択ツール） ============
+  function colorAt(idx) { // 合成後の色（編集レイヤー優先）
+    if (editLayer && editLayer.px.has(idx)) return editLayer.px.get(idx);
+    const o = idx * 4, b = lastRender.base;
+    return [b[o], b[o+1], b[o+2], b[o+3]];
+  }
+  function floodSelect(gx, gy) {
+    const { gridW, gridH } = lastRender;
+    const start = gy * gridW + gx;
+    const t = colorAt(start);
+    const match = c => c[0]===t[0] && c[1]===t[1] && c[2]===t[2] && c[3]===t[3];
+    const sel = new Set(), stack = [start];
+    while (stack.length) {
+      const idx = stack.pop();
+      if (sel.has(idx) || !match(colorAt(idx))) continue;
+      sel.add(idx);
+      const x = idx % gridW, y = (idx / gridW) | 0;
+      if (x > 0) stack.push(idx - 1);
+      if (x < gridW - 1) stack.push(idx + 1);
+      if (y > 0) stack.push(idx - gridW);
+      if (y < gridH - 1) stack.push(idx + gridW);
+    }
+    selection = sel;
+    drawSelection();
+  }
+  function clearSelection() { selection = null; drawSelection(); }
+  function deleteSelection() {
+    if (!selection || !selection.size || !editLayer) return;
+    pushUndo(new Map(editLayer.px));
+    for (const idx of selection) editLayer.px.set(idx, [0, 0, 0, 0]); // 透明化
+    recompositeOutput();
+  }
+  function drawSelection() {
+    selCtx.clearRect(0, 0, els.selCanvas.width, els.selCanvas.height);
+    if (!selection || !selection.size || !lastRender) return;
+    const { gridW, scalePx } = lastRender;
+    const sp = scalePx;
+    selCtx.fillStyle = "rgba(91,140,255,.22)";
+    for (const idx of selection) {
+      const x = (idx % gridW) * sp, y = ((idx / gridW) | 0) * sp;
+      selCtx.fillRect(x, y, sp, sp);
+    }
+    // 境界（選択外と接する辺）を白＋点線で描く
+    selCtx.lineWidth = Math.max(1, 1.5 / view);
+    selCtx.strokeStyle = "#fff";
+    selCtx.setLineDash([Math.max(3, 4 / view), Math.max(2, 3 / view)]);
+    selCtx.beginPath();
+    const has = i => selection.has(i);
+    for (const idx of selection) {
+      const gx = idx % gridW, gy = (idx / gridW) | 0, x = gx * sp, y = gy * sp;
+      if (!has(idx - 1) || gx === 0) { selCtx.moveTo(x, y); selCtx.lineTo(x, y + sp); }
+      if (!has(idx + 1) || gx === gridW - 1) { selCtx.moveTo(x + sp, y); selCtx.lineTo(x + sp, y + sp); }
+      if (!has(idx - gridW) || gy === 0) { selCtx.moveTo(x, y); selCtx.lineTo(x + sp, y); }
+      if (!has(idx + gridW)) { selCtx.moveTo(x, y + sp); selCtx.lineTo(x + sp, y + sp); }
+    }
+    selCtx.stroke();
+    selCtx.setLineDash([]);
+  }
+
+  function updateTransform() {
+    els.stage.style.transform = `translate(${panX}px,${panY}px) scale(${view})`;
+    els.zoomLabel.textContent = Math.round(view * 100) + "%";
+    refreshBrush();
+    drawSelection();
+  }
+  function fitView() {
+    if (!lastRender) return;
+    const vw = els.viewport.clientWidth, vh = els.viewport.clientHeight;
+    const { outW, outH } = lastRender;
+    view = Math.min(vw / outW, vh / outH) * 0.95;
+    view = Math.max(0.02, Math.min(40, view));
+    panX = (vw - outW * view) / 2; panY = (vh - outH * view) / 2;
+    drawGrid(); updateTransform();
+  }
+  function zoomAt(mx, my, factor) {
+    let nv = Math.max(0.02, Math.min(40, view * factor));
+    panX = mx - (mx - panX) * (nv / view);
+    panY = my - (my - panY) * (nv / view);
+    view = nv; drawGrid(); updateTransform();
+  }
+
+  // ============ パレットファイル読み込み ============
+  function loadPaletteFile(file) {
+    if (!file) return;
+    if (file.type.startsWith("image/")) {
+      const url = URL.createObjectURL(file), im = new Image();
+      im.onload = () => {
+        const c = document.createElement("canvas");
+        const s = Math.min(1, 128 / Math.max(im.width, im.height));
+        c.width = Math.max(1, Math.round(im.width*s)); c.height = Math.max(1, Math.round(im.height*s));
+        const cx = c.getContext("2d"); cx.drawImage(im, 0, 0, c.width, c.height);
+        const d = cx.getImageData(0,0,c.width,c.height).data;
+        const set = [];
+        for (let i=0;i<d.length;i+=4) if (d[i+3]>=8) set.push([d[i],d[i+1],d[i+2]]);
+        customPalette = dedupe(set).slice(0, 256);
+        URL.revokeObjectURL(url); afterPaletteLoaded(file.name);
+      };
+      im.src = url; return;
+    }
+    const fr = new FileReader();
+    fr.onload = () => { customPalette = parsePalette(fr.result); afterPaletteLoaded(file.name); };
+    fr.readAsText(file);
+  }
+  function afterPaletteLoaded(name) {
+    if (!customPalette || !customPalette.length) { alert("パレットを読み取れませんでした。"); return; }
+    els.palSource.value = "custom"; syncPalUI();
+    els.loadPalBtn.textContent = `読込済: ${name}（${customPalette.length}色）`;
+    scheduleRender();
+  }
+  function parsePalette(text) {
+    const out = [];
+    for (let line of text.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) continue;
+      if (/^(JASC-PAL|0100|GIMP Palette)/i.test(line)) continue;
+      if (/^(Name|Columns)\s*:/i.test(line)) continue;
+      let m = line.match(/^#?([0-9a-f]{6})\b/i);
+      if (m) { const h=m[1]; out.push([parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]); continue; }
+      const p = line.split(/\s+/);
+      if (p.length >= 3 && p.slice(0,3).every(n => /^\d{1,3}$/.test(n))) out.push([+p[0],+p[1],+p[2]]);
+    }
+    return dedupe(out);
+  }
+
+  // ============ 保存 ============
+  function download(blob, name) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function save() {
+    if (activeIndex < 0) return;
+    els.canvas.toBlob(b => download(b, images[activeIndex].name + "_pixel.png"), "image/png");
+  }
+  async function copyImage() {
+    if (activeIndex < 0) return;
+    try {
+      const blob = await new Promise(res => els.canvas.toBlob(res, "image/png"));
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      els.copyImg.textContent = "✓ コピー済";
+      setTimeout(() => els.copyImg.textContent = "📋 PNGをコピー", 1400);
+    } catch (err) {
+      alert("クリップボードへのコピーに失敗しました。\nブラウザがhttps/localhostでない、または許可されていない可能性があります。\n（" + err.message + "）");
+    }
+  }
+  async function saveAll() {
+    const tmp = document.createElement("canvas");
+    for (let i = 0; i < images.length; i++) {
+      processToCanvas(images[i].img, tmp);
+      await new Promise(res => tmp.toBlob(b => { download(b, images[i].name + "_pixel.png"); res(); }, "image/png"));
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+
+  // ============ UI 配線 ============
+  // スライダーの値表示を「直接入力できる数値欄」に置き換える（双方向同期）
+  function bindSlider(input, out, unit, onInput) {
+    onInput = onInput || scheduleRender;
+    const num = document.createElement("input");
+    num.type = "number"; num.className = "numin"; num.id = out.id;
+    num.min = input.min; num.max = input.max; num.step = input.step || "1";
+    num.value = input.value;
+    const u = document.createElement("span"); u.className = "unit"; u.textContent = unit || "";
+    const wrap = document.createElement("span"); wrap.className = "valwrap";
+    wrap.appendChild(num); wrap.appendChild(u);
+    out.replaceWith(wrap);
+    els[out.id] = num; // 参照を数値欄へ付け替え
+
+    input.addEventListener("input", () => {
+      if (document.activeElement !== num) num.value = input.value;
+      onInput();
+    });
+    num.addEventListener("input", () => {
+      let v = parseFloat(num.value);
+      if (isNaN(v)) return;
+      v = Math.max(+input.min, Math.min(+input.max, v));
+      input.value = v;
+      input.dispatchEvent(new Event("input")); // 既存のスライダーリスナーを発火
+    });
+    num.addEventListener("change", () => { // 確定時に範囲内へ整形
+      let v = parseFloat(num.value);
+      if (isNaN(v)) v = +input.value;
+      num.value = Math.max(+input.min, Math.min(+input.max, v));
+    });
+  }
+  bindSlider(els.colors, els.colorsVal, "");
+  bindSlider(els.dot, els.dotVal, "px");
+  bindSlider(els.smooth, els.smoothVal, "%");
+  bindSlider(els.dstr, els.dstrVal, "%");
+  bindSlider(els.sharp, els.sharpVal, "%");
+  bindSlider(els.outline, els.outlineVal, "%");
+  bindSlider(els.bri, els.briVal, "%");
+  bindSlider(els.sat, els.satVal, "%");
+  bindSlider(els.con, els.conVal, "%");
+  bindSlider(els.hue, els.hueVal, "°");
+  bindSlider(els.alphaTh, els.athVal, "");
+
+  const updateChecker = () => els.viewport.style.setProperty("--checker", els.checker.value + "px");
+  bindSlider(els.checker, els.checkerVal, "px", updateChecker);
+  updateChecker();
+  // 市松模様の色
+  const updateCheckerColors = () => {
+    els.viewport.style.setProperty("--checker-a", els.checkerA.value);
+    els.viewport.style.setProperty("--checker-b", els.checkerB.value);
+  };
+  els.checkerA.addEventListener("input", updateCheckerColors);
+  els.checkerB.addEventListener("input", updateCheckerColors);
+  updateCheckerColors();
+
+  els.outScale.addEventListener("change", () => { scheduleRender(); });
+  els.dither.addEventListener("change", scheduleRender);
+  els.maxSize.addEventListener("change", scheduleRender);
+  els.quantAlgo.addEventListener("change", scheduleRender);
+  els.dilate.addEventListener("change", scheduleRender);
+  function syncSampleUI() {
+    const noDither = els.sampleMode.value !== "average";
+    els.dither.disabled = noDither; els.dstr.disabled = noDither;
+  }
+  els.sampleMode.addEventListener("change", () => { syncSampleUI(); scheduleRender(); });
+  syncSampleUI();
+
+  // monopro互換プリセット：点サンプル + k-means + 装飾オフ + 透過は非ゼロを不透明化
+  els.monoproBtn.addEventListener("click", () => {
+    els.sampleMode.value = "point";
+    els.quantAlgo.value = "kmeans";
+    els.palSource.value = "auto"; syncPalUI();
+    els.dither.value = "none";
+    [["bri",100],["sat",100],["con",100],["hue",0],["sharp",0],["outline",0],["smooth",0]].forEach(([k,v]) => {
+      els[k].value = v; els[k].dispatchEvent(new Event("input"));
+    });
+    els.dilate.value = "0";
+    els.alphaTh.value = "1"; els.alphaTh.dispatchEvent(new Event("input"));
+    els.keepAlpha.checked = true; els.bgRow.style.display = "none";
+    // 出力倍率をドット大きさに合わせる（元サイズ相当・選択肢にあれば）
+    const opt = [...els.outScale.options].some(o => o.value === els.dot.value);
+    els.outScale.value = opt ? els.dot.value : "auto";
+    syncSampleUI();
+    scheduleRender();
+  });
+
+  function syncPalUI() {
+    const custom = els.palSource.value !== "auto";
+    els.colors.disabled = custom;
+    els.loadPalBtn.style.display = els.palSource.value === "custom" ? "block" : "none";
+  }
+  els.palSource.addEventListener("change", () => {
+    if (els.palSource.value === "custom" && (!customPalette || !customPalette.length)) els.palFile.click();
+    syncPalUI(); scheduleRender();
+  });
+  syncPalUI();
+  els.loadPalBtn.addEventListener("click", () => els.palFile.click());
+  els.palFile.addEventListener("change", e => loadPaletteFile(e.target.files[0]));
+
+  els.colors.addEventListener("input", () => {
+    if (+els.colors.value !== lastNColors) { lockedColors = {}; lastNColors = +els.colors.value; }
+  });
+
+  els.bgColor.addEventListener("input", scheduleRender);
+  els.keepAlpha.addEventListener("change", () => {
+    els.bgRow.style.display = els.keepAlpha.checked ? "none" : "flex";
+    scheduleRender();
+  });
+
+  els.copyPalette.addEventListener("click", () => {
+    navigator.clipboard?.writeText(currentPalette.map(hex).join("\n"));
+    els.copyPalette.textContent = "コピー済✓";
+    setTimeout(() => els.copyPalette.textContent = "コピー", 1200);
+  });
+
+  els.reset.addEventListener("click", () => {
+    [["bri",100],["sat",100],["con",100],["hue",0],["sharp",0],["outline",0],["smooth",0]].forEach(([k,v]) => {
+      els[k].value = v; els[k].dispatchEvent(new Event("input"));
+    });
+    els.dilate.value = "0"; scheduleRender();
+  });
+
+  els.grid.addEventListener("change", drawGrid);
+  els.orig.addEventListener("change", () => {
+    const show = els.orig.checked;
+    els.canvas.style.display = show ? "none" : "block";
+    els.gridCanvas.style.display = show ? "none" : "block";
+    els.origImg.style.display = show ? "block" : "none";
+  });
+
+  els.load.addEventListener("click", () => els.file.click());
+  els.browse.addEventListener("click", () => els.file.click());
+  els.file.addEventListener("change", e => addFiles(e.target.files));
+  els.save.addEventListener("click", save);
+  els.saveAll.addEventListener("click", saveAll);
+  els.copyImg.addEventListener("click", copyImage);
+  window.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "c" && activeIndex >= 0 &&
+        !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) {
+      e.preventDefault(); copyImage();
+    }
+  });
+
+  // ホイール：Alt=ズーム / 通常=スクロール（画像が収まっている軸はスクロール不可）
+  function clampPanScroll() {
+    if (!lastRender) return;
+    const vw = els.viewport.clientWidth, vh = els.viewport.clientHeight;
+    const cw = lastRender.outW * view, ch = lastRender.outH * view;
+    panX = cw <= vw ? (vw - cw) / 2 : Math.min(0, Math.max(vw - cw, panX));
+    panY = ch <= vh ? (vh - ch) / 2 : Math.min(0, Math.max(vh - ch, panY));
+  }
+  els.viewport.addEventListener("wheel", e => {
+    if (activeIndex < 0 || !lastRender) return;
+    e.preventDefault();
+    if (e.altKey) { // ズーム
+      const rect = els.viewport.getBoundingClientRect();
+      zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.12 : 1/1.12);
+      return;
+    }
+    // スクロール（縦：deltaY / 横：deltaX か Shift+deltaY）
+    const vw = els.viewport.clientWidth, vh = els.viewport.clientHeight;
+    const cw = lastRender.outW * view, ch = lastRender.outH * view;
+    if (ch > vh) panY -= e.deltaY;                 // 縦がはみ出す時だけ縦スクロール
+    const dx = e.shiftKey ? e.deltaY : e.deltaX;
+    if (cw > vw && dx) panX -= dx;                  // 横がはみ出す時だけ横スクロール
+    clampPanScroll();
+    updateTransform();
+  }, { passive: false });
+  // --- 編集ツール ---
+  function dotFromEvent(e) {
+    if (!lastRender) return null;
+    const rect = els.viewport.getBoundingClientRect();
+    const lx = (e.clientX - rect.left - panX) / view;
+    const ly = (e.clientY - rect.top - panY) / view;
+    const gx = Math.floor(lx / lastRender.scalePx);
+    const gy = Math.floor(ly / lastRender.scalePx);
+    if (gx < 0 || gy < 0 || gx >= lastRender.gridW || gy >= lastRender.gridH) return null;
+    return { gx, gy };
+  }
+  function eyedrop(gx, gy) {
+    const idx = gy * lastRender.gridW + gx;
+    let c;
+    if (editLayer && editLayer.px.has(idx)) c = editLayer.px.get(idx);
+    else { const o = idx * 4, b = lastRender.base; c = [b[o], b[o+1], b[o+2], b[o+3]]; }
+    if (c[3] < 8) return; // 透明はスキップ
+    els.penColor.value = "#" + [c[0], c[1], c[2]].map(v => v.toString(16).padStart(2, "0")).join("");
+  }
+  function handlePaint(e) {
+    const d = dotFromEvent(e);
+    if (!d) return;
+    if (tool === "spuit") { eyedrop(d.gx, d.gy); return; }
+    if (!editLayer) return;
+    const size = +els.penSize.value, half = Math.floor((size - 1) / 2);
+    const hex = els.penColor.value;
+    const color = tool === "eraser" ? [0, 0, 0, 0]
+      : [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16), 255];
+    for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) {
+      const gx = d.gx - half + dx, gy = d.gy - half + dy;
+      if (gx < 0 || gy < 0 || gx >= lastRender.gridW || gy >= lastRender.gridH) continue;
+      editLayer.px.set(gy * lastRender.gridW + gx, color.slice());
+      strokeChanged = true;
+    }
+    recompositeOutput();
+  }
+  // ブラシサイズの四角カーソルをホバー追従（ペン/消しゴム時のみ）
+  function positionBrush(cx, cy) {
+    const bc = els.brush;
+    if (!((tool === "pen" || tool === "eraser") && lastRender && activeIndex >= 0 && !els.orig.checked)) {
+      bc.style.display = "none"; return;
+    }
+    const rect = els.viewport.getBoundingClientRect();
+    const lx = (cx - rect.left - panX) / view, ly = (cy - rect.top - panY) / view;
+    const gx = Math.floor(lx / lastRender.scalePx), gy = Math.floor(ly / lastRender.scalePx);
+    if (gx < 0 || gy < 0 || gx >= lastRender.gridW || gy >= lastRender.gridH) {
+      bc.style.display = "none"; return;
+    }
+    const size = +els.penSize.value, half = Math.floor((size - 1) / 2);
+    const sp = lastRender.scalePx * view;
+    bc.style.display = "block";
+    bc.style.left = (panX + (gx - half) * sp) + "px";
+    bc.style.top = (panY + (gy - half) * sp) + "px";
+    bc.style.width = (size * sp) + "px";
+    bc.style.height = (size * sp) + "px";
+  }
+  function refreshBrush() { positionBrush(lastMouseX, lastMouseY); }
+
+  function applyToolVisual(t) {
+    const brushTool = t === "pen" || t === "eraser";
+    els.viewport.classList.toggle("paint", t !== "move" && !brushTool);
+    els.viewport.classList.toggle("brush", brushTool); // OSカーソルを隠して四角カーソルを使う
+    refreshBrush();
+  }
+  function setTool(t) {
+    tool = t;
+    document.querySelectorAll(".tbtn.tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
+    applyToolVisual(t);
+  }
+  document.querySelectorAll(".tbtn.tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
+  els.penSize.addEventListener("input", () => { els.penSizeVal.textContent = els.penSize.value; refreshBrush(); });
+  els.clearEdits.addEventListener("click", () => {
+    if (editLayer && editLayer.px.size) { pushUndo(new Map(editLayer.px)); editLayer.px.clear(); recompositeOutput(); }
+  });
+
+  // 元に戻す / やり直し
+  window.addEventListener("keydown", e => {
+    if (!(e.ctrlKey || e.metaKey) || isTyping()) return;
+    const k = e.key.toLowerCase();
+    if (k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+    else if (k === "y") { e.preventDefault(); redo(); }
+  });
+
+  // Altキー押下中だけスポイトに（離すと元のツールへ）
+  let altPick = false, savedTool = null;
+  function endAltPick() {
+    if (!altPick) return;
+    altPick = false; tool = savedTool; applyToolVisual(savedTool); savedTool = null;
+  }
+  window.addEventListener("keydown", e => {
+    if (e.key === "Alt" && !altPick && activeIndex >= 0) {
+      altPick = true; savedTool = tool; tool = "spuit"; applyToolVisual("spuit");
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("keyup", e => {
+    if (e.key === "Alt" && altPick) { endAltPick(); e.preventDefault(); }
+  });
+  window.addEventListener("blur", endAltPick); // Alt+Tab等でキー離しを取り逃しても復帰
+
+  // キーボードショートカット：E=消しゴム / B=ペン、Q/W=ブラシサイズ増減（長押しで加速）
+  function changeSize(delta) {
+    const v = Math.max(+els.penSize.min, Math.min(+els.penSize.max, +els.penSize.value + delta));
+    if (v !== +els.penSize.value) {
+      els.penSize.value = v;
+      els.penSizeVal.textContent = v; refreshBrush();
+    }
+  }
+  let sizeRepeat = null;
+  function startSizeHold(dir) {
+    if (sizeRepeat) return;
+    const start = performance.now();
+    changeSize(dir); // 押した瞬間に1段階
+    sizeRepeat = setInterval(() => {
+      const held = performance.now() - start;
+      const step = held < 500 ? 1 : held < 1200 ? 2 : held < 2200 ? 3 : 5; // 加速
+      changeSize(dir * step);
+    }, 90);
+  }
+  function stopSizeHold() { if (sizeRepeat) { clearInterval(sizeRepeat); sizeRepeat = null; } }
+
+  function isTyping() {
+    return /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
+  }
+  window.addEventListener("keydown", e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || isTyping() || activeIndex < 0) return;
+    const k = e.key.toLowerCase();
+    if (k === "b") { setTool("pen"); e.preventDefault(); }
+    else if (k === "e") { setTool("eraser"); e.preventDefault(); }
+    else if (k === "q") { if (!e.repeat) startSizeHold(-1); e.preventDefault(); }
+    else if (k === "w") { if (!e.repeat) startSizeHold(1); e.preventDefault(); }
+    else if (k === "backspace" || k === "delete") { deleteSelection(); e.preventDefault(); }
+    else if (k === "escape") { clearSelection(); }
+  });
+  window.addEventListener("keyup", e => {
+    const k = e.key.toLowerCase();
+    if (k === "q" || k === "w") stopSizeHold();
+  });
+  window.addEventListener("blur", stopSizeHold);
+
+  let dragging = false, lastX = 0, lastY = 0;
+  els.viewport.addEventListener("mousedown", e => {
+    if (activeIndex < 0) return;
+    if (e.button === 1) { // 中ボタンドラッグでパン（Figma風のつかみ移動）
+      e.preventDefault();
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+      els.viewport.classList.add("panning");
+      return;
+    }
+    if (e.button !== 0) return;
+    if (tool === "move") {
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+      els.viewport.classList.add("panning");
+    } else if (tool === "wand") {
+      const d = dotFromEvent(e);
+      if (d) floodSelect(d.gx, d.gy); else clearSelection();
+    } else {
+      if ((tool === "pen" || tool === "eraser") && editLayer) {
+        strokeSnapshot = new Map(editLayer.px); strokeChanged = false; // 取り消し用
+      }
+      painting = true; handlePaint(e);
+    }
+  });
+  els.viewport.addEventListener("auxclick", e => { if (e.button === 1) e.preventDefault(); });
+  window.addEventListener("mousemove", e => {
+    lastMouseX = e.clientX; lastMouseY = e.clientY;
+    if (dragging) {
+      panX += e.clientX - lastX; panY += e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY; updateTransform();
+    } else if (painting) {
+      handlePaint(e);
+    }
+    positionBrush(e.clientX, e.clientY);
+  });
+  window.addEventListener("mouseup", () => {
+    if (painting && strokeChanged && strokeSnapshot) pushUndo(strokeSnapshot);
+    strokeSnapshot = null; strokeChanged = false;
+    dragging = false; painting = false; els.viewport.classList.remove("panning");
+  });
+  els.viewport.addEventListener("mouseleave", () => { els.brush.style.display = "none"; });
+
+  // ===== タッチ操作（スマホ / タブレット）=====
+  // 1本指: ツールに応じて描画/選択/移動、2本指: ピンチズーム＋パン
+  let tPainting = false, tPanning = false, tLastX = 0, tLastY = 0, gesture = null;
+  const tdist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const tPt = t => ({ clientX: t.clientX, clientY: t.clientY });
+  function endTouchStroke() {
+    if (tPainting && strokeChanged && strokeSnapshot) pushUndo(strokeSnapshot);
+    strokeSnapshot = null; strokeChanged = false;
+  }
+  els.viewport.addEventListener("touchstart", e => {
+    if (activeIndex < 0) return;
+    e.preventDefault();
+    const ts = e.touches;
+    if (ts.length >= 2) { // ピンチ開始
+      endTouchStroke(); tPainting = false; tPanning = false;
+      const a = ts[0], b = ts[1];
+      gesture = { dist: tdist(a, b), midX: (a.clientX+b.clientX)/2, midY: (a.clientY+b.clientY)/2, view, panX, panY };
+      return;
+    }
+    gesture = null;
+    const t = ts[0];
+    if (tool === "move") { tPanning = true; tLastX = t.clientX; tLastY = t.clientY; }
+    else if (tool === "wand") { const d = dotFromEvent(tPt(t)); d ? floodSelect(d.gx, d.gy) : clearSelection(); }
+    else {
+      if ((tool === "pen" || tool === "eraser") && editLayer) { strokeSnapshot = new Map(editLayer.px); strokeChanged = false; tPainting = true; }
+      handlePaint(tPt(t)); positionBrush(t.clientX, t.clientY);
+    }
+  }, { passive: false });
+  els.viewport.addEventListener("touchmove", e => {
+    if (activeIndex < 0) return;
+    e.preventDefault();
+    const ts = e.touches;
+    if (gesture && ts.length >= 2) {
+      const a = ts[0], b = ts[1];
+      const nd = tdist(a, b), nmx = (a.clientX+b.clientX)/2, nmy = (a.clientY+b.clientY)/2;
+      const rect = els.viewport.getBoundingClientRect();
+      const mx = gesture.midX - rect.left, my = gesture.midY - rect.top;
+      const nv = Math.max(0.02, Math.min(40, gesture.view * (nd / gesture.dist)));
+      panX = mx - (mx - gesture.panX) * (nv / gesture.view) + (nmx - gesture.midX);
+      panY = my - (my - gesture.panY) * (nv / gesture.view) + (nmy - gesture.midY);
+      view = nv; updateTransform();
+      return;
+    }
+    const t = ts[0];
+    if (tPanning) { panX += t.clientX - tLastX; panY += t.clientY - tLastY; tLastX = t.clientX; tLastY = t.clientY; updateTransform(); }
+    else if (tPainting) { handlePaint(tPt(t)); positionBrush(t.clientX, t.clientY); }
+  }, { passive: false });
+  els.viewport.addEventListener("touchend", e => {
+    if (e.touches.length === 0) { endTouchStroke(); tPainting = false; tPanning = false; gesture = null; els.brush.style.display = "none"; }
+    else { gesture = null; tPainting = false; tPanning = false; } // 指が減ったら操作をいったん終了
+  }, { passive: false });
+  els.viewport.addEventListener("touchcancel", () => { endTouchStroke(); tPainting = false; tPanning = false; gesture = null; els.brush.style.display = "none"; });
+
+  els.zoomIn.addEventListener("click", () => { const r=els.viewport.getBoundingClientRect(); zoomAt(r.width/2,r.height/2,1.25); });
+  els.zoomOut.addEventListener("click", () => { const r=els.viewport.getBoundingClientRect(); zoomAt(r.width/2,r.height/2,1/1.25); });
+  els.fitBtn.addEventListener("click", fitView);
+  els.oneToOne.addEventListener("click", () => {
+    if (!lastRender) return;
+    const vw=els.viewport.clientWidth, vh=els.viewport.clientHeight;
+    view = 1; panX=(vw-lastRender.outW)/2; panY=(vh-lastRender.outH)/2;
+    drawGrid(); updateTransform();
+  });
+
+  // ドラッグ＆ドロップ
+  ["dragenter","dragover"].forEach(ev => els.viewport.addEventListener(ev, e => { e.preventDefault(); els.viewport.classList.add("dragover"); }));
+  ["dragleave","drop"].forEach(ev => els.viewport.addEventListener(ev, e => { e.preventDefault(); els.viewport.classList.remove("dragover"); }));
+  els.viewport.addEventListener("drop", e => { if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+  window.addEventListener("dragover", e => e.preventDefault());
+  window.addEventListener("drop", e => e.preventDefault());
+  window.addEventListener("paste", e => {
+    const fs = [...(e.clipboardData?.items || [])].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile());
+    if (fs.length) addFiles(fs);
+  });
+})();
+</script>
+</body>
+</html>
