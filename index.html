@@ -49,6 +49,9 @@
   .zoomlabel { font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; color: var(--muted); }
   .tbtn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .tbsep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+  .selmode-bar { display: none; align-items: center; gap: 4px; }
+  .selmode-bar.show { display: flex; }
+  .tbtn.selmode { padding: 5px 9px; min-width: 34px; }
   .viewport.paint { cursor: crosshair; }
   .viewport.brush { cursor: none; }
   .brush-cursor {
@@ -231,6 +234,13 @@
       <button class="tbtn tool" data-tool="wand" id="toolWand">🪄 自動選択</button>
       <button class="tbtn tool" data-tool="rect" id="toolRect">▭ 矩形選択</button>
       <button class="tbtn tool" data-tool="lasso" id="toolLasso">🎀 なげなわ</button>
+      <span class="selmode-bar" id="selModeBar">
+        <span class="tbsep"></span>
+        <button class="tbtn selmode active" data-mode="replace" title="新規選択">新規</button>
+        <button class="tbtn selmode" data-mode="add" title="追加（Shift）">＋</button>
+        <button class="tbtn selmode" data-mode="sub" title="除外（Alt）">－</button>
+        <button class="tbtn selmode" data-mode="intersect" title="交差（Shift+Alt）">∩</button>
+      </span>
       <button class="tbtn tool" data-tool="pen" id="toolPen">✏️ ペン</button>
       <button class="tbtn tool" data-tool="eraser" id="toolEraser">🧽 消しゴム</button>
       <input type="color" id="penColor" value="#000000" title="ペンの色">
@@ -471,7 +481,7 @@
     fitBtn: $("fitBtn"), oneToOne: $("oneToOne"), grid: $("grid"), orig: $("orig"),
     copyImg: $("copyImgBtn"), pasteBtn: $("pasteBtn"), pasteLink: $("pasteLink"),
     penColor: $("penColor"), penSize: $("penSize"), penSizeVal: $("penSizeVal"), clearEdits: $("clearEdits"),
-    brush: $("brushCursor"), selBadge: $("selBadge"),
+    brush: $("brushCursor"), selBadge: $("selBadge"), selModeBar: $("selModeBar"),
     sideGauge: $("sideGauge"), sgTrack: $("sgTrack"), sgFill: $("sgFill"), sgLabel: $("sgLabel"),
     palSource: $("palSource"), loadPalBtn: $("loadPalBtn"), palFile: $("palFile"),
     quantAlgo: $("quantAlgo"),
@@ -522,22 +532,29 @@
   let lastMouseX = 0, lastMouseY = 0;
   let selection = null;         // Set<index> 選択範囲（現在のグリッド寸法に紐づく）
   let dragSel = null;           // 選択ドラッグ中の形状 {type:'rect'|'lasso', ...}
-  // 元に戻す / やり直し（編集レイヤーのスナップショット）
+  let selModeUI = "replace";    // 画面上の選択モード（スマホ用）: replace|add|sub|intersect
+  // 元に戻す / やり直し（編集レイヤー＋選択範囲のスナップショット）
   let undoStack = [], redoStack = [];
   let strokeSnapshot = null, strokeChanged = false;
   const UNDO_LIMIT = 100;
+  function snapshot() { return { edits: new Map(editLayer.px), sel: selection ? new Set(selection) : null }; }
+  function restoreState(s) {
+    editLayer.px = new Map(s.edits);
+    selection = s.sel ? new Set(s.sel) : null;
+    recompositeOutput();
+    if (selection && selection.size) startAnts(); else stopAnts();
+    drawSelection();
+  }
   function pushUndo(snap) { undoStack.push(snap); if (undoStack.length > UNDO_LIMIT) undoStack.shift(); redoStack = []; }
   function undo() {
     if (!editLayer || !undoStack.length) return;
-    redoStack.push(new Map(editLayer.px));
-    editLayer.px = undoStack.pop();
-    recompositeOutput();
+    redoStack.push(snapshot());
+    restoreState(undoStack.pop());
   }
   function redo() {
     if (!editLayer || !redoStack.length) return;
-    undoStack.push(new Map(editLayer.px));
-    editLayer.px = redoStack.pop();
-    recompositeOutput();
+    undoStack.push(snapshot());
+    restoreState(redoStack.pop());
   }
 
   const activeImg = () => activeIndex >= 0 ? images[activeIndex].img : null;
@@ -1140,14 +1157,16 @@
     }
     return sel;
   }
-  // 修飾キーから合成モード（Photoshop準拠：Shift=追加 / Alt=除外 / Shift+Alt=交差）
-  function combineMode(e) {
-    if (e.shiftKey && e.altKey) return "intersect";
-    if (e.shiftKey) return "add";
-    if (e.altKey) return "sub";
-    return "replace";
+  // 合成モード（Photoshop準拠）：Shift=追加 / Alt=除外 / Shift+Alt=交差、修飾なしは画面モード(selModeUI)
+  function effectiveMode(shift, alt) {
+    if (shift && alt) return "intersect";
+    if (shift) return "add";
+    if (alt) return "sub";
+    return selModeUI;
   }
+  function resolveMode(e) { return effectiveMode(!!(e && e.shiftKey), !!(e && e.altKey)); }
   function commitSelection(region, mode) {
+    if (editLayer) pushUndo(snapshot()); // 選択の変更もUndo対象
     let base = selection ? new Set(selection) : new Set();
     if (mode === "add") { for (const i of region) base.add(i); }
     else if (mode === "sub") { for (const i of region) base.delete(i); }
@@ -1192,17 +1211,20 @@
       if (pointInPoly(gx + 0.5, gy + 0.5, pts)) r.add(gy * gridW + gx);
     return r;
   }
-  function clearSelection() { selection = null; dragSel = null; stopAnts(); drawSelection(); }
+  function clearSelection() {
+    if (selection && editLayer) pushUndo(snapshot());
+    selection = null; dragSel = null; stopAnts(); drawSelection();
+  }
   function deleteSelection() {
     if (!selection || !selection.size || !editLayer) return;
-    pushUndo(new Map(editLayer.px));
+    pushUndo(snapshot());
     for (const idx of selection) editLayer.px.set(idx, [0, 0, 0, 0]); // 透明化
     recompositeOutput();
   }
   // マーチングアンツ（Photoshop風の動く白黒点線）
   let antRAF = null, antOffset = 0;
   function animateAnts() {
-    antOffset = (antOffset + 0.35) % 8; // 2*D=8 周期
+    antOffset = (antOffset + 0.12) % 8; // Photoshop風にゆっくり流す
     drawSelection();
     antRAF = ((selection && selection.size) || dragSel) ? requestAnimationFrame(animateAnts) : null;
   }
@@ -1228,11 +1250,7 @@
     const { gridW, scalePx } = lastRender;
     const sp = scalePx;
     if (selection && selection.size) {
-      selCtx.fillStyle = "rgba(91,140,255,.16)";
-      for (const idx of selection) {
-        const x = (idx % gridW) * sp, y = ((idx / gridW) | 0) * sp;
-        selCtx.fillRect(x, y, sp, sp);
-      }
+      // Photoshop同様、塗りつぶしは無し（マーチングアンツの輪郭のみ）
       const has = i => selection.has(i);
       const P = new Path2D();
       for (const idx of selection) {
@@ -1565,10 +1583,8 @@
   // 選択カーソルの ＋/−/∩ バッジ
   let curMods = { shift: false, alt: false };
   function selSymbol() {
-    if (curMods.shift && curMods.alt) return "∩";
-    if (curMods.shift) return "＋";
-    if (curMods.alt) return "－";
-    return "";
+    const m = effectiveMode(curMods.shift, curMods.alt);
+    return m === "add" ? "＋" : m === "sub" ? "－" : m === "intersect" ? "∩" : "";
   }
   function positionSelBadge(cx, cy) {
     const b = els.selBadge;
@@ -1651,10 +1667,17 @@
     document.querySelectorAll(".tbtn.tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
     applyToolVisual(t);
     els.sideGauge.classList.toggle("show", t === "pen" || t === "eraser");
+    els.selModeBar.classList.toggle("show", isSelTool(t));
     if (!isSelTool(t)) els.selBadge.style.display = "none";
     updateGauge();
   }
   document.querySelectorAll(".tbtn.tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
+  // 選択モード（新規/追加/除外/交差）ボタン（スマホ用・PCの修飾キーが優先）
+  document.querySelectorAll(".tbtn.selmode").forEach(b => b.addEventListener("click", () => {
+    selModeUI = b.dataset.mode;
+    document.querySelectorAll(".tbtn.selmode").forEach(x => x.classList.toggle("active", x === b));
+    positionSelBadge(lastMouseX, lastMouseY);
+  }));
   els.penSize.addEventListener("input", () => applyPenSize(+els.penSize.value));
 
   // Procreate風 縦ゲージのドラッグ
@@ -1673,7 +1696,7 @@
   els.sideGauge.addEventListener("pointerup", () => { gaugeDragging = false; });
   updateGauge();
   els.clearEdits.addEventListener("click", () => {
-    if (editLayer && editLayer.px.size) { pushUndo(new Map(editLayer.px)); editLayer.px.clear(); recompositeOutput(); }
+    if (editLayer && editLayer.px.size) { pushUndo(snapshot()); editLayer.px.clear(); recompositeOutput(); }
   });
 
   // 元に戻す / やり直し
@@ -1760,16 +1783,16 @@
       els.viewport.classList.add("panning");
     } else if (tool === "wand") {
       const d = dotFromEvent(e);
-      if (d) commitSelection(floodRegion(d.gx, d.gy), combineMode(e));
-      else if (combineMode(e) === "replace") clearSelection();
+      if (d) commitSelection(floodRegion(d.gx, d.gy), resolveMode(e));
+      else if (resolveMode(e) === "replace") clearSelection();
     } else if (tool === "rect" || tool === "lasso") {
-      selDragging = true; selMode = combineMode(e);
+      selDragging = true; selMode = resolveMode(e);
       const p = dotPosF(e);
       dragSel = tool === "rect" ? { type: "rect", s: p, c: p } : { type: "lasso", pts: [p] };
       startAnts(); drawSelection();
     } else {
       if ((tool === "pen" || tool === "eraser") && editLayer) {
-        strokeSnapshot = new Map(editLayer.px); strokeChanged = false; // 取り消し用
+        strokeSnapshot = snapshot(); strokeChanged = false; // 取り消し用
       }
       painting = true; handlePaint(e);
     }
@@ -1834,14 +1857,14 @@
     gesture = null;
     const t = ts[0];
     if (tool === "move") { tPanning = true; tLastX = t.clientX; tLastY = t.clientY; }
-    else if (tool === "wand") { const d = dotFromEvent(tPt(t)); if (d) commitSelection(floodRegion(d.gx, d.gy), "replace"); else clearSelection(); }
+    else if (tool === "wand") { const d = dotFromEvent(tPt(t)); if (d) commitSelection(floodRegion(d.gx, d.gy), selModeUI); else if (selModeUI === "replace") clearSelection(); }
     else if (tool === "rect" || tool === "lasso") {
-      selDragging = true; selMode = "replace";
+      selDragging = true; selMode = selModeUI;
       const p = dotPosF(tPt(t));
       dragSel = tool === "rect" ? { type: "rect", s: p, c: p } : { type: "lasso", pts: [p] };
       startAnts(); drawSelection();
     } else {
-      if ((tool === "pen" || tool === "eraser") && editLayer) { strokeSnapshot = new Map(editLayer.px); strokeChanged = false; tPainting = true; }
+      if ((tool === "pen" || tool === "eraser") && editLayer) { strokeSnapshot = snapshot(); strokeChanged = false; tPainting = true; }
       handlePaint(tPt(t)); positionBrush(t.clientX, t.clientY);
     }
   }, { passive: false });
@@ -1871,7 +1894,7 @@
       endTouchStroke();
       if (selDragging) {
         const region = dragSel.type === "rect" ? rectRegion(dragSel.s, dragSel.c) : lassoRegion(dragSel.pts);
-        dragSel = null; selDragging = false; commitSelection(region, "replace");
+        dragSel = null; selDragging = false; commitSelection(region, selMode);
       } else if (seqActive && !seqMoved && (performance.now() - seqStart) < 300) {
         // 素早い複数指タップ：2本=戻る / 3本=進む
         if (seqMaxFingers === 2) undo();
