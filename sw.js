@@ -1,41 +1,16 @@
-/* Service worker: NETWORK-FIRST so updates always show; cache is only an
-   offline fallback. (Previous cache-first version served stale pages.) */
-const CACHE = 'pixel-editor-v3';
-const ASSETS = [
-  './',
-  'editor.html',
-  'index.html',
-  'manifest.json',
-  'icons/icon-192.svg',
-  'icons/icon-512.svg',
-  'icons/icon-maskable.svg'
-];
-
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).catch(() => {}));
-  self.skipWaiting();
-});
-
+/* Self-destructing service worker.
+   Earlier versions cached pages and caused stale loads. This worker now
+   clears all caches, unregisters itself, and reloads open pages so no
+   stale service worker can keep serving old content. */
+self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
-
-// Network-first for same-origin GET: always try the network, update the
-// cache, and fall back to cache only when offline.
-self.addEventListener('fetch', e => {
-  const req = e.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  e.respondWith(
-    fetch(req).then(res => {
-      if (res && res.status === 200 && res.type === 'basic') {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
-      }
-      return res;
-    }).catch(() => caches.match(req))
-  );
+  e.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      await self.registration.unregister();
+      const clients = await self.clients.matchAll({ type: 'window' });
+      clients.forEach(c => c.navigate(c.url));
+    } catch (_) {}
+  })());
 });

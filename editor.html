@@ -1148,12 +1148,12 @@ function boot(){
   newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
   window.addEventListener('resize',()=>{fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;render();}},120);
+  // Purge any previously-registered service worker + caches (they caused
+  // stale loads). No SW is registered now: the page always loads fresh.
   if('serviceWorker' in navigator){
-    const hadController=!!navigator.serviceWorker.controller;
-    navigator.serviceWorker.register('sw.js').then(r=>r.update()).catch(()=>{});
-    if(hadController){let reloaded=false;
-      navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!reloaded){reloaded=true;location.reload();}});}
+    navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister())).catch(()=>{});
   }
+  if(window.caches){caches.keys().then(ks=>ks.forEach(k=>caches.delete(k))).catch(()=>{});}
 }
 boot();
 </script>

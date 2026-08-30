@@ -473,6 +473,9 @@
 <script>
 (() => {
   "use strict";
+  // Purge any old service worker + caches that could serve stale pages.
+  if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});
+  if (window.caches) caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(() => {});
   const $ = id => document.getElementById(id);
   const els = {
     viewport: $("viewport"), stage: $("stage"), canvas: $("outCanvas"),
