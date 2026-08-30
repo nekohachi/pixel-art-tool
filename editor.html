@@ -1107,7 +1107,12 @@ function boot(){
   newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
   window.addEventListener('resize',()=>{fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;render();}},120);
-  if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if('serviceWorker' in navigator){
+    const hadController=!!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then(r=>r.update()).catch(()=>{});
+    if(hadController){let reloaded=false;
+      navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!reloaded){reloaded=true;location.reload();}});}
+  }
 }
 boot();
 </script>
