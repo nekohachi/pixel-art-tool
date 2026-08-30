@@ -1611,7 +1611,7 @@
   function handlePaint(e) {
     const d = dotFromEvent(e);
     if (!d) return;
-    if (tool === "spuit") { eyedrop(d.gx, d.gy); return; }
+    if (forcePick || tool === "spuit") { eyedrop(d.gx, d.gy); return; }
     if (!editLayer) return;
     const size = +els.penSize.value, half = Math.floor((size - 1) / 2);
     const hex = els.penColor.value;
@@ -1772,13 +1772,22 @@
   window.addEventListener("blur", stopSizeHold);
 
   // マウス＋ペンタブ（Pointer Events）。タッチは専用ハンドラで処理するので除外。
-  let dragging = false, lastX = 0, lastY = 0, selDragging = false, selMode = "replace";
+  // ペン先側サイドスイッチ（バレルボタン）を押している間はスポイトに（離すと元のツールへ）
+  let dragging = false, lastX = 0, lastY = 0, selDragging = false, selMode = "replace", forcePick = false;
+  const barrelHeld = e => e.pointerType === "pen" && (e.buttons & 2) === 2;
+  els.viewport.addEventListener("contextmenu", e => e.preventDefault()); // バレルボタンの右クリックメニューを抑止
   els.viewport.addEventListener("pointerdown", e => {
     if (activeIndex < 0 || e.pointerType === "touch") return;
     if (e.button === 1) { // 中ボタンドラッグでパン（Figma風のつかみ移動）
       e.preventDefault();
       dragging = true; lastX = e.clientX; lastY = e.clientY;
       els.viewport.classList.add("panning");
+      return;
+    }
+    // ペン先側サイドスイッチを押しながら描くと、その間だけスポイト（選択ツール中は除く）
+    if (barrelHeld(e) && !isSelTool(tool)) {
+      e.preventDefault();
+      forcePick = true; painting = true; handlePaint(e);
       return;
     }
     if (e.button !== 0) return;
@@ -1828,7 +1837,7 @@
     }
     if (painting && strokeChanged && strokeSnapshot) pushUndo(strokeSnapshot);
     strokeSnapshot = null; strokeChanged = false;
-    dragging = false; painting = false; els.viewport.classList.remove("panning");
+    dragging = false; painting = false; forcePick = false; els.viewport.classList.remove("panning");
   });
   els.viewport.addEventListener("pointerleave", e => { if (e.pointerType !== "touch") els.brush.style.display = "none"; });
 
