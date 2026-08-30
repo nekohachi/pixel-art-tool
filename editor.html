@@ -97,6 +97,16 @@
   input[type=color]{width:30px;height:26px;border:1px solid var(--border);border-radius:6px;background:var(--panel2);padding:0;}
   .selmodes{display:flex;gap:6px;}
   .selmodes .minibtn{flex:1;height:28px;}
+  /* Floating +/- selection modifier buttons beside the left gauge */
+  .selmod{position:absolute;left:58px;top:50%;transform:translateY(-50%);z-index:15;
+    display:none;flex-direction:column;gap:12px;touch-action:none;}
+  .selmod.show{display:flex;}
+  .selmod button{width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:26px;line-height:1;font-weight:600;
+    box-shadow:0 3px 10px #0008;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .selmod button.on{background:var(--accent2);border-color:#fff;color:#fff;box-shadow:0 0 0 3px var(--accent2),0 3px 10px #0008;}
+  .selmod .cap{font-size:10px;color:var(--muted);text-align:center;margin-top:3px;text-shadow:0 1px 3px #000;}
+  @media (max-width:760px){.selmod{left:50px;}}
 
   /* Aseprite-style timeline */
   .timeline{flex:none;background:var(--panel);border-top:1px solid var(--border);
@@ -186,6 +196,18 @@
     <div class="brushcursor" id="brushcursor"></div>
   </div>
 
+  <!-- Floating selection modifier buttons (Ctrl/Alt equivalents) -->
+  <div class="selmod" id="selMod">
+    <div>
+      <button id="selPlus" title="選択に追加：押しながら選択／タップでロック">＋</button>
+      <div class="cap">追加</div>
+    </div>
+    <div>
+      <button id="selMinus" title="選択から除外：押しながら選択／タップでロック">−</button>
+      <div class="cap">除外</div>
+    </div>
+  </div>
+
   <div class="rightwrap">
     <!-- Panel -->
     <div class="side" id="side">
@@ -200,11 +222,12 @@
       </div>
 
       <div class="sec" id="selSec">
-        <h3>選択モード</h3>
+        <h3>選択</h3>
         <div class="selmodes">
-          <button class="minibtn" id="selAdd" title="追加 (Ctrl)">＋ 追加</button>
-          <button class="minibtn" id="selSub" title="除外 (Alt)">− 除外</button>
-          <button class="minibtn" id="selNone" title="選択解除">解除</button>
+          <button class="minibtn" id="selNone" title="選択解除" style="flex:1;height:30px">選択解除</button>
+        </div>
+        <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5">
+          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で<br>追加／除外（タップでロックも可）。<br>PCは Ctrl=追加 / Alt=除外。
         </div>
       </div>
 
@@ -440,6 +463,7 @@ function render(){
   }
   if(showGridFlag&&zoom>=6)drawGrid();
   drawSelectionOverlay();
+  updateSelModVisible();
 }
 function drawFrameLayer(fi,alpha){
   const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;
@@ -467,7 +491,8 @@ function drawGrid(){
 /* ================= Selection (mask based) ================= */
 // selection = { mask:Uint8Array(W*H), bounds:{x0,y0,x1,y1} } | null
 let selection=null;
-let stickySel='replace';    // replace | add | subtract
+let stickySel='replace';    // replace | add | subtract  (tap-locked)
+let selHold=null;           // 'add' | 'subtract'         (while +/- held)
 let curSelMode='replace';
 function selBuf(){return new Uint8Array(W*H);}
 function hasSel(){return !!selection;}
@@ -475,7 +500,8 @@ function inSelection(x,y){if(!selection)return true;return !!selection.mask[y*W+
 function selModeFrom(e){
   if(e&&(e.ctrlKey||e.metaKey))return 'add';
   if(e&&e.altKey)return 'subtract';
-  return stickySel;
+  if(selHold)return selHold;      // finger held on +/- button
+  return stickySel;               // tap-locked mode
 }
 function applyShape(shp,mode){
   if(mode==='add'){
@@ -582,6 +608,7 @@ function setTool(t){
   $$('.tool').forEach(b=>{if(b.dataset.tool!=='mirror')b.classList.toggle('active',b.dataset.tool===t);});
   if(['pencil','eraser','bucket','line','rect','ellipse'].includes(t))lastPaintTool=t;
   $('#selSec').style.display=SELTOOL.includes(t)?'block':'none';
+  updateSelModVisible();
   updateBrushCursor();
 }
 function inBounds(x,y){return x>=0&&y>=0&&x<W&&y<H;}
@@ -956,10 +983,24 @@ $('#showGrid').onchange=e=>{showGridFlag=e.target.checked;render();};
 $('#colorPick').oninput=e=>setColorHex(e.target.value);
 $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){palette.push(hex);renderPalette();}};
 $('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#mUndo').onclick=undo;$('#mRedo').onclick=redo;
-$('#selAdd').onclick=()=>{stickySel=stickySel==='add'?'replace':'add';updateSelBtns();};
-$('#selSub').onclick=()=>{stickySel=stickySel==='subtract'?'replace':'subtract';updateSelBtns();};
 $('#selNone').onclick=()=>{deselect();toast('選択解除');};
-function updateSelBtns(){$('#selAdd').classList.toggle('on',stickySel==='add');$('#selSub').classList.toggle('on',stickySel==='subtract');}
+// Big +/- buttons act as Ctrl/Alt: hold to modify momentarily, tap to lock.
+let selHoldTime=0;
+function bindSelMod(btn,mode){
+  btn.addEventListener('pointerdown',e=>{e.preventDefault();try{btn.setPointerCapture(e.pointerId);}catch(_){}
+    selHold=mode;selHoldTime=performance.now();updateSelBtns();});
+  const up=e=>{try{btn.releasePointerCapture(e.pointerId);}catch(_){}
+    const dt=performance.now()-selHoldTime;selHold=null;
+    if(dt<250)stickySel=(stickySel===mode?'replace':mode);  // quick tap = toggle lock
+    updateSelBtns();};
+  btn.addEventListener('pointerup',up);btn.addEventListener('pointercancel',up);
+}
+bindSelMod($('#selPlus'),'add');bindSelMod($('#selMinus'),'subtract');
+function updateSelBtns(){
+  const add=selHold==='add'||stickySel==='add', sub=selHold==='subtract'||stickySel==='subtract';
+  $('#selPlus').classList.toggle('on',add);$('#selMinus').classList.toggle('on',sub);
+}
+function updateSelModVisible(){$('#selMod').classList.toggle('show',SELTOOL.includes(tool)||!!selection);}
 function togglePanel(){$('#side').classList.toggle('open');}
 $('#mPanel').onclick=togglePanel;
 
