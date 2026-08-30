@@ -329,7 +329,7 @@
     <div class="row" style="flex-direction:column;gap:8px;margin-top:0">
       <button class="hbtn" data-act="new">🆕 新規キャンバス</button>
       <button class="hbtn" data-act="resize">📐 キャンバスサイズ変更</button>
-      <button class="hbtn" data-act="import">🖼 画像を読み込み</button>
+      <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
       <button class="hbtn" data-act="save">💾 プロジェクト保存 (.pxproj)</button>
       <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
       <button class="hbtn" data-act="exportPng">⬇ PNG書き出し（現フレーム）</button>
@@ -363,7 +363,7 @@
   </div>
 </div>
 
-<input type="file" id="fileImg" accept="image/*" style="display:none">
+<input type="file" id="fileImg" accept="image/*,.ase,.aseprite" style="display:none">
 <input type="file" id="fileProj" accept=".pxproj,application/json" style="display:none">
 <div class="toast" id="toast"></div>
 
@@ -1099,16 +1099,114 @@ function resizeCanvas(nw,nh){pushUndo();const ow=W,oh=H,nm=new Map();
   W=nw;H=nh;doc.cels=nm;ensureComp();$('#docsize').textContent=W+'×'+H;selection=null;fitView();render();refreshTimeline();toast('サイズ変更 '+nw+'×'+nh);}
 
 /* ================= Import ================= */
-$('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;const img=new Image();
-  img.onload=()=>{const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;
-    const tc=tmp.getContext('2d');tc.imageSmoothingEnabled=false;
-    const scale=Math.min(W/img.width,H/img.height);const dw=Math.round(img.width*scale),dh=Math.round(img.height*scale);
-    tc.drawImage(img,(W-dw>>1),(H-dh>>1),dw,dh);const data=tc.getImageData(0,0,W,H).data;
-    pushUndo();const nl={id:uid(),name:f.name.slice(0,16),visible:true,opacity:255,locked:false};
-    doc.layers.push(nl);activeLayer=doc.layers.length-1;const cel=new Uint32Array(W*H);
-    for(let i=0;i<W*H;i++)cel[i]=rgba(data[i*4],data[i*4+1],data[i*4+2],data[i*4+3]);
-    doc.cels.set(celKey(nl.id,activeFrame),cel);refreshTimeline();render();toast('画像を読み込みました');};
+$('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;
+  const name=(f.name||'').toLowerCase();
+  if(name.endsWith('.ase')||name.endsWith('.aseprite')){
+    const rd=new FileReader();
+    rd.onload=()=>{loadAse(rd.result).catch(err=>{console.error(err);toast('Aseprite読み込み失敗: '+err.message);});};
+    rd.readAsArrayBuffer(f);e.target.value='';return;
+  }
+  // PNG/その他画像: 元の画像サイズのまま新規キャンバスに読み込む
+  const img=new Image();
+  img.onload=()=>{
+    let iw=img.width, ih=img.height; const CAP=2048; let scaled=false;
+    if(iw>CAP||ih>CAP){const s=Math.min(CAP/iw,CAP/ih);iw=Math.max(1,Math.round(iw*s));ih=Math.max(1,Math.round(ih*s));scaled=true;}
+    newDoc(iw,ih);
+    const tmp=document.createElement('canvas');tmp.width=iw;tmp.height=ih;
+    const tc=tmp.getContext('2d');tc.imageSmoothingEnabled=false;tc.drawImage(img,0,0,iw,ih);
+    const d=tc.getImageData(0,0,iw,ih).data;const cel=getCel(0,0);
+    for(let i=0;i<iw*ih;i++)cel[i]=rgba(d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]);
+    refreshTimeline();render();updateCelThumb(0,0);
+    toast('画像を読み込みました '+iw+'×'+ih+(scaled?'（縮小）':''));
+  };
+  img.onerror=()=>toast('画像の読み込みに失敗');
   img.src=URL.createObjectURL(f);e.target.value='';};
+
+/* ---- Aseprite (.ase / .aseprite) importer ---- */
+async function inflateZlib(bytes){
+  if(!('DecompressionStream' in window))throw new Error('この端末は解凍(DecompressionStream)に非対応');
+  const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function loadAse(ab){
+  const dv=new DataView(ab), bytes=new Uint8Array(ab); let o=0;
+  const u8=()=>dv.getUint8(o++);
+  const u16=()=>{const v=dv.getUint16(o,true);o+=2;return v;};
+  const i16=()=>{const v=dv.getInt16(o,true);o+=2;return v;};
+  const u32=()=>{const v=dv.getUint32(o,true);o+=4;return v;};
+  const str=()=>{const n=u16();let s='';for(let i=0;i<n;i++)s+=String.fromCharCode(u8());return s;};
+  u32(); const magic=u16(); if(magic!==0xA5E0)throw new Error('Asepriteファイルではありません');
+  const nFrames=u16(), w=u16(), h=u16(), depth=u16();
+  u32(); u16(); u32(); u32(); const transIndex=u8(); o+=3; u16(); u8(); u8();
+  o=128;
+  const palette=[]; const aseLayers=[]; const ourLayers=[]; const frameDur=[];
+  const tasks=[];
+  for(let f=0; f<nFrames; f++){
+    const frameStart=o; const frameBytes=u32(); u16(); const oldN=u16(); const dur=u16(); o+=2; const newN=u32();
+    const nChunks=newN||oldN; frameDur[f]=dur||125;
+    for(let c=0;c<nChunks;c++){
+      const chunkStart=o; const chunkSize=u32(); const type=u16();
+      if(type===0x2004){ // layer
+        const lflags=u16(), ltype=u16(); u16(); u16(); u16(); u16(); const lop=u8(); o+=3; const nm=str();
+        if(ltype===0){aseLayers.push(ourLayers.length);
+          ourLayers.push({id:uid(),name:nm||('レイヤー '+(ourLayers.length+1)),visible:!!(lflags&1),opacity:lop,locked:false});}
+        else aseLayers.push(null);
+      }else if(type===0x2019){ // palette
+        u32(); const first=u32(); const last=u32(); o+=8;
+        for(let i=first;i<=last;i++){const pf=u16();const r=u8(),g=u8(),b=u8(),a=u8();if(pf&1)str();palette[i]=[r,g,b,a];}
+      }else if(type===0x0004||type===0x0011){ // old palette
+        const nPk=u16();let idx=0;
+        for(let p=0;p<nPk;p++){idx+=u8();let cnt=u8();if(cnt===0)cnt=256;
+          for(let k=0;k<cnt;k++){const r=u8(),g=u8(),b=u8();palette[idx++]=[r,g,b,255];}}
+      }else if(type===0x2005){ // cel
+        const li=u16(); const x=i16(); const y=i16(); u8(); const ct=u16(); o+=7;
+        if(ct===0||ct===2){const cw=u16(), ch=u16();
+          tasks.push({li,frame:f,x,y,cw,ch,ct,raw:bytes.slice(o,chunkStart+chunkSize)});}
+        else if(ct===1){const link=u16();tasks.push({li,frame:f,link});}
+      }
+      o=chunkStart+chunkSize;
+    }
+    o=frameStart+frameBytes;
+  }
+  // Build cel buffers (inflate compressed ones)
+  const celBuf=new Map();
+  for(const t of tasks){
+    if(t.link!==undefined)continue;
+    const src=t.ct===2?await inflateZlib(t.raw):t.raw;
+    const buf=new Uint32Array(w*h);
+    blitAse(buf,src,t.x,t.y,t.cw,t.ch,depth,palette,transIndex,w,h);
+    celBuf.set(t.li+':'+t.frame,buf);
+  }
+  for(const t of tasks){if(t.link!==undefined){const s=celBuf.get(t.li+':'+t.link);if(s)celBuf.set(t.li+':'+t.frame,s.slice());}}
+  // Commit into the document model
+  W=w;H=h;
+  doc={layers:ourLayers.length?ourLayers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
+       frames:[],cels:new Map()};
+  for(let f=0;f<nFrames;f++)doc.frames.push({id:uid(),duration:frameDur[f]||125});
+  for(const [key,buf] of celBuf){const [li,fr]=key.split(':').map(Number);const our=aseLayers[li];
+    if(our==null)continue;doc.cels.set(doc.layers[our].id+':'+fr,buf);}
+  if(palette.length){const p=palette.filter(Boolean).map(c=>'#'+[c[0],c[1],c[2]].map(v=>v.toString(16).padStart(2,'0')).join(''));
+    palette2set(p);}
+  activeLayer=doc.layers.length-1;activeFrame=0;undoStack=[];redoStack=[];selection=null;
+  ensureComp();$('#docsize').textContent=W+'×'+H;fitView();refreshTimeline();render();updateUndoUI();
+  toast('Asepriteを読み込みました '+w+'×'+h+' / '+nFrames+'フレーム');
+}
+function blitAse(buf,src,x,y,cw,ch,depth,palette,transIndex,W,H){
+  for(let yy=0;yy<ch;yy++){const ty=y+yy;if(ty<0||ty>=H)continue;
+    for(let xx=0;xx<cw;xx++){const tx=x+xx;if(tx<0||tx>=W)continue;
+      const si=yy*cw+xx;let r,g,b,a;
+      if(depth===32){const p=si*4;r=src[p];g=src[p+1];b=src[p+2];a=src[p+3];}
+      else if(depth===16){const p=si*2;r=g=b=src[p];a=src[p+1];}
+      else{const idx=src[si];if(idx===transIndex){continue;}const c=palette[idx]||[0,0,0,255];r=c[0];g=c[1];b=c[2];a=c[3];}
+      if(!a)continue;buf[ty*W+tx]=rgba(r,g,b,a);
+    }
+  }
+}
+function palette2set(hexes){
+  const seen=new Set();const out=[];
+  for(const h of hexes){if(!seen.has(h)){seen.add(h);out.push(h);}if(out.length>=48)break;}
+  if(out.length){palette=['#00000000',...out];activeSwatch=1;renderPalette();}
+}
 window.addEventListener('load',()=>{try{const bridge=sessionStorage.getItem('pxbridge');
   if(bridge){sessionStorage.removeItem('pxbridge');const img=new Image();
     img.onload=()=>{newDoc(img.width,img.height);const cel=new Uint32Array(W*H);
