@@ -122,10 +122,21 @@
   /* Aseprite-style timeline */
   .timeline{flex:none;background:var(--panel);border-top:1px solid var(--border);
     display:flex;flex-direction:column;max-height:190px;}
-  .tl-ctrls{display:flex;align-items:center;gap:5px;padding:5px 8px;border-bottom:1px solid var(--border);
+  .tl-ctrls{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);
     overflow-x:auto;}
-  .tl-ctrls .vsep{width:1px;height:20px;background:var(--border);margin:0 3px;flex:none;}
-  .tl-ctrls .lbl{color:var(--muted);font-size:11px;flex:none;}
+  .tl-ctrls .vsep{width:1px;height:22px;background:var(--border);margin:0 3px;flex:none;}
+  .tl-ctrls .lbl{color:var(--muted);font-size:11px;flex:none;white-space:nowrap;}
+  .playbtn{flex:none;width:52px;height:36px;border:1px solid var(--accent);background:var(--accent);
+    color:#fff;border-radius:9px;font-size:18px;cursor:pointer;line-height:1;}
+  .playbtn:active{filter:brightness(1.15);}
+  .playbtn.playing{background:var(--panel3);border-color:var(--border);}
+  .fps-slider{flex:none;width:120px;height:30px;}
+  .dellabel{width:auto;padding:0 8px;height:30px;font-size:12px;flex:none;}
+  /* Layer controls live in the timeline corner, above the layer column */
+  .tl-corner{display:flex;align-items:stretch;}
+  .corner-btn{flex:1;min-width:0;border:none;border-right:1px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:15px;cursor:pointer;line-height:1;padding:0;}
+  .corner-btn:active{background:var(--panel3);}
   .tl-scroll{overflow:auto;flex:1;}
   .tl-grid{display:inline-block;min-width:100%;}
   .tl-row{display:flex;align-items:stretch;}
@@ -133,15 +144,15 @@
   .tl-corner{width:118px;flex:none;position:sticky;left:0;z-index:4;background:var(--panel);
     border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
   .tl-fnum{width:44px;flex:none;text-align:center;font-size:11px;color:var(--muted);
-    padding:4px 0;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
+    padding:9px 0;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
     cursor:grab;touch-action:none;}
   .tl-fnum.active{background:var(--accent);color:#fff;}
   .tl-lhead{width:118px;flex:none;position:sticky;left:0;z-index:2;background:var(--panel2);
     display:flex;align-items:center;gap:1px;padding:0 3px;border-right:1px solid var(--border);
     border-bottom:1px solid var(--border);cursor:pointer;height:46px;}
   .tl-lhead.active{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent);}
-  .tl-lhead .grip{width:15px;flex:none;text-align:center;cursor:grab;touch-action:none;
-    color:var(--muted);font-size:14px;line-height:1;}
+  .tl-lhead .grip{width:24px;flex:none;text-align:center;cursor:grab;touch-action:none;
+    color:var(--muted);font-size:17px;line-height:1;align-self:stretch;display:flex;align-items:center;justify-content:center;}
   .tl-lhead .eye,.tl-lhead .lock{font-size:13px;width:19px;text-align:center;flex:none;cursor:pointer;}
   .tl-lhead .lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;outline:none;}
   .tl-lhead.drag,.tl-fnum.drag{opacity:.35;}
@@ -307,21 +318,19 @@
 <!-- Timeline -->
 <div class="timeline">
   <div class="tl-ctrls">
-    <button class="minibtn" id="playBtn" title="再生">▶</button>
-    <button class="minibtn" id="onionBtn" title="オニオンスキン">🧅</button>
+    <button class="playbtn" id="playBtn" title="再生 / 停止">▶</button>
+    <button class="minibtn" id="onionBtn" title="オニオンスキン：前後のフレームを薄く重ねて表示（作画の目安）">🧅</button>
     <span class="lbl">FPS</span>
-    <input type="number" class="num" id="fps" value="8" min="1" max="60" style="width:48px">
+    <input type="range" id="fps" min="1" max="30" value="8" class="fps-slider" title="再生スピード">
+    <span id="fpsV" class="lbl" style="min-width:46px">8&nbsp;fps</span>
     <span class="vsep"></span>
     <span class="lbl">フレーム</span>
     <button class="minibtn" id="frameAdd" title="フレーム追加">＋</button>
     <button class="minibtn" id="frameDup" title="フレーム複製">⧉</button>
-    <button class="minibtn danger" id="frameDel" title="フレーム削除">🗑</button>
-    <span class="vsep"></span>
-    <span class="lbl">レイヤー</span>
-    <button class="minibtn" id="layerAdd" title="レイヤー追加">＋</button>
-    <button class="minibtn" id="layerDup" title="レイヤー複製">⧉</button>
-    <button class="minibtn" id="layerMerge" title="下と結合">⬇</button>
-    <button class="minibtn danger" id="layerDel" title="レイヤー削除">🗑</button>
+    <span style="flex:1;min-width:16px"></span>
+    <span class="lbl" style="color:var(--danger)">削除</span>
+    <button class="minibtn danger dellabel" id="frameDel" title="現在のフレームを削除">🗑ﾌﾚｰﾑ</button>
+    <button class="minibtn danger dellabel" id="layerDel" title="現在のレイヤーを削除">🗑ﾚｲﾔｰ</button>
   </div>
   <div class="tl-scroll"><div class="tl-grid" id="tlGrid"></div></div>
 </div>
@@ -896,7 +905,12 @@ function drawCelThumb(ctx,layerId,fi){
 function refreshTimeline(){
   const grid=$('#tlGrid');grid.innerHTML='';
   const hrow=document.createElement('div');hrow.className='tl-row tl-head';
-  const corner=document.createElement('div');corner.className='tl-corner';hrow.appendChild(corner);
+  const corner=document.createElement('div');corner.className='tl-corner';
+  const mkc=(txt,title,fn)=>{const b=document.createElement('button');b.className='corner-btn';b.textContent=txt;b.title=title;b.onclick=fn;return b;};
+  corner.appendChild(mkc('＋','レイヤー追加',addLayer));
+  corner.appendChild(mkc('⧉','レイヤー複製',dupLayerFn));
+  corner.appendChild(mkc('⬇','下と結合',mergeLayerFn));
+  hrow.appendChild(corner);
   doc.frames.forEach((f,fi)=>{
     const c=document.createElement('div');c.className='tl-fnum'+(fi===activeFrame?' active':'');c.textContent=fi+1;
     c.dataset.fi=fi;
@@ -938,6 +952,8 @@ function refreshTimeline(){
 let drag=null, justDragged=false;
 function beginReorder(kind,el,e){
   const sx=e.clientX, sy=e.clientY; let started=false;
+  const cap=e.currentTarget||e.target;   // keep receiving moves on touch
+  try{cap.setPointerCapture(e.pointerId);}catch(_){}
   const move=ev=>{
     if(!started){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)<7)return;started=true;startDrag(kind,el);}
     dragMove(ev);
@@ -1027,22 +1043,23 @@ function syncLayerPanel(){
 }
 
 /* Layer ops */
-$('#layerAdd').onclick=()=>{pushUndo();doc.layers.splice(activeLayer+1,0,{id:uid(),name:'レイヤー '+(doc.layers.length+1),visible:true,opacity:255,locked:false});activeLayer++;refreshTimeline();render();};
-$('#layerDup').onclick=()=>{pushUndo();const src=doc.layers[activeLayer];
+function addLayer(){pushUndo();doc.layers.splice(activeLayer+1,0,{id:uid(),name:'レイヤー '+(doc.layers.length+1),visible:true,opacity:255,locked:false});activeLayer++;refreshTimeline();render();}
+function dupLayerFn(){pushUndo();const src=doc.layers[activeLayer];
   const nl={id:uid(),name:src.name+' コピー',visible:true,opacity:src.opacity,locked:false};
   doc.layers.splice(activeLayer+1,0,nl);
   doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});
-  activeLayer++;refreshTimeline();render();};
-$('#layerDel').onclick=()=>{if(doc.layers.length<=1){toast('最後のレイヤーは削除できません');return;}
+  activeLayer++;refreshTimeline();render();}
+function delLayerFn(){if(doc.layers.length<=1){toast('最後のレイヤーは削除できません');return;}
   pushUndo();const L=doc.layers[activeLayer];doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));
-  doc.layers.splice(activeLayer,1);activeLayer=Math.max(0,activeLayer-1);refreshTimeline();render();};
-$('#layerMerge').onclick=()=>{if(activeLayer===0){toast('下にレイヤーがありません');return;}
+  doc.layers.splice(activeLayer,1);activeLayer=Math.max(0,activeLayer-1);refreshTimeline();render();}
+function mergeLayerFn(){if(activeLayer===0){toast('下にレイヤーがありません');return;}
   pushUndo();const top=doc.layers[activeLayer],bot=doc.layers[activeLayer-1];
   doc.frames.forEach((f,fi)=>{const tc=doc.cels.get(celKey(top.id,fi));if(!tc)return;
     let bcel=doc.cels.get(celKey(bot.id,fi));if(!bcel){bcel=newCel();doc.cels.set(celKey(bot.id,fi),bcel);}
     for(let i=0;i<tc.length;i++){const s=tc[i];const sa=Math.round(((s>>>24)&255)*top.opacity/255);if(sa)bcel[i]=blend(bcel[i],s,sa);}
     doc.cels.delete(celKey(top.id,fi));});
-  doc.layers.splice(activeLayer,1);activeLayer--;refreshTimeline();render();};
+  doc.layers.splice(activeLayer,1);activeLayer--;refreshTimeline();render();}
+$('#layerDel').onclick=delLayerFn;
 $('#layerOpacity').oninput=e=>{doc.layers[activeLayer].opacity=+e.target.value;$('#layerOpacityV').textContent=Math.round(e.target.value/255*100)+'%';render();};
 
 /* Frame ops */
@@ -1067,11 +1084,12 @@ let playing=false, playT=null;
 $('#playBtn').onclick=()=>{
   if(playing){stopPlay();return;}
   if(doc.frames.length<2){toast('フレームが1枚です');return;}
-  playing=true;$('#playBtn').textContent='⏸';let fi=activeFrame;
+  playing=true;$('#playBtn').textContent='⏸';$('#playBtn').classList.add('playing');let fi=activeFrame;
   const step=()=>{fi=(fi+1)%doc.frames.length;activeFrame=fi;highlightTimeline();render();playT=setTimeout(step,1000/(+$('#fps').value||8));};
   playT=setTimeout(step,1000/(+$('#fps').value||8));
 };
-function stopPlay(){playing=false;$('#playBtn').textContent='▶';clearTimeout(playT);refreshTimeline();}
+function stopPlay(){playing=false;$('#playBtn').textContent='▶';$('#playBtn').classList.remove('playing');clearTimeout(playT);refreshTimeline();}
+$('#fps').oninput=e=>{$('#fpsV').innerHTML=e.target.value+'&nbsp;fps';};
 $('#onionBtn').onclick=()=>{onion=!onion;$('#onionBtn').classList.toggle('on',onion);render();};
 
 /* ================= Left brush gauge ================= */
