@@ -255,8 +255,11 @@
         <div class="selmodes">
           <button class="minibtn" id="selNone" title="選択解除" style="flex:1;height:30px">選択解除</button>
         </div>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px">
+          <input type="checkbox" id="fillGap"> 🩹 移動時に隙間を埋める
+        </label>
         <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5">
-          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で<br>追加／除外（タップでロックも可）。<br>PCは Ctrl=追加 / Alt=除外。
+          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で追加／除外（タップでロックも可）。PCは Ctrl=追加 / Alt=除外。
         </div>
       </div>
 
@@ -849,6 +852,8 @@ function endMove(cancel){
   moving=false;
   if(cancel){if(undoStack.length)restore(undoStack.pop());updateUndoUI();moveData=null;render();return;}
   if(selection&&moveData){
+    if(fillOnMove&&moveData.mask&&(moveData.dx||moveData.dy))
+      edgeExtendFill(activeCel(),moveData.base,moveData.mask,moveData.dx,moveData.dy);
     const nm=selBuf();const{dx,dy}=moveData;
     for(let i=0;i<W*H;i++)if(selection.mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
     selection.mask=nm;computeSelBounds();
@@ -1089,6 +1094,7 @@ gtrack.addEventListener('pointercancel',()=>{gaugeDrag=false;});
 $$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 $('#opacity').oninput=e=>{opacity=+e.target.value;$('#opacityV').textContent=Math.round(opacity/255*100)+'%';};
 $('#pixelPerfect').onchange=e=>pixelPerfect=e.target.checked;
+$('#fillGap').onchange=e=>{fillOnMove=e.target.checked;toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
 $('#showGrid').onchange=e=>{showGridFlag=e.target.checked;render();};
 $('#colorPick').oninput=e=>setColorHex(e.target.value);
 $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){palette.push(hex);renderPalette();}};
@@ -1120,12 +1126,27 @@ function nudgeStep(dx,dy,firstPush){
   if(!selection)return;
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');stopNudge();return;}
   if(firstPush)pushUndo();
-  const cel=activeCel(),mask=selection.mask,buf=new Uint32Array(W*H);
-  for(let i=0;i<W*H;i++)if(mask[i]){buf[i]=cel[i];cel[i]=0;}
-  for(let i=0;i<W*H;i++){if(!mask[i])continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=buf[i];}
+  const cel=activeCel(),mask=selection.mask,origCel=cel.slice();
+  for(let i=0;i<W*H;i++)if(mask[i])cel[i]=0;
+  for(let i=0;i<W*H;i++){if(!mask[i])continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=origCel[i];}
+  if(fillOnMove)edgeExtendFill(cel,origCel,mask,dx,dy);
   const nm=selBuf();
   for(let i=0;i<W*H;i++)if(mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
   selection.mask=nm;computeSelBounds();render();updateCelThumb(activeLayer,activeFrame);
+}
+// Fill the vacated gap by stretching the trailing edge of the moved content:
+// each gap pixel (was opaque, now empty) copies the nearest moved-content
+// pixel found by marching in the move direction.
+let fillOnMove=false;
+function edgeExtendFill(cel,origCel,mask,dx,dy){
+  const sx=Math.sign(dx), sy=Math.sign(dy); if(!sx&&!sy)return;
+  const maxS=Math.max(W,H);
+  for(let i=0;i<W*H;i++){
+    if(!mask[i]||!origCel[i]||cel[i])continue; // only gaps that used to have content
+    let x=i%W, y=(i/W)|0, c=0;
+    for(let s=0;s<maxS;s++){x+=sx;y+=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){c=v;break;}}
+    if(c)cel[i]=c;
+  }
 }
 let nudgeTimer=null;
 function startNudge(dx,dy){nudgeStep(dx,dy,true);clearInterval(nudgeTimer);nudgeTimer=setInterval(()=>nudgeStep(dx,dy,false),120);}
