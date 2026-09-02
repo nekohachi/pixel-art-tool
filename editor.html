@@ -523,16 +523,23 @@ function compositeFrame(frameIdx,ctxTarget){
   }
   ctxTarget.putImageData(new ImageData(new Uint8ClampedArray(out.buffer),W,H),0,0);
 }
-function render(){
+// render() = recomposite then paint (use after any pixel/layer/frame change).
+// renderView() = paint only, reusing the cached composite (use for pan/zoom/
+// selection animation) so view changes stay O(1) on big canvases.
+let compDirty=true;
+function render(){compDirty=true;paintView();}
+function renderView(){paintView();}
+function paintView(){
   const rect=stage.getBoundingClientRect();
-  view.width=rect.width;view.height=rect.height;
-  vctx.imageSmoothingEnabled=false;vctx.clearRect(0,0,view.width,view.height);
+  if(view.width!==rect.width||view.height!==rect.height){view.width=rect.width;view.height=rect.height;}
+  else vctx.clearRect(0,0,view.width,view.height);
+  vctx.imageSmoothingEnabled=false;
   drawChecker();
   if(onion){
     if(activeFrame>0)drawFrameLayer(activeFrame-1,.28);
     if(activeFrame<doc.frames.length-1)drawFrameLayer(activeFrame+1,.28);
   }
-  compositeFrame(activeFrame,cctx);
+  if(compDirty){compositeFrame(activeFrame,cctx);compDirty=false;}
   vctx.imageSmoothingEnabled=false;
   vctx.drawImage(comp,0,0,W,H,panX,panY,W*zoom,H*zoom);
   if(previewCel){
@@ -549,16 +556,14 @@ function drawFrameLayer(fi,alpha){
   compositeFrame(fi,tmp.getContext('2d'));
   vctx.globalAlpha=alpha;vctx.drawImage(tmp,0,0,W,H,panX,panY,W*zoom,H*zoom);vctx.globalAlpha=1;
 }
+// Cached, screen-fixed transparency checker (one fillRect per paint).
+let checkerPat=null;
 function drawChecker(){
-  vctx.save();vctx.beginPath();vctx.rect(panX,panY,W*zoom,H*zoom);vctx.clip();
-  const c1='#2b2d34',c2='#23252b',cell=zoom*2;
-  for(let y=0;y<H*zoom;y+=cell)for(let x=0;x<W*zoom;x+=cell){
-    vctx.fillStyle=c1;vctx.fillRect(panX+x,panY+y,zoom,zoom);
-    vctx.fillStyle=c1;vctx.fillRect(panX+x+zoom,panY+y+zoom,zoom,zoom);
-    vctx.fillStyle=c2;vctx.fillRect(panX+x+zoom,panY+y,zoom,zoom);
-    vctx.fillStyle=c2;vctx.fillRect(panX+x,panY+y+zoom,zoom,zoom);
-  }
-  vctx.restore();
+  if(!checkerPat){const s=16,t=document.createElement('canvas');t.width=s;t.height=s;const tc=t.getContext('2d');
+    tc.fillStyle='#2b2d34';tc.fillRect(0,0,s,s);
+    tc.fillStyle='#23252b';tc.fillRect(0,0,s/2,s/2);tc.fillRect(s/2,s/2,s/2,s/2);
+    checkerPat=vctx.createPattern(t,'repeat');}
+  vctx.fillStyle=checkerPat;vctx.fillRect(panX,panY,W*zoom,H*zoom);
 }
 function drawGrid(){
   vctx.strokeStyle='rgba(255,255,255,.12)';vctx.lineWidth=1;vctx.beginPath();
@@ -800,7 +805,7 @@ function cancelMove(){
 stage.addEventListener('pointerdown',e=>{
   stage.setPointerCapture(e.pointerId);
   const now=performance.now();
-  if(pointers.size===0)gesture={maxFingers:0,startT:now,cx:e.clientX,cy:e.clientY,zoom0:zoom,moved:0};
+  if(pointers.size===0)gesture={maxFingers:0,startT:now,cx:e.clientX,cy:e.clientY,zoom0:zoom,moved:0,zoomed:false};
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   gesture.maxFingers=Math.max(gesture.maxFingers,pointers.size);
 
@@ -808,7 +813,7 @@ stage.addEventListener('pointerdown',e=>{
     clearHold();if(picking){picking=false;$('#loupe').classList.remove('show');}
     cancelStroke();cancelMove();panning=false;
     const pts=[...pointers.values()];
-    pinch={d:dist(pts[0],pts[1]),cx:(pts[0].x+pts[1].x)/2,cy:(pts[0].y+pts[1].y)/2,zoom,panX,panY};
+    pinch={d:dist(pts[0],pts[1]),cx:(pts[0].x+pts[1].x)/2,cy:(pts[0].y+pts[1].y)/2,zoom,panX,panY,active:false};
     return;
   }
 
@@ -898,13 +903,22 @@ stage.addEventListener('pointermove',e=>{
   if(pinch&&pointers.size>=2){
     const pts=[...pointers.values()];const d=dist(pts[0],pts[1]);
     const cx=(pts[0].x+pts[1].x)/2,cy=(pts[0].y+pts[1].y)/2;
-    gesture.moved=Math.max(gesture.moved,Math.hypot(cx-gesture.cx,cy-gesture.cy));
+    const cenMove=Math.hypot(cx-pinch.cx,cy-pinch.cy);   // vs initial centroid
+    gesture.moved=Math.max(gesture.moved,cenMove);
+    // Deadzone: don't start zoom/pan until fingers clearly spread or slide,
+    // so a quick 2-finger tap (=undo) isn't mistaken for a zoom.
+    if(!pinch.active){
+      if(Math.abs(d/pinch.d-1)<0.14 && cenMove<16)return;   // still a tap candidate
+      pinch.active=true;gesture.zoomed=true;
+      // re-anchor so motion starts smoothly from here
+      pinch.d=d;pinch.cx=cx;pinch.cy=cy;pinch.zoom=zoom;pinch.panX=panX;pinch.panY=panY;
+    }
     let nz=Math.max(1,Math.min(64,pinch.zoom*(d/pinch.d)));
     const rect=stage.getBoundingClientRect();
     const ox=(pinch.cx-rect.left-pinch.panX)/pinch.zoom, oy=(pinch.cy-rect.top-pinch.panY)/pinch.zoom;
-    zoom=nz;panX=(cx-rect.left)-ox*zoom;panY=(cy-rect.top)-oy*zoom;render();return;
+    zoom=nz;panX=(cx-rect.left)-ox*zoom;panY=(cy-rect.top)-oy*zoom;renderView();return;
   }
-  if(panning){panX=panStart.panX+(e.clientX-panStart.x);panY=panStart.panY+(e.clientY-panStart.y);render();return;}
+  if(panning){panX=panStart.panX+(e.clientX-panStart.x);panY=panStart.panY+(e.clientY-panStart.y);renderView();return;}
   if(moving){doMove(e);return;}
   if(!drawing)return;
   if(holdTimer&&holdStart&&Math.hypot(e.clientX-holdStart.cx,e.clientY-holdStart.cy)>6)clearHold(); // moved => it's a stroke
@@ -926,10 +940,10 @@ function endPointer(e){
   if(pointers.size<2)pinch=null;
   if(picking&&pointers.size===0){commitPick();return;}
   if(pointers.size===0){
-    // gesture: multi-finger tap => undo/redo
+    // gesture: multi-finger tap => undo/redo (favored over a tiny pinch:
+    // only rejected once the pinch deadzone actually engaged a zoom/pan)
     const dt=performance.now()-gesture.startT;
-    const zoomChanged=Math.abs(zoom-gesture.zoom0)/gesture.zoom0>0.06;
-    if(dt<300&&!zoomChanged&&gesture.moved<14&&gesture.maxFingers>=2){
+    if(dt<360&&!gesture.zoomed&&gesture.moved<22&&gesture.maxFingers>=2){
       if(gesture.maxFingers===2){undo();}
       else if(gesture.maxFingers>=3){redo();}
       finishAll();return;
@@ -963,7 +977,7 @@ function updateShapePreview(x,y){
   if(tool==='line')lineTo(ov,startPix.x,startPix.y,x,y,false);
   else if(tool==='rect')strokeRectShape(ov,startPix.x,startPix.y,x,y);
   else if(tool==='ellipse')strokeEllipse(ov,startPix.x,startPix.y,x,y);
-  previewCel=ov;render();
+  previewCel=ov;renderView();
 }
 
 /* Move tool with mask */
@@ -1341,7 +1355,7 @@ stage.addEventListener('wheel',e=>{
   e.preventDefault();const rect=stage.getBoundingClientRect();
   const ox=(e.clientX-rect.left-panX)/zoom,oy=(e.clientY-rect.top-panY)/zoom;
   zoom=Math.max(1,Math.min(64,zoom*(e.deltaY<0?1.15:0.87)));
-  panX=(e.clientX-rect.left)-ox*zoom;panY=(e.clientY-rect.top)-oy*zoom;render();
+  panX=(e.clientX-rect.left)-ox*zoom;panY=(e.clientY-rect.top)-oy*zoom;renderView();
 },{passive:false});
 
 /* ================= Menu ================= */
@@ -1564,7 +1578,7 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
 function boot(){
   newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
   window.addEventListener('resize',()=>{fitView();render();});
-  setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;render();}},120);
+  setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
   // Purge any previously-registered service worker + caches (they caused
   // stale loads). No SW is registered now: the page always loads fresh.
   if('serviceWorker' in navigator){
