@@ -33,10 +33,27 @@
   .hbtn:active{background:var(--panel3);}
   .hbtn.icon{padding:6px 9px;}
 
-  .main{flex:1;display:flex;min-height:0;position:relative;}
+  #workspace{flex:1;min-height:0;position:relative;overflow:hidden;}
 
-  /* Left brush gauge (Procreate style) */
-  .gauge{flex:none;width:50px;background:var(--panel);border-right:1px solid var(--border);
+  /* Floating panels (Photoshop-style: drag by the grip, long-press to move) */
+  .panel{position:absolute;z-index:20;display:flex;flex-direction:column;
+    border:1px solid var(--border);border-radius:10px;background:var(--panel);
+    box-shadow:0 8px 28px #0007;overflow:hidden;max-width:100%;}
+  .panel.dragging{z-index:45;box-shadow:0 12px 40px #000a;opacity:.97;}
+  .pgrip{flex:none;height:22px;display:flex;align-items:center;justify-content:center;gap:4px;
+    background:var(--panel3);color:var(--muted);font-size:11px;cursor:grab;touch-action:none;
+    user-select:none;letter-spacing:1px;border-bottom:1px solid var(--border);}
+  .pgrip:active{cursor:grabbing;}
+  .presize{flex:none;height:8px;cursor:ns-resize;touch-action:none;background:var(--panel3);
+    border-bottom:1px solid var(--border);}
+  .presize::after{content:"";display:block;width:38px;height:3px;border-radius:2px;
+    background:var(--border);margin:2px auto 0;}
+  #pnlTools .tools,#pnlSide .side,#pnlGauge .gauge{border:none;}
+  #pnlGauge{width:52px;}
+  #pnlTl .timeline{max-height:none;height:100%;flex:1;min-height:0;}
+
+  /* Brush gauge (Procreate style) */
+  .gauge{flex:1;min-height:0;width:100%;background:var(--panel);
     display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:8px;
     touch-action:none;}
   .gauge .g-icon{font-size:15px;opacity:.8;}
@@ -55,7 +72,7 @@
     border:2px solid var(--accent);}
 
   /* Canvas */
-  .stage{flex:1;min-width:0;position:relative;overflow:hidden;background:#15161b;touch-action:none;}
+  .stage{position:absolute;inset:0;overflow:hidden;background:#15161b;touch-action:none;z-index:0;}
   #view{position:absolute;left:0;top:0;image-rendering:pixelated;image-rendering:crisp-edges;}
   .brushcursor{position:absolute;pointer-events:none;border:1px solid #fff;
     box-shadow:0 0 0 1px #000;display:none;z-index:5;mix-blend-mode:difference;}
@@ -72,12 +89,11 @@
     font-variant-numeric:tabular-nums;}
   .loupe-info i{width:16px;height:16px;border-radius:4px;box-shadow:0 0 0 1px #fff6;}
 
-  /* Right side: panel + tool rail */
-  .rightwrap{flex:none;display:flex;min-height:0;}
-  .side{flex:none;width:196px;background:var(--panel);border-left:1px solid var(--border);
-    display:flex;flex-direction:column;min-height:0;overflow-y:auto;}
-  .tools{flex:none;width:52px;background:var(--panel);border-left:1px solid var(--border);
-    display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;overflow-y:auto;}
+  /* Panel contents */
+  .side{width:196px;background:var(--panel);
+    display:flex;flex-direction:column;min-height:0;overflow-y:auto;flex:1;}
+  .tools{width:100%;background:var(--panel);
+    display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;overflow-y:auto;flex:1;min-height:0;}
   .tool{width:42px;height:40px;border:1px solid transparent;background:transparent;
     border-radius:8px;font-size:19px;cursor:pointer;display:flex;align-items:center;
     justify-content:center;flex:none;}
@@ -113,7 +129,7 @@
   .selmodes{display:flex;gap:6px;}
   .selmodes .minibtn{flex:1;height:28px;}
   /* Floating +/- selection modifier buttons beside the left gauge */
-  .selmod{position:absolute;left:58px;top:50%;transform:translateY(-50%);z-index:15;
+  .selmod{position:absolute;left:132px;top:50%;transform:translateY(-50%);z-index:15;
     display:none;flex-direction:column;gap:12px;touch-action:none;}
   .selmod.show{display:flex;}
   .selmod button{width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
@@ -122,7 +138,7 @@
   .selmod button.on{background:var(--accent2);border-color:#fff;color:#fff;box-shadow:0 0 0 3px var(--accent2),0 3px 10px #0008;}
   .selmod .cap{font-size:10px;color:var(--muted);text-align:center;margin-top:3px;text-shadow:0 1px 3px #000;}
   /* D-pad to nudge the selection by 1px */
-  .nudge{position:absolute;left:54px;bottom:14px;z-index:15;display:none;
+  .nudge{position:absolute;left:132px;bottom:14px;z-index:15;display:none;
     grid-template-columns:repeat(3,42px);grid-template-rows:repeat(3,42px);gap:5px;}
   .nudge.show{display:grid;}
   .nudge .nu{border-radius:10px;border:2px solid var(--border);background:var(--panel2);
@@ -133,17 +149,16 @@
     border:none;background:transparent;box-shadow:none;font-size:9px;color:var(--muted);pointer-events:none;}
   .nudge .right{grid-area:2/3}.nudge .down{grid-area:3/2}
   /* Selection delete button: top-left, red, away from the +/- and D-pad */
-  .seldel{position:absolute;left:58px;top:12px;z-index:15;display:none;
+  .seldel{position:absolute;left:132px;top:12px;z-index:15;display:none;
     width:50px;height:50px;border-radius:50%;border:2px solid var(--danger);
     background:var(--panel2);color:var(--danger);font-size:22px;cursor:pointer;
     box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
   .seldel.show{display:flex;}
   .seldel:active{background:var(--danger);color:#fff;}
-  @media (max-width:760px){.selmod{left:50px;} .nudge{left:50px;} .seldel{left:50px;}}
+  @media (max-width:760px){.selmod{left:120px;} .nudge{left:120px;} .seldel{left:120px;}}
 
   /* Aseprite-style timeline */
-  .timeline{flex:none;background:var(--panel);border-top:1px solid var(--border);
-    display:flex;flex-direction:column;max-height:190px;}
+  .timeline{background:var(--panel);display:flex;flex-direction:column;min-height:0;}
   .tl-ctrls{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);
     overflow-x:auto;}
   .tl-ctrls .vsep{width:1px;height:22px;background:var(--border);margin:0 3px;flex:none;}
@@ -211,13 +226,9 @@
     background:#000c;border:1px solid var(--border);border-radius:20px;padding:8px 16px;font-size:13px;z-index:60;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap;}
   .toast.show{opacity:1;}
 
+  #pnlSide.hidden{display:none;}
   @media (max-width:760px){
-    .side{position:absolute;right:52px;top:0;bottom:0;z-index:20;transform:translateX(calc(100% + 52px));
-      transition:transform .2s;box-shadow:-8px 0 24px #0008;}
-    .side.open{transform:none;}
     .mbar{display:flex;}
-    .gauge{width:44px;}
-    .tools{width:48px;}
     .tool{width:38px;height:38px;font-size:18px;}
   }
 </style>
@@ -231,21 +242,8 @@
   <button class="hbtn" id="menuBtn" title="メニュー">☰</button>
 </header>
 
-<div class="main">
-  <!-- Left brush-size gauge -->
-  <div class="gauge" id="gauge">
-    <span class="g-icon">⬤</span>
-    <div class="g-track" id="gtrack">
-      <div class="g-fill" id="gfill"></div>
-      <div class="g-dot" id="gdot"></div>
-    </div>
-    <span class="g-val" id="gval">1</span>
-    <span class="g-icon">•</span>
-    <button class="gtool" data-tool="pencil" id="gPen" title="ペン (B)">✏️</button>
-    <button class="gtool" data-tool="eraser" id="gEraser" title="消しゴム (E)">🧽</button>
-  </div>
-
-  <!-- Canvas -->
+<div id="workspace">
+  <!-- Canvas (fills the workspace; panels float above) -->
   <div class="stage" id="stage">
     <canvas id="view"></canvas>
     <div class="brushcursor" id="brushcursor"></div>
@@ -262,11 +260,7 @@
       <div class="cap">除外</div>
     </div>
   </div>
-
-  <!-- Selection delete (left, kept away from other buttons; undoable) -->
   <button class="seldel" id="selDel" title="選択範囲を削除（元に戻す/2本指タップで復帰）">🗑</button>
-
-  <!-- D-pad: nudge selection by 1px (shown while a selection exists) -->
   <div class="nudge" id="nudge">
     <button class="nu up" data-dx="0" data-dy="-1" title="上へ1px">▲</button>
     <button class="nu left" data-dx="-1" data-dy="0" title="左へ1px">◀</button>
@@ -275,8 +269,43 @@
     <button class="nu down" data-dx="0" data-dy="1" title="下へ1px">▼</button>
   </div>
 
-  <div class="rightwrap">
-    <!-- Panel -->
+  <!-- Brush-size gauge panel -->
+  <div class="panel" id="pnlGauge">
+    <div class="pgrip">⠿ サイズ</div>
+    <div class="gauge" id="gauge">
+      <span class="g-icon">⬤</span>
+      <div class="g-track" id="gtrack"><div class="g-fill" id="gfill"></div><div class="g-dot" id="gdot"></div></div>
+      <span class="g-val" id="gval">1</span>
+      <span class="g-icon">•</span>
+    </div>
+  </div>
+
+  <!-- Tool rail panel -->
+  <div class="panel" id="pnlTools">
+    <div class="pgrip">⠿ ツール</div>
+    <div class="tools" id="tools">
+      <button class="tool active" data-tool="pencil" title="ペン (B)">✏️</button>
+      <button class="tool" data-tool="eraser" title="消しゴム (E)">🧽</button>
+      <button class="tool" data-tool="bucket" title="塗りつぶし (G)">🪣</button>
+      <button class="tool" data-tool="line" title="直線 (L)">📏</button>
+      <button class="tool" data-tool="rect" title="矩形 (U)">▭</button>
+      <button class="tool" data-tool="ellipse" title="楕円 (O)">⬭</button>
+      <button class="tool" data-tool="dropper" title="スポイト (I)">💧</button>
+      <div class="tsep"></div>
+      <button class="tool" data-tool="select" title="矩形選択 (M)">⬚</button>
+      <button class="tool" data-tool="lasso" title="投げ縄 (Q)">🪢</button>
+      <button class="tool" data-tool="wand" title="自動選択 (W)">🪄</button>
+      <button class="tool" data-tool="quick" title="クイック選択（なぞって似た色を選択・A）">🖌️</button>
+      <div class="tsep"></div>
+      <button class="tool" data-tool="move" title="移動 (V)">✥</button>
+      <button class="tool" data-tool="hand" title="手のひら (H)">✋</button>
+      <button class="tool" data-tool="mirror" title="左右対称">🔀</button>
+    </div>
+  </div>
+
+  <!-- Color / settings panel -->
+  <div class="panel" id="pnlSide">
+    <div class="pgrip">⠿ カラー / 設定</div>
     <div class="side" id="side">
       <div class="sec">
         <div class="colrow">
@@ -320,47 +349,31 @@
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- Tool rail (right) -->
-    <div class="tools" id="tools">
-      <button class="tool active" data-tool="pencil" title="ペン (B)">✏️</button>
-      <button class="tool" data-tool="eraser" title="消しゴム (E)">🧽</button>
-      <button class="tool" data-tool="bucket" title="塗りつぶし (G)">🪣</button>
-      <button class="tool" data-tool="line" title="直線 (L)">📏</button>
-      <button class="tool" data-tool="rect" title="矩形 (U)">▭</button>
-      <button class="tool" data-tool="ellipse" title="楕円 (O)">⬭</button>
-      <button class="tool" data-tool="dropper" title="スポイト (I)">💧</button>
-      <div class="tsep"></div>
-      <button class="tool" data-tool="select" title="矩形選択 (M)">⬚</button>
-      <button class="tool" data-tool="lasso" title="投げ縄 (Q)">🪢</button>
-      <button class="tool" data-tool="wand" title="自動選択 (W)">🪄</button>
-      <button class="tool" data-tool="quick" title="クイック選択（なぞって似た色を選択・A）">🖌️</button>
-      <div class="tsep"></div>
-      <button class="tool" data-tool="move" title="移動 (V)">✥</button>
-      <button class="tool" data-tool="hand" title="手のひら (H)">✋</button>
-      <button class="tool" data-tool="mirror" title="左右対称">🔀</button>
+  <!-- Timeline panel (dock-bottom by default; resize via top edge, move via grip) -->
+  <div class="panel" id="pnlTl">
+    <div class="presize" title="ドラッグで高さ変更"></div>
+    <div class="pgrip">⠿ タイムライン</div>
+    <div class="timeline">
+      <div class="tl-ctrls">
+        <button class="playbtn" id="playBtn" title="再生 / 停止">▶</button>
+        <button class="minibtn" id="onionBtn" title="オニオンスキン：前後のフレームを薄く重ねて表示（作画の目安）">🧅</button>
+        <span class="lbl">FPS</span>
+        <input type="range" id="fps" min="1" max="30" value="8" class="fps-slider" title="再生スピード">
+        <span id="fpsV" class="lbl" style="min-width:46px">8&nbsp;fps</span>
+        <span class="vsep"></span>
+        <span class="lbl">フレーム</span>
+        <button class="minibtn" id="frameAdd" title="フレーム追加">＋</button>
+        <button class="minibtn" id="frameDup" title="フレーム複製">⧉</button>
+        <span style="flex:1;min-width:16px"></span>
+        <span class="lbl" style="color:var(--danger)">削除</span>
+        <button class="minibtn danger dellabel" id="frameDel" title="現在のフレームを削除">🗑ﾌﾚｰﾑ</button>
+        <button class="minibtn danger dellabel" id="layerDel" title="現在のレイヤーを削除">🗑ﾚｲﾔｰ</button>
+      </div>
+      <div class="tl-scroll"><div class="tl-grid" id="tlGrid"></div></div>
     </div>
   </div>
-</div>
-
-<!-- Timeline -->
-<div class="timeline">
-  <div class="tl-ctrls">
-    <button class="playbtn" id="playBtn" title="再生 / 停止">▶</button>
-    <button class="minibtn" id="onionBtn" title="オニオンスキン：前後のフレームを薄く重ねて表示（作画の目安）">🧅</button>
-    <span class="lbl">FPS</span>
-    <input type="range" id="fps" min="1" max="30" value="8" class="fps-slider" title="再生スピード">
-    <span id="fpsV" class="lbl" style="min-width:46px">8&nbsp;fps</span>
-    <span class="vsep"></span>
-    <span class="lbl">フレーム</span>
-    <button class="minibtn" id="frameAdd" title="フレーム追加">＋</button>
-    <button class="minibtn" id="frameDup" title="フレーム複製">⧉</button>
-    <span style="flex:1;min-width:16px"></span>
-    <span class="lbl" style="color:var(--danger)">削除</span>
-    <button class="minibtn danger dellabel" id="frameDel" title="現在のフレームを削除">🗑ﾌﾚｰﾑ</button>
-    <button class="minibtn danger dellabel" id="layerDel" title="現在のレイヤーを削除">🗑ﾚｲﾔｰ</button>
-  </div>
-  <div class="tl-scroll"><div class="tl-grid" id="tlGrid"></div></div>
 </div>
 
 <!-- Mobile bar -->
@@ -386,6 +399,7 @@
       <button class="hbtn" data-act="exportGif">🎞 アニメGIF書き出し</button>
       <button class="hbtn" data-act="deselect">⬚ 選択解除</button>
       <button class="hbtn" data-act="clear">🧹 このセルを消去</button>
+      <button class="hbtn" data-act="resetLayout">🧩 レイアウトをリセット</button>
     </div>
     <div class="row"><button class="hbtn" id="menuClose">閉じる</button></div>
   </div>
@@ -1292,9 +1306,6 @@ function deleteSelection(){
   render();updateCelThumb(activeLayer,activeFrame);toast('選択範囲を削除');
 }
 $('#selDel').onclick=deleteSelection;
-// Left pen/eraser quick icons
-$('#gPen').onclick=()=>setTool('pencil');
-$('#gEraser').onclick=()=>setTool('eraser');
 // Nudge the selected content (and marquee) by 1px. A hold coalesces into
 // one undo step (firstPush only on press).
 function nudgeStep(dx,dy,firstPush){
@@ -1332,7 +1343,70 @@ $$('#nudge .nu').forEach(btn=>{
   btn.addEventListener('pointerdown',e=>{e.preventDefault();try{btn.setPointerCapture(e.pointerId);}catch(_){}startNudge(dx,dy);});
   ['pointerup','pointercancel','pointerleave'].forEach(ev=>btn.addEventListener(ev,stopNudge));
 });
-function togglePanel(){$('#side').classList.toggle('open');}
+function togglePanel(){$('#pnlSide').classList.toggle('hidden');}
+
+/* ================= Floating panel layout (drag / resize / persist) ================= */
+const workspace=$('#workspace');
+const PANELS={gauge:'#pnlGauge',tools:'#pnlTools',side:'#pnlSide',tl:'#pnlTl'};
+const LAYOUT_KEY='pxeditor-layout-v1';
+function defaultLayout(){const w=workspace.clientWidth||innerWidth,h=workspace.clientHeight||innerHeight;
+  return {
+    gauge:{left:8,top:8,height:Math.max(240,Math.min(460,h-230))},
+    tools:{left:70,top:8},
+    side:{left:Math.max(140,w-214),top:8,height:Math.min(h-230,540)},
+    tl:{left:0,top:Math.max(120,h-200),width:w,height:190}
+  };}
+function applyPanel(el,c){el.style.left=c.left+'px';el.style.top=c.top+'px';
+  el.style.width=c.width!=null?c.width+'px':'';el.style.height=c.height!=null?c.height+'px':'';}
+function initLayout(){let saved=null;try{const s=localStorage.getItem(LAYOUT_KEY);if(s)saved=JSON.parse(s);}catch(_){}
+  const d=defaultLayout();for(const k in PANELS){const c=Object.assign({},d[k],saved&&saved[k]||{});
+    clampPanelCfg($(PANELS[k]),c);applyPanel($(PANELS[k]),c);}}
+function clampPanelCfg(el,c){const w=workspace.clientWidth,h=workspace.clientHeight;
+  if(c.width)c.width=Math.min(c.width,w); c.left=Math.max(0,Math.min((w||9999)-40,c.left));c.top=Math.max(0,Math.min((h||9999)-30,c.top));}
+function saveLayout(){const L={};for(const k in PANELS){const el=$(PANELS[k]);
+  L[k]={left:parseFloat(el.style.left)||0,top:parseFloat(el.style.top)||0};
+  if(el.style.width)L[k].width=parseFloat(el.style.width);if(el.style.height)L[k].height=parseFloat(el.style.height);}
+  try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(L));}catch(_){}}
+function resetLayout(){try{localStorage.removeItem(LAYOUT_KEY);}catch(_){}
+  const d=defaultLayout();for(const k in PANELS)applyPanel($(PANELS[k]),d[k]);saveLayout();render();toast('レイアウトをリセット');}
+function startPanelDrag(panel,handle,e){
+  e.preventDefault();try{handle.setPointerCapture(e.pointerId);}catch(_){}
+  panel.classList.add('dragging');
+  const wr=workspace.getBoundingClientRect(),r=panel.getBoundingClientRect();
+  const offX=e.clientX-r.left, offY=e.clientY-r.top, pw=r.width, ph=r.height;
+  const move=ev=>{let nx=ev.clientX-wr.left-offX, ny=ev.clientY-wr.top-offY;
+    nx=Math.max(-pw+48,Math.min(wr.width-48,nx));ny=Math.max(0,Math.min(wr.height-24,ny));
+    panel.style.left=nx+'px';panel.style.top=ny+'px';};
+  const up=ev=>{try{handle.releasePointerCapture(ev.pointerId);}catch(_){}
+    panel.classList.remove('dragging');
+    document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);saveLayout();};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
+}
+function makePanelsMovable(){
+  $$('.panel .pgrip').forEach(g=>{const panel=g.closest('.panel');
+    g.addEventListener('pointerdown',e=>startPanelDrag(panel,g,e));});
+  // long-press on a panel's empty area also starts a move
+  $$('.panel').forEach(panel=>{
+    panel.addEventListener('pointerdown',e=>{
+      if(e.target.closest('.pgrip,.presize,button,input,select,textarea,.g-track,.tl-scroll,.palette,[contenteditable]'))return;
+      const sx=e.clientX,sy=e.clientY;
+      const t=setTimeout(()=>{clr();startPanelDrag(panel,panel,e);},420);
+      function mv(ev){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>8)clr();}
+      function clr(){clearTimeout(t);panel.removeEventListener('pointermove',mv);panel.removeEventListener('pointerup',clr);panel.removeEventListener('pointercancel',clr);}
+      panel.addEventListener('pointermove',mv);panel.addEventListener('pointerup',clr);panel.addEventListener('pointercancel',clr);
+    });
+  });
+  // timeline vertical resize (grow upward from the top edge)
+  $$('.presize').forEach(h=>{const panel=h.closest('.panel');
+    h.addEventListener('pointerdown',e=>{e.preventDefault();try{h.setPointerCapture(e.pointerId);}catch(_){}
+      const startY=e.clientY,startH=panel.getBoundingClientRect().height,startTop=parseFloat(panel.style.top)||0;
+      const move=ev=>{let nh=Math.max(90,Math.min(workspace.clientHeight-30,startH-(ev.clientY-startY)));
+        panel.style.height=nh+'px';panel.style.top=(startTop+(startH-nh))+'px';};
+      const up=ev=>{try{h.releasePointerCapture(ev.pointerId);}catch(_){}
+        document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);saveLayout();};
+      document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);});
+  });
+}
 $('#mPanel').onclick=togglePanel;
 
 document.addEventListener('keydown',e=>{
@@ -1368,7 +1442,8 @@ function menuAction(a){$('#menuModal').classList.remove('show');
   switch(a){case 'new':openSize('new');break;case 'resize':openSize('resize');break;
     case 'import':$('#fileImg').click();break;case 'save':saveProject();break;case 'load':$('#fileProj').click();break;
     case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportGif':exportGIF();break;
-    case 'deselect':deselect();break;case 'clear':clearCel();break;}}
+    case 'deselect':deselect();break;case 'clear':clearCel();break;
+    case 'resetLayout':resetLayout();break;}}
 function clearCel(){pushUndo();activeCel().fill(0);render();updateCelThumb(activeLayer,activeFrame);}
 
 let sizeMode='new';
@@ -1576,6 +1651,7 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
 
 /* ================= Boot ================= */
 function boot(){
+  initLayout();makePanelsMovable();
   newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
   window.addEventListener('resize',()=>{fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
