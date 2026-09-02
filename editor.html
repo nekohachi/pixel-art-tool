@@ -59,6 +59,18 @@
   #view{position:absolute;left:0;top:0;image-rendering:pixelated;image-rendering:crisp-edges;}
   .brushcursor{position:absolute;pointer-events:none;border:1px solid #fff;
     box-shadow:0 0 0 1px #000;display:none;z-index:5;mix-blend-mode:difference;}
+  /* Eyedropper loupe */
+  .loupe{position:fixed;z-index:70;display:none;pointer-events:none;width:132px;
+    flex-direction:column;align-items:center;}
+  .loupe.show{display:flex;}
+  .loupe canvas{width:132px;height:132px;border-radius:50%;image-rendering:pixelated;
+    box-shadow:0 6px 24px #000b, 0 0 0 4px var(--panel3);background:#000;}
+  .loupe-ring{position:absolute;top:0;width:132px;height:132px;border-radius:50%;
+    border:3px solid #fff;box-shadow:inset 0 0 0 1px #0008;}
+  .loupe-info{margin-top:8px;display:flex;align-items:center;gap:6px;background:#000c;
+    border:1px solid var(--border);border-radius:14px;padding:4px 10px;font-size:12px;
+    font-variant-numeric:tabular-nums;}
+  .loupe-info i{width:16px;height:16px;border-radius:4px;box-shadow:0 0 0 1px #fff6;}
 
   /* Right side: panel + tool rail */
   .rightwrap{flex:none;display:flex;min-height:0;}
@@ -322,6 +334,7 @@
       <button class="tool" data-tool="select" title="矩形選択 (M)">⬚</button>
       <button class="tool" data-tool="lasso" title="投げ縄 (Q)">🪢</button>
       <button class="tool" data-tool="wand" title="自動選択 (W)">🪄</button>
+      <button class="tool" data-tool="quick" title="クイック選択（なぞって似た色を選択・A）">🖌️</button>
       <div class="tsep"></div>
       <button class="tool" data-tool="move" title="移動 (V)">✥</button>
       <button class="tool" data-tool="hand" title="手のひら (H)">✋</button>
@@ -402,6 +415,13 @@
 <input type="file" id="fileImg" accept="image/*,.ase,.aseprite" style="display:none">
 <input type="file" id="fileProj" accept=".pxproj,application/json" style="display:none">
 <div class="toast" id="toast"></div>
+
+<!-- Eyedropper loupe (Procreate-style magnified cut-in) -->
+<div class="loupe" id="loupe">
+  <canvas id="loupeCv" width="132" height="132"></canvas>
+  <div class="loupe-ring"></div>
+  <div class="loupe-info"><i id="loupeSw"></i><span id="loupeHex">#</span></div>
+</div>
 
 <script>
 "use strict";
@@ -613,6 +633,28 @@ function wandShape(x,y){
     shp[i]=1;st.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);}
   return shp;
 }
+// Quick selection: brush over the canvas to grow the selection to contiguous
+// pixels of a similar color. Works with the +/- (add/subtract) modes.
+let qLast=null, quickSubtract=false;
+function colorClose(a,b){
+  const aa=(a>>>24)&255, ba=(b>>>24)&255;
+  if(aa===0||ba===0)return aa===ba;   // transparent matches only transparent
+  const dr=(a&255)-(b&255),dg=((a>>8)&255)-((b>>8)&255),db=((a>>16)&255)-((b>>16)&255);
+  return dr*dr+dg*dg+db*db<=QUICKTOL*QUICKTOL;
+}
+function quickFlood(x,y,subtract){
+  if(!inBounds(x,y))return;
+  if(!selection)selection={mask:new Uint8Array(W*H)};
+  const cel=activeCel(), target=cel[y*W+x], seen=new Uint8Array(W*H), st=[y*W+x];
+  while(st.length){const i=st.pop();if(seen[i])continue;seen[i]=1;
+    if(!colorClose(cel[i],target))continue;
+    selection.mask[i]=subtract?0:1;
+    const cx=i%W, cy=(i/W)|0;
+    if(cx>0)st.push(i-1);if(cx<W-1)st.push(i+1);if(cy>0)st.push(i-W);if(cy<H-1)st.push(i+W);
+  }
+  let any=false;for(let i=0;i<selection.mask.length;i++)if(selection.mask[i]){any=true;break;}
+  if(!any)selection=null;else computeSelBounds();
+}
 function deselect(){selection=null;render();}
 let antsPhase=0;
 function drawSelectionOverlay(){
@@ -660,7 +702,8 @@ let color=packHex('#e6e8ee',255);
 let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false;
 let previewCel=null;
 const SHAPE=['line','rect','ellipse'];
-const SELTOOL=['select','lasso','wand'];
+const SELTOOL=['select','lasso','wand','quick'];
+const QUICKTOL=48; // color tolerance for quick-selection
 // Per-tool brush size (pen & eraser keep separate sizes, etc.)
 const SIZETOOLS=['pencil','eraser','line','rect','ellipse'];
 const brushSizes={pencil:1,eraser:1,line:1,rect:1,ellipse:1};
@@ -762,7 +805,8 @@ stage.addEventListener('pointerdown',e=>{
   gesture.maxFingers=Math.max(gesture.maxFingers,pointers.size);
 
   if(pointers.size>=2){
-    clearHold();cancelStroke();cancelMove();panning=false;
+    clearHold();if(picking){picking=false;$('#loupe').classList.remove('show');}
+    cancelStroke();cancelMove();panning=false;
     const pts=[...pointers.values()];
     pinch={d:dist(pts[0],pts[1]),cx:(pts[0].x+pts[1].x)/2,cy:(pts[0].y+pts[1].y)/2,zoom,panX,panY};
     return;
@@ -776,6 +820,9 @@ stage.addEventListener('pointerdown',e=>{
     pushUndo();curSelMode=selModeFrom(e);drawing=true;startPix={x:clampX(x),y:clampY(y)};dragCur={x:clampX(x),y:clampY(y)};
     if(tool==='wand'){applyShape(wandShape(x,y),curSelMode);drawing=false;render();return;}
     if(tool==='lasso')lassoPts=[{x:clampX(x),y:clampY(y)}];
+    if(tool==='quick'){quickSubtract=(curSelMode==='subtract');
+      if(curSelMode==='replace')selection=null;    // new selection grows from here
+      qLast={x:clampX(x),y:clampY(y)};quickFlood(qLast.x,qLast.y,quickSubtract);render();return;}
     render();return;
   }
   // paint tools
@@ -790,19 +837,59 @@ stage.addEventListener('pointerdown',e=>{
   if(pixelPerfect&&!erase&&brushSize<=1)ppPlot(cel,x,y);else paintPix(cel,x,y,erase);
   render();
 });
-let holdTimer=null, holdStart=null, holdPicked=false;
+let holdTimer=null, holdStart=null, picking=false, pickHex=null;
 function startHoldPick(cx,cy,px,py){
   clearHold();holdStart={cx,cy,px,py};
   holdTimer=setTimeout(()=>{holdTimer=null;
     if(!drawing)return;
     cancelStroke();               // revert the just-started dot/preview
-    pickColor(holdStart.px,holdStart.py);
+    beginPick(holdStart.cx,holdStart.cy);
   },450);
 }
 function clearHold(){if(holdTimer){clearTimeout(holdTimer);holdTimer=null;}}
+// Interactive eyedropper loupe (drag to adjust, release to confirm)
+function beginPick(cx,cy){
+  picking=true;compositeFrame(activeFrame,cctx); // snapshot visible pixels once
+  $('#loupe').classList.add('show');updatePick(cx,cy);
+}
+function updatePick(cx,cy){
+  const{x,y}=screenToPix(cx,cy);
+  const cxp=clampX(x), cyp=clampY(y);
+  drawLoupe(cxp,cyp);
+  // sample color
+  const d=cctx.getImageData(cxp,cyp,1,1).data;
+  if(d[3]>0){pickHex='#'+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
+    $('#loupeSw').style.background=pickHex;$('#loupeHex').textContent=pickHex;}
+  else{pickHex=null;$('#loupeSw').style.background='transparent';$('#loupeHex').textContent='透明';}
+  // position loupe above the finger, clamped
+  const L=$('#loupe'),w=132;let lx=cx-w/2, ly=cy-w-40;
+  lx=Math.max(6,Math.min(innerWidth-w-6,lx)); if(ly<6)ly=cy+40;
+  L.style.left=lx+'px';L.style.top=ly+'px';
+}
+function drawLoupe(px,py){
+  const cv=$('#loupeCv'),ctx=cv.getContext('2d');const N=13,cell=cv.width/N,half=N>>1;
+  ctx.imageSmoothingEnabled=false;
+  // checker backdrop
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){ctx.fillStyle=((i+j)&1)?'#2b2d34':'#23252b';ctx.fillRect(i*cell,j*cell,cell,cell);}
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){
+    const sx=px-half+i, sy=py-half+j;
+    if(sx<0||sy<0||sx>=W||sy>=H)continue;
+    const d=cctx.getImageData(sx,sy,1,1).data;if(d[3]===0)continue;
+    ctx.fillStyle=`rgba(${d[0]},${d[1]},${d[2]},${d[3]/255})`;ctx.fillRect(i*cell,j*cell,cell,cell);
+  }
+  // center target cell
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(half*cell+1,half*cell+1,cell-2,cell-2);
+  ctx.strokeStyle='#000';ctx.lineWidth=1;ctx.strokeRect(half*cell+0.5,half*cell+0.5,cell-1,cell-1);
+}
+function commitPick(){
+  picking=false;$('#loupe').classList.remove('show');
+  if(pickHex){setColorHex(pickHex);toast(pickHex);}
+  setTool(lastPaintTool);pickHex=null;
+}
 
 stage.addEventListener('pointermove',e=>{
   if(pointers.has(e.pointerId))pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(picking){updatePick(e.clientX,e.clientY);return;}
   if(['pencil','eraser'].includes(tool)&&e.pointerType!=='touch'){
     bc.style.display='block';const s=Math.max(1,brushSize)*zoom;const{x,y}=screenToPix(e.clientX,e.clientY);
     const off=brushSize>1?(brushSize-1)/2*zoom:0;
@@ -825,6 +912,8 @@ stage.addEventListener('pointermove',e=>{
   if(tool==='select'){dragCur={x:clampX(x),y:clampY(y)};render();return;}
   if(tool==='lasso'){const p={x:clampX(x),y:clampY(y)};const last=lassoPts[lassoPts.length-1];
     if(!last||last.x!==p.x||last.y!==p.y)lassoPts.push(p);render();return;}
+  if(tool==='quick'){const cx=clampX(x),cy=clampY(y);
+    if(!qLast||qLast.x!==cx||qLast.y!==cy){qLast={x:cx,y:cy};quickFlood(cx,cy,quickSubtract);render();}return;}
   if(SHAPE.includes(tool)){updateShapePreview(x,y);return;}
   const cel=activeCel();const erase=tool==='eraser';
   lineTo(cel,lastPix.x,lastPix.y,x,y,erase);lastPix={x,y};render();updateCelThumbThrottled();
@@ -835,6 +924,7 @@ function endPointer(e){
   clearHold();
   const wasN=pointers.size;pointers.delete(e.pointerId);
   if(pointers.size<2)pinch=null;
+  if(picking&&pointers.size===0){commitPick();return;}
   if(pointers.size===0){
     // gesture: multi-finger tap => undo/redo
     const dt=performance.now()-gesture.startT;
@@ -859,6 +949,7 @@ function finishAll(){
       }
     }else if(tool==='lasso'){
       applyShape(lassoShape(lassoPts),curSelMode);lassoPts=null;
+    }else if(tool==='quick'){qLast=null;computeSelBounds();
     }else if(SHAPE.includes(tool)&&previewCel){activeCel().set(previewCel);previewCel=null;}
     dragCur=null;render();updateCelThumb(activeLayer,activeFrame);
   }
@@ -1238,7 +1329,7 @@ document.addEventListener('keydown',e=>{
   if(k==='escape'){deselect();return;}
   if(selection&&k.startsWith('arrow')){const d={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]}[k];
     if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
-  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',q:'lasso',w:'wand',v:'move',h:'hand'};
+  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',q:'lasso',w:'wand',a:'quick',v:'move',h:'hand'};
   if(map[k])setTool(map[k]);
   if(k==='['){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===']'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
