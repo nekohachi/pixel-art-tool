@@ -42,6 +42,9 @@
   .gauge .g-icon{font-size:15px;opacity:.8;}
   .gauge .g-val{font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;
     background:var(--panel3);border-radius:6px;padding:2px 0;width:34px;text-align:center;}
+  .gauge .gtool{width:40px;height:40px;border:1px solid var(--border);background:var(--panel2);
+    border-radius:9px;font-size:20px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;padding:0;}
+  .gauge .gtool.active{background:var(--accent);border-color:var(--accent);}
   .g-track{flex:1;width:20px;border-radius:12px;background:var(--panel3);
     position:relative;overflow:hidden;margin:4px 0;box-shadow:inset 0 0 0 1px var(--border);
     touch-action:none;cursor:ns-resize;}
@@ -117,7 +120,14 @@
   .nudge .up{grid-area:1/2}.nudge .left{grid-area:2/1}.nudge .mid{grid-area:2/2;
     border:none;background:transparent;box-shadow:none;font-size:9px;color:var(--muted);pointer-events:none;}
   .nudge .right{grid-area:2/3}.nudge .down{grid-area:3/2}
-  @media (max-width:760px){.selmod{left:50px;} .nudge{left:50px;}}
+  /* Selection delete button: top-left, red, away from the +/- and D-pad */
+  .seldel{position:absolute;left:58px;top:12px;z-index:15;display:none;
+    width:50px;height:50px;border-radius:50%;border:2px solid var(--danger);
+    background:var(--panel2);color:var(--danger);font-size:22px;cursor:pointer;
+    box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
+  .seldel.show{display:flex;}
+  .seldel:active{background:var(--danger);color:#fff;}
+  @media (max-width:760px){.selmod{left:50px;} .nudge{left:50px;} .seldel{left:50px;}}
 
   /* Aseprite-style timeline */
   .timeline{flex:none;background:var(--panel);border-top:1px solid var(--border);
@@ -219,6 +229,8 @@
     </div>
     <span class="g-val" id="gval">1</span>
     <span class="g-icon">•</span>
+    <button class="gtool" data-tool="pencil" id="gPen" title="ペン (B)">✏️</button>
+    <button class="gtool" data-tool="eraser" id="gEraser" title="消しゴム (E)">🧽</button>
   </div>
 
   <!-- Canvas -->
@@ -238,6 +250,9 @@
       <div class="cap">除外</div>
     </div>
   </div>
+
+  <!-- Selection delete (left, kept away from other buttons; undoable) -->
+  <button class="seldel" id="selDel" title="選択範囲を削除（元に戻す/2本指タップで復帰）">🗑</button>
 
   <!-- D-pad: nudge selection by 1px (shown while a selection exists) -->
   <div class="nudge" id="nudge">
@@ -428,7 +443,8 @@ const HISTORY_MAX=40;
 function snapshot(){
   const cels={};doc.cels.forEach((v,k)=>{cels[k]=v.slice();});
   return {W,H,layers:JSON.parse(JSON.stringify(doc.layers)),
-    frames:JSON.parse(JSON.stringify(doc.frames)),cels,activeLayer,activeFrame};
+    frames:JSON.parse(JSON.stringify(doc.frames)),cels,activeLayer,activeFrame,
+    sel:selection?selection.mask.slice():null};
 }
 function restore(s){
   W=s.W;H=s.H;
@@ -437,7 +453,9 @@ function restore(s){
   doc.cels=new Map();for(const k in s.cels)doc.cels.set(k,s.cels[k].slice());
   activeLayer=Math.min(s.activeLayer,doc.layers.length-1);
   activeFrame=Math.min(s.activeFrame,doc.frames.length-1);
-  selection=null;
+  // selection is part of history: restore it (guarded to current size)
+  if(s.sel&&s.sel.length===W*H){selection={mask:s.sel.slice()};computeSelBounds();}
+  else selection=null;
   $('#docsize').textContent=W+'×'+H;ensureComp();refreshTimeline();render();
 }
 let lastClearedRedo=[];
@@ -643,11 +661,16 @@ let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false;
 let previewCel=null;
 const SHAPE=['line','rect','ellipse'];
 const SELTOOL=['select','lasso','wand'];
+// Per-tool brush size (pen & eraser keep separate sizes, etc.)
+const SIZETOOLS=['pencil','eraser','line','rect','ellipse'];
+const brushSizes={pencil:1,eraser:1,line:1,rect:1,ellipse:1};
 function setTool(t){
   if(t==='mirror'){mirrorX=!mirrorX;$$('.tool[data-tool="mirror"]').forEach(b=>b.classList.toggle('on',mirrorX));toast(mirrorX?'左右対称 ON':'左右対称 OFF');return;}
   tool=t;
   $$('.tool').forEach(b=>{if(b.dataset.tool!=='mirror')b.classList.toggle('active',b.dataset.tool===t);});
+  $$('.gtool').forEach(b=>b.classList.toggle('active',b.dataset.tool===t)); // left pen/eraser icons
   if(['pencil','eraser','bucket','line','rect','ellipse'].includes(t))lastPaintTool=t;
+  if(SIZETOOLS.includes(t)){brushSize=brushSizes[t];updateGauge();} // load this tool's size
   $('#selSec').style.display=SELTOOL.includes(t)?'block':'none';
   updateSelModVisible();
   updateBrushCursor();
@@ -739,7 +762,7 @@ stage.addEventListener('pointerdown',e=>{
   gesture.maxFingers=Math.max(gesture.maxFingers,pointers.size);
 
   if(pointers.size>=2){
-    cancelStroke();cancelMove();panning=false;
+    clearHold();cancelStroke();cancelMove();panning=false;
     const pts=[...pointers.values()];
     pinch={d:dist(pts[0],pts[1]),cx:(pts[0].x+pts[1].x)/2,cy:(pts[0].y+pts[1].y)/2,zoom,panX,panY};
     return;
@@ -760,11 +783,23 @@ stage.addEventListener('pointerdown',e=>{
   pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];
   const cel=activeCel();
   if(tool==='bucket'){floodFill(cel,x,y);drawing=false;render();updateCelThumb(activeLayer,activeFrame);return;}
+  // Procreate-style long-press eyedropper (pencil/eraser/shape tools)
+  startHoldPick(e.clientX,e.clientY,x,y);
   if(SHAPE.includes(tool)){previewCel=cel.slice();updateShapePreview(x,y);return;}
   const erase=tool==='eraser';
   if(pixelPerfect&&!erase&&brushSize<=1)ppPlot(cel,x,y);else paintPix(cel,x,y,erase);
   render();
 });
+let holdTimer=null, holdStart=null, holdPicked=false;
+function startHoldPick(cx,cy,px,py){
+  clearHold();holdStart={cx,cy,px,py};
+  holdTimer=setTimeout(()=>{holdTimer=null;
+    if(!drawing)return;
+    cancelStroke();               // revert the just-started dot/preview
+    pickColor(holdStart.px,holdStart.py);
+  },450);
+}
+function clearHold(){if(holdTimer){clearTimeout(holdTimer);holdTimer=null;}}
 
 stage.addEventListener('pointermove',e=>{
   if(pointers.has(e.pointerId))pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
@@ -785,6 +820,7 @@ stage.addEventListener('pointermove',e=>{
   if(panning){panX=panStart.panX+(e.clientX-panStart.x);panY=panStart.panY+(e.clientY-panStart.y);render();return;}
   if(moving){doMove(e);return;}
   if(!drawing)return;
+  if(holdTimer&&holdStart&&Math.hypot(e.clientX-holdStart.cx,e.clientY-holdStart.cy)>6)clearHold(); // moved => it's a stroke
   const{x,y}=screenToPix(e.clientX,e.clientY);
   if(tool==='select'){dragCur={x:clampX(x),y:clampY(y)};render();return;}
   if(tool==='lasso'){const p={x:clampX(x),y:clampY(y)};const last=lassoPts[lassoPts.length-1];
@@ -796,6 +832,7 @@ stage.addEventListener('pointermove',e=>{
 
 function endPointer(e){
   try{stage.releasePointerCapture(e.pointerId);}catch(_){}
+  clearHold();
   const wasN=pointers.size;pointers.delete(e.pointerId);
   if(pointers.size<2)pinch=null;
   if(pointers.size===0){
@@ -1101,7 +1138,9 @@ function updateGauge(){
 }
 function setBrushFromY(clientY){
   const r=gtrack.getBoundingClientRect();let f=1-(clientY-r.top)/r.height;f=Math.max(0,Math.min(1,f));
-  brushSize=Math.round(1+f*(MAXBRUSH-1));updateGauge();updateBrushCursor();
+  brushSize=Math.round(1+f*(MAXBRUSH-1));
+  if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize; // remember per tool
+  updateGauge();updateBrushCursor();
 }
 gtrack.addEventListener('pointerdown',e=>{gtrack.setPointerCapture(e.pointerId);gaugeDrag=true;setBrushFromY(e.clientY);e.preventDefault();});
 gtrack.addEventListener('pointermove',e=>{if(gaugeDrag)setBrushFromY(e.clientY);});
@@ -1137,7 +1176,20 @@ function updateSelBtns(){
 function updateSelModVisible(){
   $('#selMod').classList.toggle('show',SELTOOL.includes(tool)||!!selection);
   $('#nudge').classList.toggle('show',!!selection);
+  $('#selDel').classList.toggle('show',!!selection);
 }
+// Delete (clear) the selected pixels on the active layer (undoable).
+function deleteSelection(){
+  if(!selection)return;
+  if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
+  pushUndo();const cel=activeCel();
+  for(let i=0;i<W*H;i++)if(selection.mask[i])cel[i]=0;
+  render();updateCelThumb(activeLayer,activeFrame);toast('選択範囲を削除');
+}
+$('#selDel').onclick=deleteSelection;
+// Left pen/eraser quick icons
+$('#gPen').onclick=()=>setTool('pencil');
+$('#gEraser').onclick=()=>setTool('eraser');
 // Nudge the selected content (and marquee) by 1px. A hold coalesces into
 // one undo step (firstPush only on press).
 function nudgeStep(dx,dy,firstPush){
@@ -1188,8 +1240,8 @@ document.addEventListener('keydown',e=>{
     if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
   const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',q:'lasso',w:'wand',v:'move',h:'hand'};
   if(map[k])setTool(map[k]);
-  if(k==='['){brushSize=Math.max(1,brushSize-1);updateGauge();updateBrushCursor();}
-  if(k===']'){brushSize=Math.min(MAXBRUSH,brushSize+1);updateGauge();updateBrushCursor();}
+  if(k==='['){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
+  if(k===']'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===' ')spaceHand=true;
   if(k==='delete'||k==='backspace'){clearCel();}
 });
