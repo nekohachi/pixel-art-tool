@@ -133,14 +133,23 @@
   .tl-corner{width:118px;flex:none;position:sticky;left:0;z-index:4;background:var(--panel);
     border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
   .tl-fnum{width:44px;flex:none;text-align:center;font-size:11px;color:var(--muted);
-    padding:4px 0;border-right:1px solid var(--border);border-bottom:1px solid var(--border);cursor:pointer;}
+    padding:4px 0;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
+    cursor:grab;touch-action:none;}
   .tl-fnum.active{background:var(--accent);color:#fff;}
   .tl-lhead{width:118px;flex:none;position:sticky;left:0;z-index:2;background:var(--panel2);
-    display:flex;align-items:center;gap:2px;padding:0 4px;border-right:1px solid var(--border);
+    display:flex;align-items:center;gap:1px;padding:0 3px;border-right:1px solid var(--border);
     border-bottom:1px solid var(--border);cursor:pointer;height:46px;}
   .tl-lhead.active{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent);}
-  .tl-lhead .eye,.tl-lhead .lock{font-size:13px;width:20px;text-align:center;flex:none;cursor:pointer;}
+  .tl-lhead .grip{width:15px;flex:none;text-align:center;cursor:grab;touch-action:none;
+    color:var(--muted);font-size:14px;line-height:1;}
+  .tl-lhead .eye,.tl-lhead .lock{font-size:13px;width:19px;text-align:center;flex:none;cursor:pointer;}
   .tl-lhead .lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;outline:none;}
+  .tl-lhead.drag,.tl-fnum.drag{opacity:.35;}
+  .tl-ghost{position:fixed;z-index:100;pointer-events:none;background:var(--panel3);
+    border:1px solid var(--accent);border-radius:6px;padding:4px 8px;font-size:12px;
+    box-shadow:0 6px 20px #000a;max-width:140px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+  .tl-drop{position:fixed;z-index:99;background:var(--accent);pointer-events:none;border-radius:2px;
+    box-shadow:0 0 6px var(--accent);}
   .tl-cell{width:44px;height:46px;flex:none;border-right:1px solid var(--border);
     border-bottom:1px solid var(--border);cursor:pointer;background:#0e0f13;
     display:flex;align-items:center;justify-content:center;padding:3px;}
@@ -885,18 +894,21 @@ function refreshTimeline(){
   const corner=document.createElement('div');corner.className='tl-corner';hrow.appendChild(corner);
   doc.frames.forEach((f,fi)=>{
     const c=document.createElement('div');c.className='tl-fnum'+(fi===activeFrame?' active':'');c.textContent=fi+1;
-    c.onclick=()=>{activeFrame=fi;refreshTimeline();render();};attachLong(c,()=>frameMenu(fi));
+    c.dataset.fi=fi;
+    c.onclick=()=>{if(justDragged)return;activeFrame=fi;refreshTimeline();render();};
+    c.addEventListener('pointerdown',e=>beginReorder('frame',c,e));
     hrow.appendChild(c);
   });
   grid.appendChild(hrow);
   for(let li=doc.layers.length-1;li>=0;li--){
     const L=doc.layers[li];const row=document.createElement('div');row.className='tl-row';
-    const head=document.createElement('div');head.className='tl-lhead'+(li===activeLayer?' active':'');
-    head.innerHTML=`<span class="eye">${L.visible?'👁':'🚫'}</span><span class="lock">${L.locked?'🔒':'🔓'}</span><span class="lname">${L.name}</span>`;
+    const head=document.createElement('div');head.className='tl-lhead'+(li===activeLayer?' active':'');head.dataset.li=li;
+    head.innerHTML=`<span class="grip" title="ドラッグで並べ替え">⠿</span><span class="eye">${L.visible?'👁':'🚫'}</span><span class="lock">${L.locked?'🔒':'🔓'}</span><span class="lname">${L.name}</span>`;
+    head.querySelector('.grip').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();beginReorder('layer',head,e);});
     head.querySelector('.eye').onclick=e=>{e.stopPropagation();L.visible=!L.visible;refreshTimeline();render();};
     head.querySelector('.lock').onclick=e=>{e.stopPropagation();L.locked=!L.locked;refreshTimeline();};
     const ln=head.querySelector('.lname');
-    head.onclick=()=>{activeLayer=li;refreshTimeline();syncLayerPanel();};
+    head.onclick=()=>{if(justDragged)return;activeLayer=li;refreshTimeline();syncLayerPanel();};
     ln.ondblclick=e=>{e.stopPropagation();ln.contentEditable=true;ln.focus();
       const r=document.createRange();r.selectNodeContents(ln);const s=getSelection();s.removeAllRanges();s.addRange(r);};
     ln.onblur=()=>{ln.contentEditable=false;L.name=ln.textContent.trim()||L.name;refreshTimeline();};
@@ -916,6 +928,84 @@ function refreshTimeline(){
   }
   syncLayerPanel();
 }
+
+/* ---- Drag & drop reorder for layers (vertical) and frames (horizontal) ---- */
+let drag=null, justDragged=false;
+function beginReorder(kind,el,e){
+  const sx=e.clientX, sy=e.clientY; let started=false;
+  const move=ev=>{
+    if(!started){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)<7)return;started=true;startDrag(kind,el);}
+    dragMove(ev);
+  };
+  const end=ev=>{
+    document.removeEventListener('pointermove',move);
+    document.removeEventListener('pointerup',end);
+    document.removeEventListener('pointercancel',end);
+    if(started){finishDrag(ev);justDragged=true;setTimeout(()=>{justDragged=false;},60);}
+  };
+  document.addEventListener('pointermove',move);
+  document.addEventListener('pointerup',end);
+  document.addEventListener('pointercancel',end);
+}
+function startDrag(kind,el){
+  const items=kind==='layer'?$$('#tlGrid .tl-lhead'):$$('#tlGrid .tl-fnum');
+  drag={kind,row:el,items,slot:null};
+  el.classList.add('drag');
+  const g=document.createElement('div');g.className='tl-ghost';
+  g.textContent=kind==='layer'?el.querySelector('.lname').textContent:('フレーム '+(+el.dataset.fi+1));
+  document.body.appendChild(g);drag.ghost=g;
+  const ind=document.createElement('div');ind.className='tl-drop';document.body.appendChild(ind);drag.ind=ind;
+}
+function dragMove(e){
+  if(!drag)return;
+  drag.ghost.style.left=(e.clientX+12)+'px';drag.ghost.style.top=(e.clientY+12)+'px';
+  const items=drag.items, vertical=drag.kind==='layer';
+  let slot=items.length;
+  for(let i=0;i<items.length;i++){
+    const r=items[i].getBoundingClientRect();
+    const mid=vertical?r.top+r.height/2:r.left+r.width/2;
+    const pos=vertical?e.clientY:e.clientX;
+    if(pos<mid){slot=i;break;}
+  }
+  drag.slot=slot;
+  const ind=drag.ind, first=items[0].getBoundingClientRect();
+  if(vertical){
+    const y=slot<items.length?items[slot].getBoundingClientRect().top:items[items.length-1].getBoundingClientRect().bottom;
+    ind.style.left=first.left+'px';ind.style.width=first.width+'px';ind.style.height='3px';ind.style.top=(y-1)+'px';
+  }else{
+    const x=slot<items.length?items[slot].getBoundingClientRect().left:items[items.length-1].getBoundingClientRect().right;
+    const gr=$('#tlGrid').getBoundingClientRect();
+    ind.style.top=first.top+'px';ind.style.height=Math.max(46,gr.height)+'px';ind.style.width='3px';ind.style.left=(x-1)+'px';
+  }
+}
+function finishDrag(e){
+  dragMove(e);
+  const {kind,row,items,ghost,ind}=drag;
+  row.classList.remove('drag');ghost.remove();ind.remove();
+  const fromD=items.indexOf(row);let toD=drag.slot==null?fromD:drag.slot;
+  if(toD>fromD)toD--;
+  drag=null;
+  if(toD===fromD||toD<0)return;
+  if(kind==='layer')reorderLayerDisplay(fromD,toD);else moveFrame(fromD,toD);
+}
+// display order (top->bottom) == doc.layers reversed
+function reorderLayerDisplay(fromD,toD){
+  pushUndo();
+  const disp=doc.layers.slice().reverse();
+  const [m]=disp.splice(fromD,1);disp.splice(toD,0,m);
+  doc.layers=disp.reverse();activeLayer=doc.layers.indexOf(m);
+  refreshTimeline();render();toast('レイヤーを移動');
+}
+function moveFrame(from,to){
+  pushUndo();
+  const order=doc.frames.map((_,i)=>i);
+  const [m]=order.splice(from,1);order.splice(to,0,m);
+  const newCels=new Map();
+  doc.layers.forEach(L=>order.forEach((oldIdx,ni)=>{const c=doc.cels.get(L.id+':'+oldIdx);if(c)newCels.set(L.id+':'+ni,c);}));
+  doc.cels=newCels;doc.frames=order.map(oi=>doc.frames[oi]);
+  activeFrame=to;refreshTimeline();render();toast('フレームを移動');
+}
+
 function updateCelThumb(li,fi){
   const cell=$(`#tlGrid .tl-cell[data-l="${li}"][data-f="${fi}"]`);
   if(cell){const cv=cell.querySelector('canvas');if(cv)drawCelThumb(cv.getContext('2d'),doc.layers[li].id,fi);}
