@@ -316,6 +316,7 @@
       <button class="tool" data-tool="lasso" title="投げ縄 (Q)">🪢</button>
       <button class="tool" data-tool="wand" title="自動選択 (W)">🪄</button>
       <button class="tool" data-tool="quick" title="クイック選択（なぞって似た色を選択・A）">🖌️</button>
+      <button class="tool" data-tool="range" title="色域選択（タップした色を全体から選択・K）">🎯</button>
       <div class="tsep"></div>
       <button class="tool" data-tool="move" title="移動 (V)">✥</button>
       <button class="tool" data-tool="hand" title="手のひら (H)">✋</button>
@@ -349,11 +350,19 @@
         <div class="selmodes">
           <button class="minibtn" id="selNone" title="選択解除" style="flex:1;height:30px">選択解除</button>
         </div>
+        <div class="field" style="margin-top:8px"><label>色域許容</label>
+          <input type="range" id="rangeTol" min="0" max="180" value="48">
+          <span id="rangeTolV" style="min-width:26px;text-align:right">48</span>
+        </div>
         <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px">
           <input type="checkbox" id="fillGap"> 🩹 移動時に隙間を埋める
         </label>
+        <div class="selmodes" id="fillModeRow" style="margin-top:6px;display:none">
+          <button class="minibtn" id="fillStretch" style="flex:1;height:28px">引き伸ばし</button>
+          <button class="minibtn" id="fillNearest" style="flex:1;height:28px">近似補完</button>
+        </div>
         <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5">
-          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で追加／除外（タップでロックも可）。PCは Ctrl=追加 / Alt=除外。
+          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で追加／除外。色域/クイックは「色域許容」で範囲調整。PCは Ctrl=追加 / Alt=除外。
         </div>
       </div>
 
@@ -682,12 +691,20 @@ function wandShape(x,y){
 }
 // Quick selection: brush over the canvas to grow the selection to contiguous
 // pixels of a similar color. Works with the +/- (add/subtract) modes.
-let qLast=null, quickSubtract=false;
-function colorClose(a,b){
+let qLast=null, quickSubtract=false, rangeTol=48;
+function colorClose(a,b,tol){
+  const t=(tol==null?rangeTol:tol);
   const aa=(a>>>24)&255, ba=(b>>>24)&255;
   if(aa===0||ba===0)return aa===ba;   // transparent matches only transparent
   const dr=(a&255)-(b&255),dg=((a>>8)&255)-((b>>8)&255),db=((a>>16)&255)-((b>>16)&255);
-  return dr*dr+dg*dg+db*db<=QUICKTOL*QUICKTOL;
+  return dr*dr+dg*dg+db*db<=t*t;
+}
+// Color-range selection: select ALL pixels of a similar color (non-contiguous).
+function rangeShape(x,y){
+  const shp=selBuf();if(!inBounds(x,y))return shp;
+  const cel=activeCel(),target=cel[y*W+x];
+  for(let i=0;i<W*H;i++)if(colorClose(cel[i],target))shp[i]=1;
+  return shp;
 }
 function quickFlood(x,y,subtract){
   if(!inBounds(x,y))return;
@@ -749,7 +766,7 @@ let color=packHex('#e6e8ee',255);
 let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false, brushShape='square';
 let previewCel=null;
 const SHAPE=['line','rect','ellipse'];
-const SELTOOL=['select','lasso','wand','quick'];
+const SELTOOL=['select','lasso','wand','quick','range'];
 const QUICKTOL=48; // color tolerance for quick-selection
 // Per-tool brush size (pen & eraser keep separate sizes, etc.)
 const SIZETOOLS=['pencil','eraser','line','rect','ellipse'];
@@ -871,6 +888,7 @@ stage.addEventListener('pointerdown',e=>{
   if(SELTOOL.includes(tool)){
     pushUndo();curSelMode=selModeFrom(e);drawing=true;startPix={x:clampX(x),y:clampY(y)};dragCur={x:clampX(x),y:clampY(y)};
     if(tool==='wand'){applyShape(wandShape(x,y),curSelMode);drawing=false;render();return;}
+    if(tool==='range'){applyShape(rangeShape(x,y),curSelMode);drawing=false;render();return;}
     if(tool==='lasso')lassoPts=[{x:clampX(x),y:clampY(y)}];
     if(tool==='quick'){quickSubtract=(curSelMode==='subtract');
       if(curSelMode==='replace')selection=null;    // new selection grows from here
@@ -1052,7 +1070,7 @@ function endMove(cancel){
   if(cancel){if(undoStack.length)restore(undoStack.pop());updateUndoUI();moveData=null;render();return;}
   if(selection&&moveData){
     if(fillOnMove&&moveData.mask&&(moveData.dx||moveData.dy))
-      edgeExtendFill(activeCel(),moveData.base,moveData.mask,moveData.dx,moveData.dy);
+      gapFill(activeCel(),moveData.base,moveData.mask,moveData.dx,moveData.dy);
     const nm=selBuf();const{dx,dy}=moveData;
     for(let i=0;i<W*H;i++)if(selection.mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
     selection.mask=nm;computeSelBounds();
@@ -1356,7 +1374,12 @@ $('#brushShapeBtn').onclick=()=>{brushShape=brushShape==='square'?'circle':'squa
 $$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 $('#opacity').oninput=e=>{opacity=+e.target.value;$('#opacityV').textContent=Math.round(opacity/255*100)+'%';};
 $('#pixelPerfect').onchange=e=>pixelPerfect=e.target.checked;
-$('#fillGap').onchange=e=>{fillOnMove=e.target.checked;toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
+$('#fillGap').onchange=e=>{fillOnMove=e.target.checked;$('#fillModeRow').style.display=fillOnMove?'flex':'none';
+  toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
+function updateFillMode(){$('#fillStretch').classList.toggle('on',fillMode==='stretch');$('#fillNearest').classList.toggle('on',fillMode==='nearest');}
+$('#fillStretch').onclick=()=>{fillMode='stretch';updateFillMode();};
+$('#fillNearest').onclick=()=>{fillMode='nearest';updateFillMode();};
+$('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;};
 $('#showGrid').onchange=e=>{showGridFlag=e.target.checked;render();};
 $('#colorPick').oninput=e=>setColorHex(e.target.value);
 $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){palette.push(hex);renderPalette();}};
@@ -1402,7 +1425,7 @@ function nudgeStep(dx,dy,firstPush){
   const cel=activeCel(),mask=selection.mask,origCel=cel.slice();
   for(let i=0;i<W*H;i++)if(mask[i])cel[i]=0;
   for(let i=0;i<W*H;i++){if(!mask[i])continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=origCel[i];}
-  if(fillOnMove)edgeExtendFill(cel,origCel,mask,dx,dy);
+  if(fillOnMove)gapFill(cel,origCel,mask,dx,dy);
   const nm=selBuf();
   for(let i=0;i<W*H;i++)if(mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
   selection.mask=nm;computeSelBounds();render();updateCelThumb(activeLayer,activeFrame);
@@ -1410,7 +1433,11 @@ function nudgeStep(dx,dy,firstPush){
 // Fill the vacated gap by stretching the trailing edge of the moved content:
 // each gap pixel (was opaque, now empty) copies the nearest moved-content
 // pixel found by marching in the move direction.
-let fillOnMove=false;
+let fillOnMove=false, fillMode='stretch';  // 'stretch' | 'nearest'
+function gapFill(cel,origCel,mask,dx,dy){
+  if(fillMode==='nearest')edgeFillNearest(cel,origCel,mask,dx,dy);
+  else edgeExtendFill(cel,origCel,mask,dx,dy);
+}
 function edgeExtendFill(cel,origCel,mask,dx,dy){
   const sx=Math.sign(dx), sy=Math.sign(dy); if(!sx&&!sy)return;
   const maxS=Math.max(W,H);
@@ -1420,6 +1447,32 @@ function edgeExtendFill(cel,origCel,mask,dx,dy){
     for(let s=0;s<maxS;s++){x+=sx;y+=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){c=v;break;}}
     if(c)cel[i]=c;
   }
+}
+// Nearest-color fill: interpolate between the two edges bounding the gap
+// along the move axis, then snap the blended color to the palette.
+function edgeFillNearest(cel,origCel,mask,dx,dy){
+  const sx=Math.sign(dx), sy=Math.sign(dy); if(!sx&&!sy)return;
+  const maxS=Math.max(W,H);
+  for(let i=0;i<W*H;i++){
+    if(!mask[i]||!origCel[i]||cel[i])continue;
+    const px=i%W, py=(i/W)|0;
+    let cA=0,dA=0,cB=0,dB=0,x,y;
+    x=px;y=py;for(let s=1;s<=maxS;s++){x+=sx;y+=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){cA=v;dA=s;break;}}
+    x=px;y=py;for(let s=1;s<=maxS;s++){x-=sx;y-=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){cB=v;dB=s;break;}}
+    let out;
+    if(cA&&cB){const t=dA/(dA+dB);
+      const r=Math.round((cA&255)*(1-t)+(cB&255)*t), g=Math.round(((cA>>8)&255)*(1-t)+((cB>>8)&255)*t), b=Math.round(((cA>>16)&255)*(1-t)+((cB>>16)&255)*t);
+      out=snapPalette(r,g,b);}
+    else out=cA||cB;
+    if(out)cel[i]=out;
+  }
+}
+function snapPalette(r,g,b){
+  let best=rgba(r,g,b,255),bd=1e9;
+  for(const hex of palette){if(hex==='#00000000')continue;const n=parseInt(hex.slice(1),16);
+    const pr=(n>>16)&255,pg=(n>>8)&255,pb=n&255,d=(pr-r)**2+(pg-g)**2+(pb-b)**2;
+    if(d<bd){bd=d;best=rgba(pr,pg,pb,255);}}
+  return best;
 }
 let nudgeTimer=null;
 function startNudge(dx,dy){nudgeStep(dx,dy,true);clearInterval(nudgeTimer);nudgeTimer=setInterval(()=>nudgeStep(dx,dy,false),120);}
@@ -1592,7 +1645,7 @@ document.addEventListener('keydown',e=>{
   if(k==='escape'){deselect();return;}
   if(selection&&k.startsWith('arrow')){const d={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]}[k];
     if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
-  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',q:'lasso',w:'wand',a:'quick',v:'move',h:'hand'};
+  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',q:'lasso',w:'wand',a:'quick',k:'range',v:'move',h:'hand'};
   if(map[k])setTool(map[k]);
   if(k==='['){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===']'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
@@ -1848,7 +1901,7 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
 /* ================= Boot ================= */
 function boot(){
   initLayout();initWheel();
-  newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
+  newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();updateFillMode();$('#selSec').style.display='none';
   window.addEventListener('resize',()=>{relayout();fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
   // Purge any previously-registered service worker + caches (they caused
