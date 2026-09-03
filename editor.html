@@ -236,19 +236,20 @@
   .preset{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
   .preset .hbtn{padding:5px 8px;font-size:12px;}
 
-  /* Converter modal (image -> pixel art, non-destructive) */
-  .modal.conv{max-width:760px;width:100%;}
-  .conv-body{display:flex;gap:14px;}
-  @media (max-width:720px){.conv-body{flex-direction:column;}}
-  .conv-prev{flex:none;width:300px;display:flex;flex-direction:column;gap:8px;}
-  @media (max-width:720px){.conv-prev{width:100%;}}
-  .conv-canvaswrap{position:relative;width:100%;aspect-ratio:1;border:1px solid var(--border);
-    border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;
-    background-image:linear-gradient(45deg,#2a2c34 25%,transparent 25%),linear-gradient(-45deg,#2a2c34 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2a2c34 75%),linear-gradient(-45deg,transparent 75%,#2a2c34 75%);
-    background-size:16px 16px;background-position:0 0,0 8px,8px -8px,-8px 0;background-color:#1b1d23;}
-  #convCv{image-rendering:pixelated;max-width:100%;max-height:100%;}
-  .conv-info{font-size:11px;color:var(--muted);text-align:center;font-variant-numeric:tabular-nums;}
-  .conv-ctrl{flex:1;min-width:0;max-height:64vh;overflow-y:auto;padding-right:4px;}
+  /* Converter side sheet (image -> pixel art, non-destructive, on-canvas live preview) */
+  .conv-sheet{position:fixed;top:0;right:0;bottom:0;width:340px;max-width:88vw;z-index:60;
+    background:var(--panel);border-left:1px solid var(--border);box-shadow:-8px 0 26px #0007;
+    display:none;flex-direction:column;padding:14px;}
+  .conv-sheet.show{display:flex;}
+  @media (max-width:560px){.conv-sheet{width:100%;max-width:100%;}}
+  .conv-head{flex:none;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:6px;}
+  .conv-head h2{margin:0 0 6px;font-size:15px;}
+  .conv-info{font-size:13px;color:var(--accent);font-variant-numeric:tabular-nums;font-weight:600;}
+  .conv-hint{font-size:11px;color:var(--muted);line-height:1.5;margin-top:4px;}
+  .conv-footer{flex:none;display:flex;gap:8px;padding-top:10px;border-top:1px solid var(--border);margin-top:6px;}
+  .conv-footer .hbtn{flex:1;text-align:center;justify-content:center;}
+  .conv-footer .hbtn.primary{background:var(--accent);border-color:var(--accent);}
+  .conv-ctrl{flex:1;min-width:0;overflow-y:auto;padding-right:4px;}
   .conv-ctrl .cf{margin:9px 0;}
   .conv-ctrl .cf .cfrow{display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-bottom:3px;}
   .conv-ctrl .cf .cfrow .cv{color:var(--muted);font-variant-numeric:tabular-nums;}
@@ -475,18 +476,28 @@
 </div>
 
 <!-- Converter modal (illustration -> pixel art, non-destructive) -->
-<div class="modal-bg" id="convModal">
-  <div class="modal conv">
-    <h2 id="convTitle">🎨 ドット絵に変換</h2>
-    <div class="conv-body">
-      <div class="conv-prev">
-        <div class="conv-canvaswrap"><canvas id="convCv"></canvas></div>
-        <div class="conv-info" id="convInfo">—</div>
-        <div style="font-size:11px;color:var(--muted);line-height:1.5">
-          元画像を保持したまま変換します（非破壊）。あとからメニューの「変換を再調整」でやり直せます。
-        </div>
-      </div>
+<div class="conv-sheet" id="convModal">
+    <div class="conv-head">
+      <h2 id="convTitle">🎨 ドット絵に変換</h2>
+      <div class="conv-info" id="convInfo">—</div>
+      <div class="conv-hint">キャンバスに直接プレビューしています。スライダーを動かすと即反映されます（非破壊）。</div>
+    </div>
       <div class="conv-ctrl" id="convCtrl">
+        <div class="csec">出力サイズ</div>
+        <div class="cf">
+          <div class="cfrow"><label>キャンバス長辺（ドット数）</label><span class="cv" id="cvCapV">200 px</span></div>
+          <input type="range" id="cvCap" min="16" max="512" step="8" value="200">
+        </div>
+        <div class="cf">
+          <div class="cfrow"><label>ドットの粗さ（1ドット=Npx）</label><span class="cv" id="cvDotV">3 px</span></div>
+          <input type="range" id="cvDot" min="1" max="32" step="1" value="3">
+        </div>
+        <div class="preset" style="margin:6px 0 2px">
+          <button class="hbtn" id="cvFitMax" title="元画像の解像度いっぱい（最大の細かさ）">最大</button>
+          <button class="hbtn" id="cvFit128" title="長辺を最大128ドットに">≤128</button>
+          <button class="hbtn" id="cvFit64" title="長辺を最大64ドットに">≤64</button>
+        </div>
+
         <div class="csec">パレット / 減色</div>
         <div class="cf">
           <label>パレット</label>
@@ -511,14 +522,6 @@
         </div>
 
         <div class="csec">ドット化</div>
-        <div class="cf">
-          <div class="cfrow"><label>ドットの粗さ（1ドット=Npx）</label><span class="cv" id="cvDotV">4 px</span></div>
-          <input type="range" id="cvDot" min="1" max="32" step="1" value="4">
-        </div>
-        <div class="cf">
-          <div class="cfrow"><label>キャンバス上限（長辺）</label><span class="cv" id="cvCapV">128 px</span></div>
-          <input type="range" id="cvCap" min="16" max="512" step="8" value="128">
-        </div>
         <div class="cf">
           <div class="cfrow"><label>平滑化（ノイズ低減）</label><span class="cv" id="cvSmoothV">0%</span></div>
           <input type="range" id="cvSmooth" min="0" max="100" step="1" value="0">
@@ -579,13 +582,11 @@
         <div class="cf"><div class="cfrow"><label>透過しきい値</label><span class="cv" id="cvAlphaThV">128</span></div>
           <input type="range" id="cvAlphaTh" min="1" max="255" step="1" value="128"></div>
       </div>
-    </div>
-    <div class="row">
-      <button class="hbtn" id="convRaw" title="変換せず元のピクセルをそのまま読み込む">元サイズで読込</button>
+    <div class="conv-footer">
+      <button class="hbtn" id="convRaw" title="変換せず元のピクセルをそのまま読み込む">元サイズ</button>
       <button class="hbtn" id="convCancel">キャンセル</button>
       <button class="hbtn primary" id="convApply">適用</button>
     </div>
-  </div>
 </div>
 
 <!-- Size modal -->
@@ -2004,40 +2005,48 @@ function convLabels(){const p=convParams();
   $('#cvConV').textContent=p.con+'%';$('#cvHueV').textContent=p.hue+'°';$('#cvAlphaThV').textContent=p.alphaTh;
   $('#cvColors').disabled=(p.palSource!=='auto');$('#cvQuant').disabled=(p.palSource!=='auto');
   $('#cvBgRow').style.display=p.keepAlpha?'none':'';}
-let convLastResult=null, convPrevTimer=null;
+let convLastResult=null, convPrevTimer=null, convBackup=null;
+function srcLongEdge(img){return Math.max(img.naturalWidth||img.width, img.naturalHeight||img.height);}
+// Paint the converted result straight onto the real editor canvas (full-screen live preview).
+function renderConvertedDoc(r){
+  newDoc(r.gw,r.gh);const cel=getCel(0,0);const d=r.data;
+  for(let i=0;i<r.gw*r.gh;i++)cel[i]=rgba(d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]);
+  palette=['#00000000'].concat(r.palette.map(c=>'#'+[c[0],c[1],c[2]].map(v=>v.toString(16).padStart(2,'0')).join('')));
+  activeSwatch=1;renderPalette();refreshTimeline();render();updateCelThumb(0,0);
+}
 function convRender(){convLabels();if(!convImg)return;
   const p=convParams();const r=Converter.convert(convImg,p);convLastResult=r;
-  const cv=$('#convCv');cv.width=r.gw;cv.height=r.gh;
-  // display at an integer scale that fits the ~300px preview box
-  const box=300;const scale=Math.max(1,Math.floor(Math.min(box/r.gw,box/r.gh)))||1;
-  cv.style.width=(r.gw*scale)+'px';cv.style.height=(r.gh*scale)+'px';
-  const ctx=cv.getContext('2d');const id=ctx.createImageData(r.gw,r.gh);id.data.set(r.data);ctx.putImageData(id,0,0);
-  $('#convInfo').textContent=`${r.gw} × ${r.gh} ドット / ${r.palette.length} 色`;}
-function scheduleConvPreview(){clearTimeout(convPrevTimer);convPrevTimer=setTimeout(convRender,40);}
-function openConverter(img,params){convImg=img;
+  renderConvertedDoc(r);
+  const iw=convImg.naturalWidth||convImg.width, ih=convImg.naturalHeight||convImg.height;
+  $('#convInfo').textContent=`元画像 ${iw}×${ih} → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色`;}
+function scheduleConvPreview(){clearTimeout(convPrevTimer);convPrevTimer=setTimeout(()=>{convPrevTimer=null;convRender();},80);}
+function openConverter(img,params){convImg=img;convBackup={snap:snapshot(),undo:undoStack,redo:redoStack};
   $('#convTitle').textContent=params?'🎛 変換を再調整':'🎨 ドット絵に変換';
-  if(params)setConvParams(params);
+  if(params){setConvParams(params);}
+  else{ // fresh image: default the canvas long-edge to native dot resolution (references the source size)
+    const dot=+$('#cvDot').value;let cap=Math.min(512,Math.max(16,Math.round(srcLongEdge(img)/dot)));
+    cap=Math.min(512,Math.ceil(cap/8)*8);$('#cvCap').value=cap;}
   $('#convModal').classList.add('show');convRender();}
 function reopenConverter(){if(!doc.convert||!doc.convert.src){toast('再調整できる変換元がありません');return;}
   const img=new Image();img.onload=()=>openConverter(img,doc.convert.params);
   img.onerror=()=>toast('変換元画像を読み込めませんでした');img.src=doc.convert.src;}
+function closeConverter(){clearTimeout(convPrevTimer);convPrevTimer=null;$('#convModal').classList.remove('show');}
 $('#convModal').querySelectorAll('input,select').forEach(el=>{
   el.addEventListener('input',scheduleConvPreview);el.addEventListener('change',scheduleConvPreview);});
-$('#convCancel').onclick=()=>$('#convModal').classList.remove('show');
-$('#convModal').addEventListener('click',e=>{if(e.target===$('#convModal'))$('#convModal').classList.remove('show');});
+// canvas long-edge quick presets
+$('#cvFitMax').onclick=()=>{if(!convImg)return;const dot=+$('#cvDot').value;
+  $('#cvCap').value=Math.min(512,Math.max(16,Math.round(srcLongEdge(convImg)/dot)));convRender();};
+$('#cvFit64').onclick=()=>{$('#cvCap').value=64;convRender();};
+$('#cvFit128').onclick=()=>{$('#cvCap').value=128;convRender();};
+$('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
 $('#convApply').onclick=()=>{if(!convImg)return;
-  const p=convParams();const r=convLastResult&&!convPrevTimer?convLastResult:Converter.convert(convImg,p);
-  applyConvertResult(r,convImg,p);$('#convModal').classList.remove('show');
-  toast('変換しました '+r.gw+'×'+r.gh);};
-$('#convRaw').onclick=()=>{if(!convImg)return;importImageRaw(convImg);$('#convModal').classList.remove('show');};
+  const p=convParams();const r=(convLastResult&&!convPrevTimer)?convLastResult:Converter.convert(convImg,p);
+  applyConvertResult(r,convImg,p);convBackup=null;closeConverter();toast('変換しました '+r.gw+'×'+r.gh);};
+$('#convRaw').onclick=()=>{if(!convImg)return;convBackup=null;importImageRaw(convImg);closeConverter();};
+// finalize: paint result + record the non-destructive source/params
 function applyConvertResult(r,img,p){
-  newDoc(r.gw,r.gh);const cel=getCel(0,0);const d=r.data;
-  for(let i=0;i<r.gw*r.gh;i++)cel[i]=rgba(d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]);
-  // adopt the converted palette (keep a transparent slot first)
-  palette=['#00000000'].concat(r.palette.map(c=>'#'+[c[0],c[1],c[2]].map(v=>v.toString(16).padStart(2,'0')).join('')));
-  activeSwatch=1;renderPalette();
+  renderConvertedDoc(r);
   doc.convert={src:img.src,params:p};$('#mReconvert').style.display='';
-  refreshTimeline();render();updateCelThumb(0,0);
 }
 function importImageRaw(img){
   let iw=img.width, ih=img.height;const CAP=2048;let scaled=false;
