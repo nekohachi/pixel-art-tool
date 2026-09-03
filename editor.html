@@ -355,12 +355,8 @@
           <span id="rangeTolV" style="min-width:26px;text-align:right">48</span>
         </div>
         <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px">
-          <input type="checkbox" id="fillGap"> 🩹 移動時に隙間を埋める
+          <input type="checkbox" id="fillGap"> 🩹 移動時に隙間を埋める（端を引き伸ばし）
         </label>
-        <div class="selmodes" id="fillModeRow" style="margin-top:6px;display:none">
-          <button class="minibtn" id="fillStretch" style="flex:1;height:28px">引き伸ばし</button>
-          <button class="minibtn" id="fillNearest" style="flex:1;height:28px">近似補完</button>
-        </div>
         <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5">
           左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で追加／除外。色域/クイックは「色域許容」で範囲調整。PCは Ctrl=追加 / Alt=除外。
         </div>
@@ -691,7 +687,7 @@ function wandShape(x,y){
 }
 // Quick selection: brush over the canvas to grow the selection to contiguous
 // pixels of a similar color. Works with the +/- (add/subtract) modes.
-let qLast=null, quickSubtract=false, rangeTol=48;
+let qLast=null, quickSubtract=false, rangeTol=48, lastRange=null;
 function colorClose(a,b,tol){
   const t=(tol==null?rangeTol:tol);
   const aa=(a>>>24)&255, ba=(b>>>24)&255;
@@ -706,20 +702,22 @@ function rangeShape(x,y){
   for(let i=0;i<W*H;i++)if(colorClose(cel[i],target))shp[i]=1;
   return shp;
 }
+// Quick selection = a color-aware brush: within the brush footprint (size &
+// shape from the brush UI) select the pixels matching the color under the brush.
 function quickFlood(x,y,subtract){
   if(!inBounds(x,y))return;
   if(!selection)selection={mask:new Uint8Array(W*H)};
-  const cel=activeCel(), target=cel[y*W+x], seen=new Uint8Array(W*H), st=[y*W+x];
-  while(st.length){const i=st.pop();if(seen[i])continue;seen[i]=1;
-    if(!colorClose(cel[i],target))continue;
-    selection.mask[i]=subtract?0:1;
-    const cx=i%W, cy=(i/W)|0;
-    if(cx>0)st.push(i-1);if(cx<W-1)st.push(i+1);if(cy>0)st.push(i-W);if(cy<H-1)st.push(i+W);
+  const cel=activeCel(), target=cel[y*W+x];
+  const s=Math.max(1,brushSize),h1=Math.floor((s-1)/2),h2=s-1-h1,ccx=(h2-h1)/2,r=s/2,r2=r*r;
+  for(let dy=-h1;dy<=h2;dy++)for(let dx=-h1;dx<=h2;dx++){
+    if(brushShape==='circle'&&(dx-ccx)*(dx-ccx)+(dy-ccx)*(dy-ccx)>r2)continue;
+    const px=x+dx,py=y+dy;if(!inBounds(px,py))continue;const i=py*W+px;
+    if(colorClose(cel[i],target))selection.mask[i]=subtract?0:1;
   }
   let any=false;for(let i=0;i<selection.mask.length;i++)if(selection.mask[i]){any=true;break;}
   if(!any)selection=null;else computeSelBounds();
 }
-function deselect(){selection=null;render();}
+function deselect(){selection=null;lastRange=null;render();}
 let antsPhase=0;
 function drawSelectionOverlay(){
   // live previews
@@ -773,6 +771,7 @@ const SIZETOOLS=['pencil','eraser','line','rect','ellipse'];
 const brushSizes={pencil:1,eraser:1,line:1,rect:1,ellipse:1};
 function setTool(t){
   if(t==='mirror'){mirrorX=!mirrorX;$$('.tool[data-tool="mirror"]').forEach(b=>b.classList.toggle('on',mirrorX));toast(mirrorX?'左右対称 ON':'左右対称 OFF');return;}
+  lastRange=null;   // switching tools ends live color-range tolerance
   tool=t;
   $$('.tool').forEach(b=>{if(b.dataset.tool!=='mirror')b.classList.toggle('active',b.dataset.tool===t);});
   $$('.gtool').forEach(b=>b.classList.toggle('active',b.dataset.tool===t)); // left pen/eraser icons
@@ -886,9 +885,11 @@ stage.addEventListener('pointerdown',e=>{
   if(tool==='dropper'){pickColor(x,y);return;}
   if(tool==='move'){beginMove(x,y);return;}
   if(SELTOOL.includes(tool)){
+    if(tool!=='range')lastRange=null;   // a non-range selection ends live tolerance
     pushUndo();curSelMode=selModeFrom(e);drawing=true;startPix={x:clampX(x),y:clampY(y)};dragCur={x:clampX(x),y:clampY(y)};
     if(tool==='wand'){applyShape(wandShape(x,y),curSelMode);drawing=false;render();return;}
-    if(tool==='range'){applyShape(rangeShape(x,y),curSelMode);drawing=false;render();return;}
+    if(tool==='range'){lastRange={x:clampX(x),y:clampY(y),base:selection?selection.mask.slice():null,mode:curSelMode};
+      applyShape(rangeShape(x,y),curSelMode);drawing=false;render();return;}
     if(tool==='lasso')lassoPts=[{x:clampX(x),y:clampY(y)}];
     if(tool==='quick'){quickSubtract=(curSelMode==='subtract');
       if(curSelMode==='replace')selection=null;    // new selection grows from here
@@ -962,7 +963,7 @@ stage.addEventListener('pointermove',e=>{
   if(picking){updatePick(e.clientX,e.clientY);return;}
   if(['pencil','eraser','quick'].includes(tool)&&e.pointerType!=='touch'){
     bc.style.display='block';bc.classList.toggle('round',brushShape==='circle');
-    const bs=tool==='quick'?1:Math.max(1,brushSize),s=bs*zoom;const{x,y}=screenToPix(e.clientX,e.clientY);
+    const bs=Math.max(1,brushSize),s=bs*zoom;const{x,y}=screenToPix(e.clientX,e.clientY);
     const off=Math.floor((bs-1)/2)*zoom;
     bc.style.left=(panX+x*zoom-off)+'px';bc.style.top=(panY+y*zoom-off)+'px';bc.style.width=s+'px';bc.style.height=s+'px';
   } else if(e.pointerType!=='touch') bc.style.display='none';
@@ -1070,7 +1071,7 @@ function endMove(cancel){
   if(cancel){if(undoStack.length)restore(undoStack.pop());updateUndoUI();moveData=null;render();return;}
   if(selection&&moveData){
     if(fillOnMove&&moveData.mask&&(moveData.dx||moveData.dy))
-      gapFill(activeCel(),moveData.base,moveData.mask,moveData.dx,moveData.dy);
+      edgeExtendFill(activeCel(),moveData.base,moveData.mask,moveData.dx,moveData.dy);
     const nm=selBuf();const{dx,dy}=moveData;
     for(let i=0;i<W*H;i++)if(selection.mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
     selection.mask=nm;computeSelBounds();
@@ -1374,12 +1375,11 @@ $('#brushShapeBtn').onclick=()=>{brushShape=brushShape==='square'?'circle':'squa
 $$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 $('#opacity').oninput=e=>{opacity=+e.target.value;$('#opacityV').textContent=Math.round(opacity/255*100)+'%';};
 $('#pixelPerfect').onchange=e=>pixelPerfect=e.target.checked;
-$('#fillGap').onchange=e=>{fillOnMove=e.target.checked;$('#fillModeRow').style.display=fillOnMove?'flex':'none';
-  toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
-function updateFillMode(){$('#fillStretch').classList.toggle('on',fillMode==='stretch');$('#fillNearest').classList.toggle('on',fillMode==='nearest');}
-$('#fillStretch').onclick=()=>{fillMode='stretch';updateFillMode();};
-$('#fillNearest').onclick=()=>{fillMode='nearest';updateFillMode();};
-$('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;};
+$('#fillGap').onchange=e=>{fillOnMove=e.target.checked;toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
+$('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
+  // live-adjust the last color-range selection as the tolerance changes
+  if(lastRange){selection=lastRange.base?{mask:lastRange.base.slice()}:null;
+    applyShape(rangeShape(lastRange.x,lastRange.y),lastRange.mode);render();}};
 $('#showGrid').onchange=e=>{showGridFlag=e.target.checked;render();};
 $('#colorPick').oninput=e=>setColorHex(e.target.value);
 $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){palette.push(hex);renderPalette();}};
@@ -1425,7 +1425,7 @@ function nudgeStep(dx,dy,firstPush){
   const cel=activeCel(),mask=selection.mask,origCel=cel.slice();
   for(let i=0;i<W*H;i++)if(mask[i])cel[i]=0;
   for(let i=0;i<W*H;i++){if(!mask[i])continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=origCel[i];}
-  if(fillOnMove)gapFill(cel,origCel,mask,dx,dy);
+  if(fillOnMove)edgeExtendFill(cel,origCel,mask,dx,dy);
   const nm=selBuf();
   for(let i=0;i<W*H;i++)if(mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
   selection.mask=nm;computeSelBounds();render();updateCelThumb(activeLayer,activeFrame);
@@ -1433,11 +1433,7 @@ function nudgeStep(dx,dy,firstPush){
 // Fill the vacated gap by stretching the trailing edge of the moved content:
 // each gap pixel (was opaque, now empty) copies the nearest moved-content
 // pixel found by marching in the move direction.
-let fillOnMove=false, fillMode='stretch';  // 'stretch' | 'nearest'
-function gapFill(cel,origCel,mask,dx,dy){
-  if(fillMode==='nearest')edgeFillNearest(cel,origCel,mask,dx,dy);
-  else edgeExtendFill(cel,origCel,mask,dx,dy);
-}
+let fillOnMove=false;
 function edgeExtendFill(cel,origCel,mask,dx,dy){
   const sx=Math.sign(dx), sy=Math.sign(dy); if(!sx&&!sy)return;
   const maxS=Math.max(W,H);
@@ -1447,32 +1443,6 @@ function edgeExtendFill(cel,origCel,mask,dx,dy){
     for(let s=0;s<maxS;s++){x+=sx;y+=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){c=v;break;}}
     if(c)cel[i]=c;
   }
-}
-// Nearest-color fill: interpolate between the two edges bounding the gap
-// along the move axis, then snap the blended color to the palette.
-function edgeFillNearest(cel,origCel,mask,dx,dy){
-  const sx=Math.sign(dx), sy=Math.sign(dy); if(!sx&&!sy)return;
-  const maxS=Math.max(W,H);
-  for(let i=0;i<W*H;i++){
-    if(!mask[i]||!origCel[i]||cel[i])continue;
-    const px=i%W, py=(i/W)|0;
-    let cA=0,dA=0,cB=0,dB=0,x,y;
-    x=px;y=py;for(let s=1;s<=maxS;s++){x+=sx;y+=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){cA=v;dA=s;break;}}
-    x=px;y=py;for(let s=1;s<=maxS;s++){x-=sx;y-=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){cB=v;dB=s;break;}}
-    let out;
-    if(cA&&cB){const t=dA/(dA+dB);
-      const r=Math.round((cA&255)*(1-t)+(cB&255)*t), g=Math.round(((cA>>8)&255)*(1-t)+((cB>>8)&255)*t), b=Math.round(((cA>>16)&255)*(1-t)+((cB>>16)&255)*t);
-      out=snapPalette(r,g,b);}
-    else out=cA||cB;
-    if(out)cel[i]=out;
-  }
-}
-function snapPalette(r,g,b){
-  let best=rgba(r,g,b,255),bd=1e9;
-  for(const hex of palette){if(hex==='#00000000')continue;const n=parseInt(hex.slice(1),16);
-    const pr=(n>>16)&255,pg=(n>>8)&255,pb=n&255,d=(pr-r)**2+(pg-g)**2+(pb-b)**2;
-    if(d<bd){bd=d;best=rgba(pr,pg,pb,255);}}
-  return best;
 }
 let nudgeTimer=null;
 function startNudge(dx,dy){nudgeStep(dx,dy,true);clearInterval(nudgeTimer);nudgeTimer=setInterval(()=>nudgeStep(dx,dy,false),120);}
@@ -1901,7 +1871,7 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
 /* ================= Boot ================= */
 function boot(){
   initLayout();initWheel();
-  newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();updateFillMode();$('#selSec').style.display='none';
+  newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
   window.addEventListener('resize',()=>{relayout();fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
   // Purge any previously-registered service worker + caches (they caused
