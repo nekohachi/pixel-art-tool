@@ -37,10 +37,10 @@
 
   /* Floating panels (Photoshop-style: drag by the grip, long-press to move) */
   .panel{position:absolute;z-index:20;display:flex;flex-direction:column;
-    border:1px solid var(--border);border-radius:10px;background:var(--panel);
-    box-shadow:0 8px 28px #0007;overflow:hidden;max-width:100%;}
-  .panel.dragging{z-index:45;box-shadow:0 12px 40px #000a;opacity:.97;}
-  .pgrip{flex:none;height:22px;display:flex;align-items:center;justify-content:center;gap:4px;
+    border:1px solid var(--border);border-radius:0;background:var(--panel);
+    box-shadow:0 3px 14px #0006;overflow:hidden;max-width:100%;}
+  .panel.dragging{z-index:45;box-shadow:0 10px 32px #000a;opacity:.97;}
+  .pgrip{flex:none;height:20px;display:flex;align-items:center;justify-content:center;gap:4px;
     background:var(--panel3);color:var(--muted);font-size:11px;cursor:grab;touch-action:none;
     user-select:none;letter-spacing:1px;border-bottom:1px solid var(--border);}
   .pgrip:active{cursor:grabbing;}
@@ -48,6 +48,11 @@
     border-bottom:1px solid var(--border);}
   .presize::after{content:"";display:block;width:38px;height:3px;border-radius:2px;
     background:var(--border);margin:2px auto 0;}
+  /* Panel resize handle (bottom inner corner) */
+  .prz{position:absolute;width:20px;height:20px;z-index:6;touch-action:none;
+    background:linear-gradient(135deg,transparent 45%,var(--muted) 45%,var(--muted) 55%,transparent 55%,transparent 70%,var(--muted) 70%,var(--muted) 80%,transparent 80%);}
+  .prz.br{right:0;bottom:0;cursor:nwse-resize;}
+  .prz.bl{left:0;bottom:0;cursor:nesw-resize;transform:scaleX(-1);}
   #pnlTools .tools,#pnlSide .side,#pnlGauge .gauge{border:none;}
   #pnlGauge{width:52px;}
   #pnlTl .timeline{max-height:none;height:100%;flex:1;min-height:0;}
@@ -227,6 +232,11 @@
   .toast.show{opacity:1;}
 
   #pnlSide.hidden{display:none;}
+  /* Color wheel */
+  .wheelwrap{position:relative;width:100%;display:flex;justify-content:center;}
+  #colorWheel{width:100%;max-width:180px;height:auto;aspect-ratio:1;touch-action:none;cursor:crosshair;}
+  .wheel-cursor{position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #fff;
+    box-shadow:0 0 0 1px #000,0 1px 3px #000a;transform:translate(-50%,-50%);pointer-events:none;}
   .dockprev{position:absolute;z-index:44;pointer-events:none;display:none;
     background:rgba(91,140,255,.22);border:2px solid var(--accent);border-radius:10px;
     box-shadow:inset 0 0 0 2px rgba(91,140,255,.3);}
@@ -315,6 +325,13 @@
     <div class="pgrip">⠿ カラー / 設定</div>
     <div class="side" id="side">
       <div class="sec">
+        <div class="wheelwrap">
+          <canvas id="colorWheel" width="180" height="180"></canvas>
+          <div class="wheel-cursor" id="wheelCursor"></div>
+        </div>
+        <div class="field" style="margin:8px 0 6px"><label>明るさ</label>
+          <input type="range" id="valSlider" min="0" max="100" value="90">
+        </div>
         <div class="colrow">
           <div class="swatch"><i id="curColor" style="background:#e6e8ee"></i></div>
           <input type="color" id="colorPick" value="#e6e8ee">
@@ -1049,7 +1066,57 @@ function renderPalette(){
     el.appendChild(d);
   });
 }
-function setColorHex(hex){color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;}
+function setColorHex(hex){color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;syncWheel(hex);}
+
+/* ---- Color wheel (hue+sat disc, brightness slider) ---- */
+function hsv2rgb(h,s,v){h/=360;const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);
+  let r,g,b;switch(i%6){case 0:r=v,g=t,b=p;break;case 1:r=q,g=v,b=p;break;case 2:r=p,g=v,b=t;break;
+  case 3:r=p,g=q,b=v;break;case 4:r=t,g=p,b=v;break;default:r=v,g=p,b=q;}
+  return [Math.round(r*255),Math.round(g*255),Math.round(b*255)];}
+function rgb2hsv(r,g,b){r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;
+  let h=0;if(d){if(mx===r)h=((g-b)/d)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360;}
+  return [h,mx?d/mx:0,mx];}
+let wheelV=0.9, wheelH=0, wheelS=0, wheelCanvas, wheelCtx, wheelDrawnV=-1;
+function drawWheel(){
+  if(!wheelCanvas){wheelCanvas=$('#colorWheel');wheelCtx=wheelCanvas.getContext('2d');}
+  if(wheelDrawnV===wheelV)return; wheelDrawnV=wheelV;
+  const n=wheelCanvas.width,R=n/2,ctx=wheelCtx,img=ctx.createImageData(n,n),d=img.data;
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    const dx=x-R,dy=y-R,r=Math.sqrt(dx*dx+dy*dy),i=(y*n+x)*4;
+    if(r>R){d[i+3]=0;continue;}
+    let h=Math.atan2(dy,dx)*180/Math.PI;if(h<0)h+=360;
+    const rgb=hsv2rgb(h,Math.min(1,r/R),wheelV);
+    d[i]=rgb[0];d[i+1]=rgb[1];d[i+2]=rgb[2];d[i+3]=255;
+  }
+  ctx.putImageData(img,0,0);
+}
+function updateWheelCursor(){
+  const cv=$('#colorWheel');if(!cv)return;
+  const size=cv.clientWidth||180, R=size/2, ang=wheelH*Math.PI/180, rad=wheelS*R;
+  const cur=$('#wheelCursor');
+  cur.style.left=(cv.offsetLeft+R+Math.cos(ang)*rad)+'px';
+  cur.style.top=(cv.offsetTop+R+Math.sin(ang)*rad)+'px';
+}
+function wheelToColor(){const [r,g,b]=hsv2rgb(wheelH,wheelS,wheelV);
+  const hex='#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+  color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;updateWheelCursor();}
+function syncWheel(hex){ // reflect an external color into wheel H/S/V + slider
+  const n=parseInt(hex.slice(1),16),[h,s,v]=rgb2hsv((n>>16)&255,(n>>8)&255,n&255);
+  wheelH=h;wheelS=s;wheelV=v;const vs=$('#valSlider');if(vs)vs.value=Math.round(v*100);
+  drawWheel();updateWheelCursor();}
+function wheelPick(cx,cy){const cv=$('#colorWheel'),r=cv.getBoundingClientRect(),R=r.width/2;
+  let dx=cx-r.left-R,dy=cy-r.top-R,dist=Math.sqrt(dx*dx+dy*dy);
+  let h=Math.atan2(dy,dx)*180/Math.PI;if(h<0)h+=360;
+  wheelH=h;wheelS=Math.min(1,dist/R);wheelToColor();}
+function initWheel(){
+  const cv=$('#colorWheel');drawWheel();updateWheelCursor();
+  let dragging=false;
+  cv.addEventListener('pointerdown',e=>{e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}dragging=true;wheelPick(e.clientX,e.clientY);});
+  cv.addEventListener('pointermove',e=>{if(dragging)wheelPick(e.clientX,e.clientY);});
+  cv.addEventListener('pointerup',()=>{dragging=false;});
+  cv.addEventListener('pointercancel',()=>{dragging=false;});
+  $('#valSlider').oninput=e=>{wheelV=(+e.target.value)/100;drawWheel();wheelToColor();};
+}
 function pickColor(x,y){
   if(!inBounds(x,y))return;compositeFrame(activeFrame,cctx);
   const d=cctx.getImageData(x,y,1,1).data;if(d[3]===0){toast('透明');return;}
@@ -1303,6 +1370,7 @@ function updateSelModVisible(){
   $('#selMod').classList.toggle('show',SELTOOL.includes(tool)||!!selection);
   $('#nudge').classList.toggle('show',!!selection);
   $('#selDel').classList.toggle('show',!!selection);
+  if(typeof positionSelControls==='function')positionSelControls();
 }
 // Delete (clear) the selected pixels on the active layer (undoable).
 function deleteSelection(){
@@ -1356,7 +1424,7 @@ function togglePanel(){$('#pnlSide').classList.toggle('hidden');}
 const workspace=$('#workspace');
 const PANELS={gauge:'#pnlGauge',tools:'#pnlTools',side:'#pnlSide',tl:'#pnlTl'};
 const PW={gauge:52,tools:56,side:214,tl:260};   // docked column widths
-const LAYOUT_KEY='pxeditor-dock-v1';
+const LAYOUT_KEY='pxeditor-dock-v2';
 const EDGE=90;                                   // how close to an edge to dock
 let dockState=defaultDock();
 function defaultDock(){return {gauge:{dock:'left',ord:0},tools:{dock:'left',ord:100},
@@ -1364,36 +1432,58 @@ function defaultDock(){return {gauge:{dock:'left',ord:0},tools:{dock:'left',ord:
 function panelKey(el){for(const k in PANELS)if($(PANELS[k])===el)return k;return null;}
 function measureH(el){const p=el.style.height;el.style.height='';const h=el.offsetHeight;el.style.height=p;return h;}
 
+function setPrz(el,side){let p=el.querySelector('.prz');if(!p)return;
+  if(side){p.style.display='block';p.className='prz '+side;}else p.style.display='none';}
+function pw(k){return dockState[k].w||PW[k]||200;}
 function relayout(){
   const W=workspace.clientWidth,H=workspace.clientHeight,M=8,G=8;
+  dockState.tl.dock='bottom';   // timeline is pinned to the bottom edge
   const sides={left:[],right:[],top:[],bottom:[],float:[]};
   for(const k in PANELS){const s=dockState[k].dock;(sides[s]||sides.float).push(k);}
   for(const s in sides)sides[s].sort((a,b)=>(dockState[a].ord||0)-(dockState[b].ord||0));
-  // reserve top/bottom bands
   const bandH=(list)=>{let sum=0;list.forEach(k=>{sum+=(k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),H*0.5))+G;});return list.length?sum+M:0;};
   const topH=bandH(sides.top), botH=bandH(sides.bottom);
-  const colTop=M+ (sides.top.length?topH:0), colBot=H-M-(sides.bottom.length?botH:0), colH=Math.max(120,colBot-colTop);
-  // left columns (left→right)
-  let lx=M; sides.left.forEach(k=>{const el=$(PANELS[k]),w=PW[k]||200;
-    el.style.width=w+'px';el.style.left=lx+'px';el.style.top=colTop+'px';el.style.height=colH+'px';lx+=w+G;});
-  // right columns (right→left)
-  let rx=W-M; sides.right.forEach(k=>{const el=$(PANELS[k]),w=PW[k]||200;
-    el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=colTop+'px';el.style.height=colH+'px';rx-=w+G;});
-  // top rows (stacked downward, full width)
+  const colTop=M+(sides.top.length?topH:0), colBot=H-M-(sides.bottom.length?botH:0), colH=Math.max(120,colBot-colTop);
+  let lx=M; sides.left.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
+    el.style.width=w+'px';el.style.left=lx+'px';el.style.top=colTop+'px';el.style.height=h+'px';setPrz(el,'br');lx+=w+G;});
+  let rx=W-M; sides.right.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
+    el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=colTop+'px';el.style.height=h+'px';setPrz(el,'bl');rx-=w+G;});
   let ty=M; sides.top.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
-    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=ty+'px';el.style.height=h+'px';ty+=h+G;});
-  // bottom rows (stacked upward, full width)
+    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=ty+'px';el.style.height=h+'px';setPrz(el,null);ty+=h+G;});
   let by=H-M; sides.bottom.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
-    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';by-=h+G;});
-  // floating
+    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';setPrz(el,null);by-=h+G;});
   sides.float.forEach(k=>{const el=$(PANELS[k]),c=dockState[k];
     el.style.left=(c.x||40)+'px';el.style.top=(c.y||40)+'px';
-    el.style.width=(c.w||PW[k]||200)+'px';el.style.height=(c.h||300)+'px';});
+    el.style.width=(c.w||PW[k]||200)+'px';el.style.height=(c.h||300)+'px';setPrz(el,'br');});
+  positionSelControls();
 }
-function dropZoneFor(px,py){const W=workspace.clientWidth,H=workspace.clientHeight;
-  const dl=px,dr=W-px,dt=py,db=H-py,m=Math.min(dl,dr,dt,db);
-  if(m>EDGE)return 'float';
-  if(m===dl)return 'left';if(m===dr)return 'right';if(m===dt)return 'top';return 'bottom';}
+// Keep the selection tool controls clear of the left docks and above the timeline.
+function positionSelControls(){
+  const W=workspace.clientWidth,H=workspace.clientHeight;
+  let leftEdge=8;
+  for(const k in PANELS){if(dockState[k].dock==='left'){const el=$(PANELS[k]);
+    const rr=(parseFloat(el.style.left)||0)+(parseFloat(el.style.width)||PW[k]||0);if(rr>leftEdge)leftEdge=rr;}}
+  const x=leftEdge+12;
+  const tl=$('#pnlTl'),tlTop=tl?(parseFloat(tl.style.top)||H):H;
+  const bottomGap=H-tlTop;
+  const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge');
+  if(sm){sm.style.left=x+'px';sm.style.top=Math.max(70,(colTopVal()+tlTop)/2)+'px';}
+  if(sd){sd.style.left=x+'px';sd.style.top='12px';}
+  if(nu){nu.style.left=x+'px';nu.style.bottom=(bottomGap+12)+'px';}
+}
+function colTopVal(){const M=8;let topH=0;for(const k in PANELS)if(dockState[k].dock==='top'){topH+= (k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),innerHeight*0.5))+8;}return M+(topH?topH+M:0);}
+function dropZoneFor(px,py,key){const W=workspace.clientWidth,H=workspace.clientHeight;
+  const dl=px,dr=W-px,dt=py,db=H-py;
+  let cand=[['left',dl],['right',dr],['top',dt]];
+  if(key==='tl')cand=[['bottom',db]]; else cand.push(['bottom',db]);
+  cand.sort((a,b)=>a[1]-b[1]);
+  if(cand[0][1]>EDGE)return 'float';
+  let z=cand[0][0];
+  if(key!=='tl'&&z==='bottom'){ // bottom is reserved for the timeline
+    const alt=cand.filter(c=>c[0]!=='bottom').sort((a,b)=>a[1]-b[1])[0];
+    z=alt&&alt[1]<EDGE?alt[0]:'float';
+  }
+  return z;}
 function showPrev(zone,key){const el=$('#dockPrev'),W=workspace.clientWidth,H=workspace.clientHeight;
   if(zone==='float'){el.classList.remove('show');return;}
   const pw=PW[key]||200, ph=(key==='tl'?(dockState.tl.h||190):170);let x,y,w,h;
@@ -1416,7 +1506,7 @@ function startPanelDrag(panel,handle,e){
   const offX=e.clientX-r.left, offY=e.clientY-r.top;let zone='float';
   const move=ev=>{
     panel.style.left=(ev.clientX-wr.left-offX)+'px';panel.style.top=(ev.clientY-wr.top-offY)+'px';
-    zone=dropZoneFor(ev.clientX-wr.left,ev.clientY-wr.top);showPrev(zone,key);
+    zone=dropZoneFor(ev.clientX-wr.left,ev.clientY-wr.top,key);showPrev(zone,key);
   };
   const up=ev=>{try{handle.releasePointerCapture(ev.pointerId);}catch(_){}
     panel.classList.remove('dragging');panel.style.zIndex='';hidePrev();
@@ -1430,13 +1520,34 @@ function startPanelDrag(panel,handle,e){
   };
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
 }
+function startPanelResize(panel,handle,e){
+  const key=panelKey(panel);if(!key)return;
+  e.preventDefault();e.stopPropagation();try{handle.setPointerCapture(e.pointerId);}catch(_){}
+  const r=panel.getBoundingClientRect(),bl=handle.classList.contains('bl');
+  const move=ev=>{
+    let w=bl?(r.right-ev.clientX):(ev.clientX-r.left);
+    let h=ev.clientY-r.top;
+    w=Math.max(44,Math.min(workspace.clientWidth-20,w));
+    h=Math.max(80,Math.min(workspace.clientHeight-20,h));
+    dockState[key].w=Math.round(w);dockState[key].h=Math.round(h);relayout();
+  };
+  const up=ev=>{try{handle.releasePointerCapture(ev.pointerId);}catch(_){}
+    document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);saveLayout();};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
+}
 function makePanelsMovable(){
-  $$('.panel .pgrip').forEach(g=>{const panel=g.closest('.panel');
+  // timeline is pinned to the bottom -> its grip does not drag
+  $$('.panel .pgrip').forEach(g=>{const panel=g.closest('.panel');if(panel.id==='pnlTl')return;
     g.addEventListener('pointerdown',e=>startPanelDrag(panel,g,e));});
+  // resize handles on gauge/tools/side
+  ['pnlGauge','pnlTools','pnlSide'].forEach(id=>{const panel=$('#'+id);
+    let p=panel.querySelector('.prz');if(!p){p=document.createElement('div');p.className='prz br';panel.appendChild(p);}
+    p.addEventListener('pointerdown',e=>startPanelResize(panel,p,e));});
   // long-press on a panel's empty area also starts a move
   $$('.panel').forEach(panel=>{
+    if(panel.id==='pnlTl')return;   // timeline stays docked at the bottom
     panel.addEventListener('pointerdown',e=>{
-      if(e.target.closest('.pgrip,.presize,button,input,select,textarea,.g-track,.tl-scroll,.palette,[contenteditable]'))return;
+      if(e.target.closest('.pgrip,.presize,.prz,button,input,select,textarea,.g-track,.tl-scroll,.palette,canvas,[contenteditable]'))return;
       const sx=e.clientX,sy=e.clientY;
       const t=setTimeout(()=>{clr();startPanelDrag(panel,panel,e);},420);
       function mv(ev){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>8)clr();}
@@ -1456,6 +1567,7 @@ function makePanelsMovable(){
 }
 function initLayout(){const saved=loadLayout();dockState=saved||defaultDock();
   const d=defaultDock();for(const k in PANELS)if(!dockState[k])dockState[k]=d[k];
+  dockState.tl.dock='bottom';   // timeline always docks at the bottom
   relayout();makePanelsMovable();}
 $('#mPanel').onclick=togglePanel;
 
@@ -1701,7 +1813,7 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
 
 /* ================= Boot ================= */
 function boot(){
-  initLayout();
+  initLayout();initWheel();
   newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
   window.addEventListener('resize',()=>{relayout();fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
