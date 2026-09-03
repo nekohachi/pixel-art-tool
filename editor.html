@@ -79,6 +79,9 @@
   /* Canvas */
   .stage{position:absolute;inset:0;overflow:hidden;background:#15161b;touch-action:none;z-index:0;}
   #view{position:absolute;left:0;top:0;image-rendering:pixelated;image-rendering:crisp-edges;}
+  .gauge .gshape{width:34px;height:30px;border:1px solid var(--border);background:var(--panel2);
+    border-radius:6px;font-size:16px;cursor:pointer;flex:none;padding:0;color:var(--text);}
+  .brushcursor.round{border-radius:50%;}
   .brushcursor{position:absolute;pointer-events:none;border:1px solid #fff;
     box-shadow:0 0 0 1px #000;display:none;z-index:5;mix-blend-mode:difference;}
   /* Eyedropper loupe */
@@ -293,7 +296,7 @@
       <span class="g-icon">⬤</span>
       <div class="g-track" id="gtrack"><div class="g-fill" id="gfill"></div><div class="g-dot" id="gdot"></div></div>
       <span class="g-val" id="gval">1</span>
-      <span class="g-icon">•</span>
+      <button class="gshape" id="brushShapeBtn" title="ブラシ形状（四角／円）">◻</button>
     </div>
   </div>
 
@@ -420,6 +423,7 @@
       <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
       <button class="hbtn" data-act="exportPng">⬇ PNG書き出し（現フレーム）</button>
       <button class="hbtn" data-act="exportSheet">🗂 スプライトシート書き出し</button>
+      <button class="hbtn" data-act="exportSeq">🔢 PNG連番書き出し（ZIP）</button>
       <button class="hbtn" data-act="exportGif">🎞 アニメGIF書き出し</button>
       <button class="hbtn" data-act="deselect">⬚ 選択解除</button>
       <button class="hbtn" data-act="clear">🧹 このセルを消去</button>
@@ -742,7 +746,7 @@ function ants(rx,ry,rw,rh){
 /* ================= Tools ================= */
 let tool='pencil', lastPaintTool='pencil';
 let color=packHex('#e6e8ee',255);
-let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false;
+let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false, brushShape='square';
 let previewCel=null;
 const SHAPE=['line','rect','ellipse'];
 const SELTOOL=['select','lasso','wand','quick'];
@@ -773,10 +777,14 @@ function plot(cel,x,y,px,erase){
   else{blendPlot(cel,x,y,px);if(mirrorX)blendPlot(cel,W-1-x,y,px);}
 }
 function paintPix(cel,x,y,erase){
-  const px=erase?0:withOpacity(color,opacity);const r=brushSize;
-  if(r<=1){plot(cel,x,y,px,erase);return;}
-  const rad=r/2;
-  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++)if(dx*dx+dy*dy<=rad*rad)plot(cel,x+dx,y+dy,px,erase);
+  const px=erase?0:withOpacity(color,opacity);const s=Math.max(1,brushSize);
+  if(s<=1){plot(cel,x,y,px,erase);return;}
+  const h1=Math.floor((s-1)/2), h2=s-1-h1;         // centered s×s block
+  const cx=(h2-h1)/2, r=s/2, r2=r*r;
+  for(let dy=-h1;dy<=h2;dy++)for(let dx=-h1;dx<=h2;dx++){
+    if(brushShape==='circle'&&(dx-cx)*(dx-cx)+(dy-cx)*(dy-cx)>r2)continue;
+    plot(cel,x+dx,y+dy,px,erase);
+  }
 }
 let ppPrev=[];
 function ppPlot(cel,x,y){
@@ -829,6 +837,7 @@ const bc=$('#brushcursor');
 let spaceHand=false;
 
 function updateBrushCursor(){
+  bc.classList.toggle('round',brushShape==='circle');
   if(['pencil','eraser'].includes(tool)){const s=Math.max(1,brushSize)*zoom;bc.style.width=s+'px';bc.style.height=s+'px';}
 }
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
@@ -933,11 +942,12 @@ function commitPick(){
 stage.addEventListener('pointermove',e=>{
   if(pointers.has(e.pointerId))pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(picking){updatePick(e.clientX,e.clientY);return;}
-  if(['pencil','eraser'].includes(tool)&&e.pointerType!=='touch'){
-    bc.style.display='block';const s=Math.max(1,brushSize)*zoom;const{x,y}=screenToPix(e.clientX,e.clientY);
-    const off=brushSize>1?(brushSize-1)/2*zoom:0;
+  if(['pencil','eraser','quick'].includes(tool)&&e.pointerType!=='touch'){
+    bc.style.display='block';bc.classList.toggle('round',brushShape==='circle');
+    const bs=tool==='quick'?1:Math.max(1,brushSize),s=bs*zoom;const{x,y}=screenToPix(e.clientX,e.clientY);
+    const off=Math.floor((bs-1)/2)*zoom;
     bc.style.left=(panX+x*zoom-off)+'px';bc.style.top=(panY+y*zoom-off)+'px';bc.style.width=s+'px';bc.style.height=s+'px';
-  }
+  } else if(e.pointerType!=='touch') bc.style.display='none';
   if(pinch&&pointers.size>=2){
     const pts=[...pointers.values()];const d=dist(pts[0],pts[1]);
     const cx=(pts[0].x+pts[1].x)/2,cy=(pts[0].y+pts[1].y)/2;
@@ -1339,6 +1349,8 @@ gtrack.addEventListener('pointerdown',e=>{gtrack.setPointerCapture(e.pointerId);
 gtrack.addEventListener('pointermove',e=>{if(gaugeDrag)setBrushFromY(e.clientY);});
 gtrack.addEventListener('pointerup',()=>{gaugeDrag=false;});
 gtrack.addEventListener('pointercancel',()=>{gaugeDrag=false;});
+$('#brushShapeBtn').onclick=()=>{brushShape=brushShape==='square'?'circle':'square';
+  $('#brushShapeBtn').textContent=brushShape==='square'?'◻':'◯';updateBrushCursor();toast(brushShape==='square'?'ブラシ: 四角':'ブラシ: 円');};
 
 /* ================= Controls ================= */
 $$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
@@ -1436,22 +1448,23 @@ function setPrz(el,side){let p=el.querySelector('.prz');if(!p)return;
   if(side){p.style.display='block';p.className='prz '+side;}else p.style.display='none';}
 function pw(k){return dockState[k].w||PW[k]||200;}
 function relayout(){
-  const W=workspace.clientWidth,H=workspace.clientHeight,M=8,G=8;
+  const W=workspace.clientWidth,H=workspace.clientHeight,G=2;   // tight seams
   dockState.tl.dock='bottom';   // timeline is pinned to the bottom edge
   const sides={left:[],right:[],top:[],bottom:[],float:[]};
   for(const k in PANELS){const s=dockState[k].dock;(sides[s]||sides.float).push(k);}
   for(const s in sides)sides[s].sort((a,b)=>(dockState[a].ord||0)-(dockState[b].ord||0));
-  const bandH=(list)=>{let sum=0;list.forEach(k=>{sum+=(k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),H*0.5))+G;});return list.length?sum+M:0;};
-  const topH=bandH(sides.top), botH=bandH(sides.bottom);
-  const colTop=M+(sides.top.length?topH:0), colBot=H-M-(sides.bottom.length?botH:0), colH=Math.max(120,colBot-colTop);
-  let lx=M; sides.left.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
+  const bandTot=(list)=>{let sum=0;list.forEach((k,i)=>{sum+=(k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),H*0.5))+(i?G:0);});return sum;};
+  const topH=sides.top.length?bandTot(sides.top)+G:0, botH=sides.bottom.length?bandTot(sides.bottom):0;
+  const colTop=topH, colBot=H-botH, colH=Math.max(120,colBot-colTop);
+  let lx=0; sides.left.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
     el.style.width=w+'px';el.style.left=lx+'px';el.style.top=colTop+'px';el.style.height=h+'px';setPrz(el,'br');lx+=w+G;});
-  let rx=W-M; sides.right.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
+  let rx=W; sides.right.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
     el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=colTop+'px';el.style.height=h+'px';setPrz(el,'bl');rx-=w+G;});
-  let ty=M; sides.top.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
-    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=ty+'px';el.style.height=h+'px';setPrz(el,null);ty+=h+G;});
-  let by=H-M; sides.bottom.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
-    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';setPrz(el,null);by-=h+G;});
+  let ty=0; sides.top.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
+    el.style.left='0px';el.style.width=W+'px';el.style.top=ty+'px';el.style.height=h+'px';setPrz(el,null);ty+=h+G;});
+  // bottom: flush to the very bottom edge, full width (no gap under the timeline)
+  let by=H; sides.bottom.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
+    el.style.left='0px';el.style.width=W+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';setPrz(el,null);by-=h;});
   sides.float.forEach(k=>{const el=$(PANELS[k]),c=dockState[k];
     el.style.left=(c.x||40)+'px';el.style.top=(c.y||40)+'px';
     el.style.width=(c.w||PW[k]||200)+'px';el.style.height=(c.h||300)+'px';setPrz(el,'br');});
@@ -1603,7 +1616,7 @@ $$('#menuModal [data-act]').forEach(b=>b.onclick=()=>menuAction(b.dataset.act));
 function menuAction(a){$('#menuModal').classList.remove('show');
   switch(a){case 'new':openSize('new');break;case 'resize':openSize('resize');break;
     case 'import':$('#fileImg').click();break;case 'save':saveProject();break;case 'load':$('#fileProj').click();break;
-    case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportGif':exportGIF();break;
+    case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
     case 'deselect':deselect();break;case 'clear':clearCel();break;
     case 'resetLayout':resetLayout();break;}}
 function clearCel(){pushUndo();activeCel().fill(0);render();updateCelThumb(activeLayer,activeFrame);}
@@ -1764,6 +1777,27 @@ function exportSheet(){const s=exportScale();if(!s)return;const n=doc.frames.len
   const c=document.createElement('canvas');c.width=W*s*n;c.height=H*s;const ctx=c.getContext('2d');ctx.imageSmoothingEnabled=false;
   for(let i=0;i<n;i++)ctx.drawImage(frameToCanvas(i,s),i*W*s,0);c.toBlob(b=>{downloadBlob(b,'spritesheet.png');toast(n+'枚のシート書き出し');});}
 function exportScale(){const s=prompt('拡大倍率（1〜32）',W<=64?'8':'4');if(s===null)return null;return Math.max(1,Math.min(32,parseInt(s)||1));}
+// Export every frame as numbered PNGs, packed into a ZIP (store, no deflate).
+const CRC_T=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}return t;})();
+function crc32(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=CRC_T[(c^b[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function zipStore(files){
+  const u16=v=>[v&255,(v>>8)&255], u32=v=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
+  const enc=new TextEncoder();const parts=[],central=[];let off=0;
+  for(const f of files){const name=enc.encode(f.name),data=f.data,crc=crc32(data);
+    const lh=new Uint8Array([0x50,0x4b,0x03,0x04,...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0)]);
+    parts.push(lh,name,data);
+    central.push(new Uint8Array([0x50,0x4b,0x01,0x02,...u16(20),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)]),name);
+    off+=lh.length+name.length+data.length;}
+  let cenSize=0;central.forEach(c=>cenSize+=c.length);
+  const end=new Uint8Array([0x50,0x4b,0x05,0x06,...u16(0),...u16(0),...u16(files.length),...u16(files.length),...u32(cenSize),...u32(off),...u16(0)]);
+  return new Blob([...parts,...central,end],{type:'application/zip'});
+}
+async function exportSeq(){const s=exportScale();if(!s)return;toast('連番PNG生成中…');
+  const files=[];
+  for(let i=0;i<doc.frames.length;i++){const c=frameToCanvas(i,s);
+    const blob=await new Promise(r=>c.toBlob(r,'image/png'));
+    files.push({name:'frame-'+String(i+1).padStart(3,'0')+'.png',data:new Uint8Array(await blob.arrayBuffer())});}
+  downloadBlob(zipStore(files),'frames.zip');toast(files.length+'枚をZIPで書き出し');}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 function exportGIF(){if(doc.frames.length<1)return;const scale=exportScale();if(!scale)return;toast('GIF生成中…');
