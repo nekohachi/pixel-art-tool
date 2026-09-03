@@ -31,6 +31,7 @@
   .hbtn{border:1px solid var(--border);background:var(--panel2);border-radius:7px;
     padding:6px 10px;font-size:13px;cursor:pointer;white-space:nowrap;}
   .hbtn:active{background:var(--panel3);}
+  .hbtn.on{background:var(--accent);border-color:var(--accent);color:#fff;}
   .hbtn.icon{padding:6px 9px;}
 
   #workspace{flex:1;min-height:0;position:relative;overflow:hidden;}
@@ -171,7 +172,35 @@
     box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
   .seldel.show{display:flex;}
   .seldel:active{background:var(--danger);color:#fff;}
-  @media (max-width:760px){.selmod{left:120px;} .nudge{left:120px;} .seldel{left:120px;}}
+  /* Deselect button: sits just below the trash */
+  .seldeselect{position:absolute;left:132px;top:74px;z-index:15;display:none;
+    width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:22px;cursor:pointer;
+    box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
+  .seldeselect.show{display:flex;}
+  .seldeselect:active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  /* Color-range tolerance: to the right of the trash, only for the 色域選択 tool */
+  .rangetol{position:absolute;left:192px;top:12px;z-index:15;display:none;
+    flex-direction:column;gap:4px;width:150px;padding:8px 10px;border-radius:12px;
+    background:var(--panel2);border:1px solid var(--border);box-shadow:0 3px 10px #0008;}
+  .rangetol.show{display:flex;}
+  .rangetol .rt-lbl{font-size:11px;color:var(--muted);}
+  .rangetol .rt-lbl span{color:var(--accent2);font-variant-numeric:tabular-nums;}
+  .rangetol input[type=range]{width:100%;height:26px;}
+  /* Layer opacity hover gauge (long-press a layer name to scrub) */
+  .layeropac{position:fixed;z-index:80;display:none;width:200px;padding:10px 12px;
+    border-radius:12px;background:#000d;border:1px solid var(--border);
+    box-shadow:0 8px 26px #000b;pointer-events:none;}
+  .layeropac.show{display:block;}
+  .layeropac .lo-name{font-size:11px;color:var(--muted);margin-bottom:6px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  .layeropac .lo-track{height:14px;border-radius:8px;background:var(--panel3);overflow:hidden;
+    box-shadow:inset 0 0 0 1px var(--border);}
+  .layeropac .lo-fill{height:100%;background:linear-gradient(90deg,var(--accent2),var(--accent));}
+  .layeropac .lo-val{margin-top:6px;font-size:15px;font-weight:600;text-align:center;
+    font-variant-numeric:tabular-nums;color:#fff;}
+  @media (max-width:760px){.selmod{left:120px;} .nudge{left:120px;} .seldel{left:120px;}
+    .seldeselect{left:120px;} .rangetol{left:180px;}}
 
   /* Aseprite-style timeline */
   .timeline{background:var(--panel);display:flex;flex-direction:column;min-height:0;}
@@ -234,6 +263,13 @@
   .modal .row{display:flex;gap:8px;margin-top:14px;}
   .modal .row .hbtn{flex:1;text-align:center;justify-content:center;}
   .modal .hbtn.primary{background:var(--accent);border-color:var(--accent);}
+  /* Menu tabs */
+  .mtabs{display:flex;gap:4px;margin-bottom:10px;}
+  .mtab{flex:1;border:1px solid var(--border);background:var(--panel2);color:var(--muted);
+    border-radius:8px;padding:8px 4px;font-size:12px;cursor:pointer;touch-action:manipulation;}
+  .mtab.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .mpane{display:none;flex-direction:column;gap:8px;}
+  .mpane.active{display:flex;}
   .num{width:64px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 7px;font-size:13px;}
   .preset{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
   .preset .hbtn{padding:5px 8px;font-size:12px;}
@@ -287,6 +323,8 @@
 <header>
   <h1>✏️ ドット絵エディタ <small id="docsize">32×32</small></h1>
   <span class="grow"></span>
+  <button class="hbtn" id="ppBtn" title="ピクセルパーフェクト">◠ PP</button>
+  <button class="hbtn" id="gridBtn" title="グリッド表示">▦</button>
   <button class="hbtn icon" id="undoBtn" title="元に戻す">↶</button>
   <button class="hbtn icon" id="redoBtn" title="やり直し">↷</button>
   <button class="hbtn" id="menuBtn" title="メニュー">☰</button>
@@ -314,6 +352,18 @@
     </div>
   </div>
   <button class="seldel" id="selDel" title="選択範囲を削除（元に戻す/2本指タップで復帰）">🗑</button>
+  <button class="seldeselect" id="selDeselect" title="選択解除">⬚</button>
+  <!-- Color-range tolerance: appears right of the trash while the 色域選択 tool is active -->
+  <div class="rangetol" id="rangeTolFloat">
+    <div class="rt-lbl">色域許容 <span id="rangeTolV">48</span></div>
+    <input type="range" id="rangeTol" min="0" max="180" value="48">
+  </div>
+  <!-- Layer opacity hover gauge (long-press a layer name to scrub) -->
+  <div class="layeropac" id="layerOpacHover">
+    <div class="lo-name" id="loName">レイヤー</div>
+    <div class="lo-track"><div class="lo-fill" id="loFill"></div></div>
+    <div class="lo-val" id="loVal">100%</div>
+  </div>
   <div class="nudge" id="nudge">
     <button class="nu up" data-dx="0" data-dy="-1" title="上へ1px">▲</button>
     <button class="nu left" data-dx="-1" data-dy="0" title="左へ1px">◀</button>
@@ -381,19 +431,12 @@
       </div>
 
       <div class="sec" id="selSec">
-        <h3>選択</h3>
-        <div class="selmodes">
-          <button class="minibtn" id="selNone" title="選択解除" style="flex:1;height:30px">選択解除</button>
-        </div>
-        <div class="field" style="margin-top:8px"><label>色域許容</label>
-          <input type="range" id="rangeTol" min="0" max="180" value="48">
-          <span id="rangeTolV" style="min-width:26px;text-align:right">48</span>
-        </div>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px">
+        <h3>選択オプション</h3>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px">
           <input type="checkbox" id="fillGap"> 🩹 移動時に隙間を埋める（端を引き伸ばし）
         </label>
         <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5">
-          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で追加／除外。色域/クイックは「色域許容」で範囲調整。PCは Ctrl=追加 / Alt=除外。
+          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で追加／除外。色域選択は 🗑 の右の「色域許容」で範囲調整。PCは Ctrl=追加 / Alt=除外。
         </div>
       </div>
 
@@ -401,18 +444,6 @@
         <div class="field"><label>不透明</label>
           <input type="range" id="opacity" min="1" max="255" value="255">
           <span id="opacityV" style="min-width:30px;text-align:right">100%</span>
-        </div>
-        <div class="field" style="gap:12px;flex-wrap:wrap">
-          <label style="min-width:auto"><input type="checkbox" id="pixelPerfect"> ピクセルパーフェクト</label>
-          <label style="min-width:auto"><input type="checkbox" id="showGrid"> グリッド</label>
-        </div>
-      </div>
-
-      <div class="sec">
-        <h3>レイヤー不透明度</h3>
-        <div class="field"><label>不透明</label>
-          <input type="range" id="layerOpacity" min="0" max="255" value="255">
-          <span id="layerOpacityV" style="min-width:30px;text-align:right">100%</span>
         </div>
       </div>
     </div>
@@ -455,23 +486,29 @@
 <div class="modal-bg" id="menuModal">
   <div class="modal">
     <h2>メニュー</h2>
-    <div class="row" style="flex-direction:column;gap:8px;margin-top:0">
+    <div class="mtabs">
+      <button class="mtab active" data-tab="file">📄 ファイル</button>
+      <button class="mtab" data-tab="import">📥 インポート</button>
+      <button class="mtab" data-tab="export">📤 エクスポート</button>
+    </div>
+    <div class="mpane active" data-pane="file">
       <button class="hbtn" data-act="new">🆕 新規キャンバス</button>
       <button class="hbtn" data-act="resize">📐 キャンバスサイズ変更</button>
+      <button class="hbtn" data-act="save">💾 プロジェクト保存 (.pxproj)</button>
+      <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
+    </div>
+    <div class="mpane" data-pane="import">
       <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
       <button class="hbtn" data-act="convert">🎨 画像をドット絵に変換…</button>
       <button class="hbtn" data-act="reconvert" id="mReconvert" style="display:none">🎛 変換を再調整…</button>
       <button class="hbtn" data-act="paste">📥 クリップボードから貼り付け</button>
-      <button class="hbtn" data-act="copyPng">📋 現フレームをコピー(PNG)</button>
-      <button class="hbtn" data-act="save">💾 プロジェクト保存 (.pxproj)</button>
-      <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
+    </div>
+    <div class="mpane" data-pane="export">
       <button class="hbtn" data-act="exportPng">⬇ PNG書き出し（現フレーム）</button>
       <button class="hbtn" data-act="exportSheet">🗂 スプライトシート書き出し</button>
       <button class="hbtn" data-act="exportSeq">🔢 PNG連番書き出し（ZIP）</button>
       <button class="hbtn" data-act="exportGif">🎞 アニメGIF書き出し</button>
-      <button class="hbtn" data-act="deselect">⬚ 選択解除</button>
-      <button class="hbtn" data-act="clear">🧹 このセルを消去</button>
-      <button class="hbtn" data-act="resetLayout">🧩 レイアウトをリセット</button>
+      <button class="hbtn" data-act="copyPng">📋 現フレームをコピー(PNG)</button>
     </div>
     <div class="row"><button class="hbtn" id="menuClose">閉じる</button></div>
   </div>
@@ -1314,6 +1351,32 @@ function pickColor(x,y){
 function attachLong(el,fn){let t;
   el.addEventListener('pointerdown',()=>{t=setTimeout(fn,550);});
   ['pointerup','pointerleave','pointercancel'].forEach(ev=>el.addEventListener(ev,()=>clearTimeout(t)));}
+// Long-press a layer name -> a floating opacity gauge appears; slide left/right, release to confirm.
+function attachLayerOpacityScrub(el,L){
+  el.addEventListener('pointerdown',e=>{
+    if(el.isContentEditable)return;
+    const sx=e.clientX, sy=e.clientY, startOp=L.opacity; let scrubbing=false,t;
+    const hover=$('#layerOpacHover');
+    const paint=op=>{$('#loFill').style.width=(op/255*100)+'%';$('#loVal').textContent=Math.round(op/255*100)+'%';};
+    const place=(cx,cy)=>{const w=200;let x=cx-w/2;x=Math.max(8,Math.min(innerWidth-w-8,x));
+      hover.style.left=x+'px';hover.style.top=Math.max(8,cy-86)+'px';};
+    const enter=()=>{scrubbing=true;try{el.setPointerCapture(e.pointerId);}catch(_){}
+      $('#loName').textContent=L.name;paint(L.opacity);place(sx,sy);hover.classList.add('show');};
+    t=setTimeout(enter,320);
+    const move=ev=>{
+      if(!scrubbing){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>8){clearTimeout(t);cleanup();}return;}
+      ev.preventDefault();
+      const op=Math.max(0,Math.min(255,Math.round(startOp+(ev.clientX-sx)*1.5)));
+      L.opacity=op;paint(op);place(ev.clientX,sy);render();};
+    const up=()=>{clearTimeout(t);
+      if(scrubbing){hover.classList.remove('show');justDragged=true;setTimeout(()=>justDragged=false,80);
+        refreshTimeline();render();}
+      cleanup();};
+    function cleanup(){document.removeEventListener('pointermove',move);
+      document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+    document.addEventListener('pointermove',move);
+    document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+  });}
 function drawCelThumb(ctx,layerId,fi){
   ctx.clearRect(0,0,W,H);const cel=doc.cels.get(celKey(layerId,fi));if(!cel)return;
   ctx.putImageData(new ImageData(new Uint8ClampedArray(cel.slice().buffer),W,H),0,0);
@@ -1343,6 +1406,7 @@ function refreshTimeline(){
     head.querySelector('.eye').onclick=e=>{e.stopPropagation();L.visible=!L.visible;refreshTimeline();render();};
     head.querySelector('.lock').onclick=e=>{e.stopPropagation();L.locked=!L.locked;refreshTimeline();};
     const ln=head.querySelector('.lname');
+    attachLayerOpacityScrub(ln,L);
     head.onclick=()=>{if(justDragged)return;activeLayer=li;refreshTimeline();syncLayerPanel();};
     ln.ondblclick=e=>{e.stopPropagation();ln.contentEditable=true;ln.focus();
       const r=document.createRange();r.selectNodeContents(ln);const s=getSelection();s.removeAllRanges();s.addRange(r);};
@@ -1453,10 +1517,7 @@ function highlightTimeline(){
   $$('#tlGrid .tl-fnum').forEach((el,i)=>el.classList.toggle('active',i===activeFrame));
   $$('#tlGrid .tl-cell').forEach(el=>el.classList.toggle('active',+el.dataset.l===activeLayer&&+el.dataset.f===activeFrame));
 }
-function syncLayerPanel(){
-  const L=doc.layers[activeLayer];if(!L)return;
-  $('#layerOpacity').value=L.opacity;$('#layerOpacityV').textContent=Math.round(L.opacity/255*100)+'%';
-}
+function syncLayerPanel(){/* layer opacity is now edited via long-press on the layer name */}
 
 /* Layer ops */
 function addLayer(){pushUndo();doc.layers.splice(activeLayer+1,0,{id:uid(),name:'レイヤー '+(doc.layers.length+1),visible:true,opacity:255,locked:false});activeLayer++;refreshTimeline();render();}
@@ -1476,7 +1537,6 @@ function mergeLayerFn(){if(activeLayer===0){toast('下にレイヤーがあり�
     doc.cels.delete(celKey(top.id,fi));});
   doc.layers.splice(activeLayer,1);activeLayer--;refreshTimeline();render();}
 $('#layerDel').onclick=delLayerFn;
-$('#layerOpacity').oninput=e=>{doc.layers[activeLayer].opacity=+e.target.value;$('#layerOpacityV').textContent=Math.round(e.target.value/255*100)+'%';render();};
 
 /* Frame ops */
 function reindexAfterDelete(delIdx){const nm=new Map();
@@ -1541,17 +1601,19 @@ $('#brushShapeBtn').onclick=()=>{brushShape=brushShape==='square'?'circle':'squa
 /* ================= Controls ================= */
 $$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 $('#opacity').oninput=e=>{opacity=+e.target.value;$('#opacityV').textContent=Math.round(opacity/255*100)+'%';};
-$('#pixelPerfect').onchange=e=>pixelPerfect=e.target.checked;
+// pixel-perfect & grid live in the header now
+$('#ppBtn').onclick=()=>{pixelPerfect=!pixelPerfect;$('#ppBtn').classList.toggle('on',pixelPerfect);
+  toast(pixelPerfect?'ピクセルパーフェクト ON':'ピクセルパーフェクト OFF');};
+$('#gridBtn').onclick=()=>{showGridFlag=!showGridFlag;$('#gridBtn').classList.toggle('on',showGridFlag);render();};
 $('#fillGap').onchange=e=>{fillOnMove=e.target.checked;toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
   // live-adjust the last color-range selection as the tolerance changes
   if(lastRange){selection=lastRange.base?{mask:lastRange.base.slice()}:null;
     applyShape(rangeShape(lastRange.x,lastRange.y),lastRange.mode);render();}};
-$('#showGrid').onchange=e=>{showGridFlag=e.target.checked;render();};
 $('#colorPick').oninput=e=>setColorHex(e.target.value);
 $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){palette.push(hex);renderPalette();}};
 $('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#mUndo').onclick=undo;$('#mRedo').onclick=redo;
-$('#selNone').onclick=()=>{deselect();toast('選択解除');};
+$('#selDeselect').onclick=()=>{deselect();toast('選択解除');};
 // Big +/- buttons act as Ctrl/Alt: hold to modify momentarily, tap to lock.
 let selHoldTime=0;
 function bindSelMod(btn,mode){
@@ -1572,6 +1634,8 @@ function updateSelModVisible(){
   $('#selMod').classList.toggle('show',SELTOOL.includes(tool)||!!selection);
   $('#nudge').classList.toggle('show',!!selection);
   $('#selDel').classList.toggle('show',!!selection);
+  $('#selDeselect').classList.toggle('show',!!selection);
+  $('#rangeTolFloat').classList.toggle('show',tool==='range');
   if(typeof positionSelControls==='function')positionSelControls();
 }
 // Delete (clear) the selected pixels on the active layer (undoable).
@@ -1669,9 +1733,11 @@ function positionSelControls(){
   const x=leftEdge+12;
   const tl=$('#pnlTl'),tlTop=tl?(parseFloat(tl.style.top)||H):H;
   const bottomGap=H-tlTop;
-  const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge');
+  const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge'),dz=$('#selDeselect'),rt=$('#rangeTolFloat');
   if(sm){sm.style.left=x+'px';sm.style.top=Math.max(70,(colTopVal()+tlTop)/2)+'px';}
   if(sd){sd.style.left=x+'px';sd.style.top='12px';}
+  if(dz){dz.style.left=x+'px';dz.style.top='74px';}            // just below the trash
+  if(rt){rt.style.left=(x+62)+'px';rt.style.top='12px';}        // to the right of the trash
   if(nu){nu.style.left=x+'px';nu.style.bottom=(bottomGap+12)+'px';}
 }
 function colTopVal(){const M=8;let topH=0;for(const k in PANELS)if(dockState[k].dock==='top'){topH+= (k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),innerHeight*0.5))+8;}return M+(topH?topH+M:0);}
@@ -1803,14 +1869,16 @@ $('#mMenu').onclick=()=>$('#menuModal').classList.add('show');
 $('#menuClose').onclick=()=>$('#menuModal').classList.remove('show');
 $('#menuModal').addEventListener('click',e=>{if(e.target===$('#menuModal'))$('#menuModal').classList.remove('show');});
 $$('#menuModal [data-act]').forEach(b=>b.onclick=()=>menuAction(b.dataset.act));
+// menu tabs
+$$('#menuModal .mtab').forEach(t=>t.onclick=()=>{const tab=t.dataset.tab;
+  $$('#menuModal .mtab').forEach(x=>x.classList.toggle('active',x===t));
+  $$('#menuModal .mpane').forEach(p=>p.classList.toggle('active',p.dataset.pane===tab));});
 function menuAction(a){$('#menuModal').classList.remove('show');
   switch(a){case 'new':openSize('new');break;case 'resize':openSize('resize');break;
     case 'import':$('#fileImg').click();break;case 'save':saveProject();break;case 'load':$('#fileProj').click();break;
     case 'convert':$('#fileConv').click();break;case 'reconvert':reopenConverter();break;
     case 'paste':pasteFromClipboard();break;case 'copyPng':copyFramePNG();break;
-    case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
-    case 'deselect':deselect();break;case 'clear':clearCel();break;
-    case 'resetLayout':resetLayout();break;}}
+    case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;}}
 function clearCel(){pushUndo();activeCel().fill(0);render();updateCelThumb(activeLayer,activeFrame);}
 
 let sizeMode='new';
