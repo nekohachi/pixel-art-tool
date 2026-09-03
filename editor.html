@@ -236,6 +236,30 @@
   .preset{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
   .preset .hbtn{padding:5px 8px;font-size:12px;}
 
+  /* Converter modal (image -> pixel art, non-destructive) */
+  .modal.conv{max-width:760px;width:100%;}
+  .conv-body{display:flex;gap:14px;}
+  @media (max-width:720px){.conv-body{flex-direction:column;}}
+  .conv-prev{flex:none;width:300px;display:flex;flex-direction:column;gap:8px;}
+  @media (max-width:720px){.conv-prev{width:100%;}}
+  .conv-canvaswrap{position:relative;width:100%;aspect-ratio:1;border:1px solid var(--border);
+    border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;
+    background-image:linear-gradient(45deg,#2a2c34 25%,transparent 25%),linear-gradient(-45deg,#2a2c34 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2a2c34 75%),linear-gradient(-45deg,transparent 75%,#2a2c34 75%);
+    background-size:16px 16px;background-position:0 0,0 8px,8px -8px,-8px 0;background-color:#1b1d23;}
+  #convCv{image-rendering:pixelated;max-width:100%;max-height:100%;}
+  .conv-info{font-size:11px;color:var(--muted);text-align:center;font-variant-numeric:tabular-nums;}
+  .conv-ctrl{flex:1;min-width:0;max-height:64vh;overflow-y:auto;padding-right:4px;}
+  .conv-ctrl .cf{margin:9px 0;}
+  .conv-ctrl .cf .cfrow{display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-bottom:3px;}
+  .conv-ctrl .cf .cfrow .cv{color:var(--muted);font-variant-numeric:tabular-nums;}
+  .conv-ctrl .cf label{font-size:12px;color:var(--text);}
+  .conv-ctrl input[type=range]{width:100%;height:26px;}
+  .conv-ctrl select,.conv-ctrl .num{width:100%;background:var(--panel2);border:1px solid var(--border);
+    color:var(--text);border-radius:6px;padding:6px 7px;font-size:13px;}
+  .conv-ctrl .csec{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;
+    border-bottom:1px solid var(--border);padding-bottom:4px;margin:14px 0 4px;}
+  .conv-ctrl .chk{display:flex;align-items:center;gap:8px;font-size:12px;margin:9px 0;}
+
   .toast{position:fixed;left:50%;bottom:calc(16px + var(--safe-b));transform:translateX(-50%);
     background:#000c;border:1px solid var(--border);border-radius:20px;padding:8px 16px;font-size:13px;z-index:60;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap;}
   .toast.show{opacity:1;}
@@ -432,6 +456,10 @@
       <button class="hbtn" data-act="new">🆕 新規キャンバス</button>
       <button class="hbtn" data-act="resize">📐 キャンバスサイズ変更</button>
       <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
+      <button class="hbtn" data-act="convert">🎨 画像をドット絵に変換…</button>
+      <button class="hbtn" data-act="reconvert" id="mReconvert" style="display:none">🎛 変換を再調整…</button>
+      <button class="hbtn" data-act="paste">📥 クリップボードから貼り付け</button>
+      <button class="hbtn" data-act="copyPng">📋 現フレームをコピー(PNG)</button>
       <button class="hbtn" data-act="save">💾 プロジェクト保存 (.pxproj)</button>
       <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
       <button class="hbtn" data-act="exportPng">⬇ PNG書き出し（現フレーム）</button>
@@ -443,6 +471,120 @@
       <button class="hbtn" data-act="resetLayout">🧩 レイアウトをリセット</button>
     </div>
     <div class="row"><button class="hbtn" id="menuClose">閉じる</button></div>
+  </div>
+</div>
+
+<!-- Converter modal (illustration -> pixel art, non-destructive) -->
+<div class="modal-bg" id="convModal">
+  <div class="modal conv">
+    <h2 id="convTitle">🎨 ドット絵に変換</h2>
+    <div class="conv-body">
+      <div class="conv-prev">
+        <div class="conv-canvaswrap"><canvas id="convCv"></canvas></div>
+        <div class="conv-info" id="convInfo">—</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5">
+          元画像を保持したまま変換します（非破壊）。あとからメニューの「変換を再調整」でやり直せます。
+        </div>
+      </div>
+      <div class="conv-ctrl" id="convCtrl">
+        <div class="csec">パレット / 減色</div>
+        <div class="cf">
+          <label>パレット</label>
+          <select id="cvPalSource">
+            <option value="auto" selected>自動（色数スライダー）</option>
+            <option value="pico8">PICO-8（16色）</option>
+            <option value="gameboy">ゲームボーイ（4色）</option>
+            <option value="nes">NES（54色）</option>
+            <option value="cga">CGA（16色）</option>
+          </select>
+        </div>
+        <div class="cf">
+          <label>減色アルゴリズム</label>
+          <select id="cvQuant">
+            <option value="kmeans" selected>k-means（なじむ・高品質）</option>
+            <option value="median">メディアンカット（高速）</option>
+          </select>
+        </div>
+        <div class="cf">
+          <div class="cfrow"><label>色数</label><span class="cv" id="cvColorsV">16</span></div>
+          <input type="range" id="cvColors" min="2" max="64" step="1" value="16">
+        </div>
+
+        <div class="csec">ドット化</div>
+        <div class="cf">
+          <div class="cfrow"><label>ドットの粗さ（1ドット=Npx）</label><span class="cv" id="cvDotV">4 px</span></div>
+          <input type="range" id="cvDot" min="1" max="32" step="1" value="4">
+        </div>
+        <div class="cf">
+          <div class="cfrow"><label>キャンバス上限（長辺）</label><span class="cv" id="cvCapV">128 px</span></div>
+          <input type="range" id="cvCap" min="16" max="512" step="8" value="128">
+        </div>
+        <div class="cf">
+          <div class="cfrow"><label>平滑化（ノイズ低減）</label><span class="cv" id="cvSmoothV">0%</span></div>
+          <input type="range" id="cvSmooth" min="0" max="100" step="1" value="0">
+        </div>
+        <div class="cf">
+          <label>代表色の決め方</label>
+          <select id="cvSample">
+            <option value="average" selected>平均（なめらか）</option>
+            <option value="majority">最頻色・多数決（くっきり）</option>
+            <option value="point">点サンプル（monopro互換）</option>
+          </select>
+        </div>
+        <div class="cf">
+          <label>ドット絵スタイル</label>
+          <select id="cvDither">
+            <option value="none" selected>ベタ塗り（くっきり）</option>
+            <option value="fs">ディザ：誤差拡散</option>
+            <option value="bayer">ディザ：パターン（網点風）</option>
+          </select>
+        </div>
+        <div class="cf">
+          <div class="cfrow"><label>ディザ強度</label><span class="cv" id="cvDstrV">100%</span></div>
+          <input type="range" id="cvDstr" min="0" max="100" step="1" value="100">
+        </div>
+        <div class="cf">
+          <div class="cfrow"><label>シャープネス</label><span class="cv" id="cvSharpV">0%</span></div>
+          <input type="range" id="cvSharp" min="0" max="100" step="1" value="0">
+        </div>
+        <div class="cf">
+          <div class="cfrow"><label>アウトライン</label><span class="cv" id="cvOutlineV">0%</span></div>
+          <input type="range" id="cvOutline" min="0" max="100" step="1" value="0">
+        </div>
+        <div class="cf">
+          <label>輪郭線を太く（膨張）</label>
+          <select id="cvDilate">
+            <option value="0" selected>なし</option>
+            <option value="1">弱（十字 n4）</option>
+            <option value="2">強（3×3 n8）</option>
+          </select>
+        </div>
+
+        <div class="csec">色調整</div>
+        <div class="cf"><div class="cfrow"><label>明度</label><span class="cv" id="cvBriV">100%</span></div>
+          <input type="range" id="cvBri" min="0" max="300" step="1" value="100"></div>
+        <div class="cf"><div class="cfrow"><label>彩度</label><span class="cv" id="cvSatV">100%</span></div>
+          <input type="range" id="cvSat" min="0" max="300" step="1" value="100"></div>
+        <div class="cf"><div class="cfrow"><label>コントラスト</label><span class="cv" id="cvConV">100%</span></div>
+          <input type="range" id="cvCon" min="0" max="300" step="1" value="100"></div>
+        <div class="cf"><div class="cfrow"><label>色相</label><span class="cv" id="cvHueV">0°</span></div>
+          <input type="range" id="cvHue" min="-180" max="180" step="1" value="0"></div>
+
+        <div class="csec">透過</div>
+        <label class="chk"><input type="checkbox" id="cvKeepAlpha" checked> 透過部分を透過のまま出力</label>
+        <div class="cf" id="cvBgRow" style="display:none">
+          <label>背景色（透過OFF時）</label>
+          <input type="color" id="cvBg" value="#ffffff" style="width:48px;height:30px;padding:0">
+        </div>
+        <div class="cf"><div class="cfrow"><label>透過しきい値</label><span class="cv" id="cvAlphaThV">128</span></div>
+          <input type="range" id="cvAlphaTh" min="1" max="255" step="1" value="128"></div>
+      </div>
+    </div>
+    <div class="row">
+      <button class="hbtn" id="convRaw" title="変換せず元のピクセルをそのまま読み込む">元サイズで読込</button>
+      <button class="hbtn" id="convCancel">キャンセル</button>
+      <button class="hbtn primary" id="convApply">適用</button>
+    </div>
   </div>
 </div>
 
@@ -468,6 +610,7 @@
 </div>
 
 <input type="file" id="fileImg" accept="image/*,.ase,.aseprite" style="display:none">
+<input type="file" id="fileConv" accept="image/*" style="display:none">
 <input type="file" id="fileProj" accept=".pxproj,application/json" style="display:none">
 <div class="toast" id="toast"></div>
 
@@ -509,6 +652,7 @@ function newDoc(w,h){
        frames:[{id:uid(),duration:125}], cels:new Map()};
   activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;
   $('#docsize').textContent=W+'×'+H;
+  const mr=document.getElementById('mReconvert');if(mr)mr.style.display='none';
   ensureComp();fitView();buildPalette();refreshTimeline();render();updateUndoUI();
 }
 
@@ -1657,6 +1801,8 @@ $$('#menuModal [data-act]').forEach(b=>b.onclick=()=>menuAction(b.dataset.act));
 function menuAction(a){$('#menuModal').classList.remove('show');
   switch(a){case 'new':openSize('new');break;case 'resize':openSize('resize');break;
     case 'import':$('#fileImg').click();break;case 'save':saveProject();break;case 'load':$('#fileProj').click();break;
+    case 'convert':$('#fileConv').click();break;case 'reconvert':reopenConverter();break;
+    case 'paste':pasteFromClipboard();break;case 'copyPng':copyFramePNG();break;
     case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
     case 'deselect':deselect();break;case 'clear':clearCel();break;
     case 'resetLayout':resetLayout();break;}}
@@ -1698,6 +1844,231 @@ $('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;
   };
   img.onerror=()=>toast('画像の読み込みに失敗');
   img.src=URL.createObjectURL(f);e.target.value='';};
+
+/* ================= Illustration -> pixel-art converter (non-destructive) =================
+   Ported from index.html. All helpers are private to avoid clashing with the editor's
+   own nearest()/medianCut() (used by the GIF quantizer). convert() takes an <img> plus a
+   params object and returns grid-resolution RGBA data — the editor cel is filled from it. */
+const Converter=(function(){
+  const fitCv=document.createElement('canvas'), fitCtx=fitCv.getContext('2d',{willReadFrequently:true});
+  const work=document.createElement('canvas'), workCtx=work.getContext('2d',{willReadFrequently:true});
+  function hexList(str){return str.trim().split(/\s+/).map(h=>[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]);}
+  const PRESETS={
+    pico8:hexList(`000000 1D2B53 7E2553 008751 AB5236 5F574F C2C3C7 FFF1E8 FF004D FFA300 FFEC27 00E436 29ADFF 83769C FF77A8 FFCCAA`),
+    gameboy:hexList(`0F380F 306230 8BAC0F 9BBC0F`),
+    cga:hexList(`000000 0000AA 00AA00 00AAAA AA0000 AA00AA AA5500 AAAAAA 555555 5555FF 55FF55 55FFFF FF5555 FF55FF FFFF55 FFFFFF`),
+    nes:hexList(`545454 001E74 081090 300088 440064 5C0030 540400 3C1800 202A00 083A00 004000 003C00 00323C 989698 084CC4 3032EC 5C1EE4 8814B0 A01464 982220 783C00 545A00 287200 087C00 007628 006678 ECEEEC 4C9AEC 787CEC B062EC E454EC EC58B4 EC6A64 D48820 A0AA00 74C400 4CD020 38CC6C 38B4CC 3C3C3C ECEEEC A8CCEC BCBCEC D4B2EC ECAEEC ECAED4 ECB4B0 E4C490 CCD278 B4DE78 A8E290 98E2B4 A0D6E4 A0A2A0`),
+  };
+  function sharpen(data,w,h,a){const src=data.slice();
+    const at=(x,y,c)=>{x=x<0?0:x>=w?w-1:x;y=y<0?0:y>=h?h-1:y;return src[(y*w+x)*4+c];};
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;if(src[i+3]<8)continue;
+      for(let c=0;c<3;c++){const v=(1+4*a)*src[i+c]-a*(at(x-1,y,c)+at(x+1,y,c)+at(x,y-1,c)+at(x,y+1,c));
+        data[i+c]=v<0?0:v>255?255:v;}}}
+  function addOutline(data,w,h,strength){if(strength<=0)return;const src=data.slice();
+    const lum=(x,y)=>{x=x<0?0:x>=w?w-1:x;y=y<0?0:y>=h?h-1:y;const i=(y*w+x)*4;
+      if(src[i+3]<8)return -1;return 0.299*src[i]+0.587*src[i+1]+0.114*src[i+2];};
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;if(src[i+3]<8)continue;
+      const tl=lum(x-1,y-1),t=lum(x,y-1),tr=lum(x+1,y-1),l=lum(x-1,y),r=lum(x+1,y),bl=lum(x-1,y+1),b=lum(x,y+1),br=lum(x+1,y+1);
+      const vals=[tl,t,tr,l,r,bl,b,br];let edge;
+      if(vals.some(v=>v<0))edge=1;else{const gx=(tr+2*r+br)-(tl+2*l+bl),gy=(bl+2*b+br)-(tl+2*t+tr);edge=Math.min(1,Math.sqrt(gx*gx+gy*gy)/255);}
+      const d=Math.min(0.92,edge*strength);if(d>0.01){const f=1-d;data[i]=src[i]*f;data[i+1]=src[i+1]*f;data[i+2]=src[i+2]*f;}}}
+  function erodeImage(data,w,h,mode){const src=data.slice();
+    const offs=mode===1?[[0,-1],[-1,0],[0,0],[1,0],[0,1]]:[[-1,-1],[0,-1],[1,-1],[-1,0],[0,0],[1,0],[-1,1],[0,1],[1,1]];
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;if(src[i+3]<8)continue;
+      let mr=255,mg=255,mb=255;
+      for(const[dx,dy]of offs){const nx=x+dx,ny=y+dy;if(nx<0||nx>=w||ny<0||ny>=h)continue;
+        const j=(ny*w+nx)*4;if(src[j+3]<8)continue;if(src[j]<mr)mr=src[j];if(src[j+1]<mg)mg=src[j+1];if(src[j+2]<mb)mb=src[j+2];}
+      data[i]=mr;data[i+1]=mg;data[i+2]=mb;}}
+  function buildHist(data,shift){const map=new Map();
+    for(let i=0;i<data.length;i+=4){if(data[i+3]<8)continue;const r=data[i],g=data[i+1],b=data[i+2];
+      const key=((r>>shift)<<16)|((g>>shift)<<8)|(b>>shift);let e=map.get(key);
+      if(!e){e={r:0,g:0,b:0,count:0};map.set(key,e);}e.r+=r;e.g+=g;e.b+=b;e.count++;}
+    const arr=[];for(const e of map.values())arr.push({r:e.r/e.count,g:e.g/e.count,b:e.b/e.count,count:e.count});return arr;}
+  function getEntries(data){let e=buildHist(data,0);if(e.length>40000)e=buildHist(data,2);return e;}
+  function makeBox(items){let rmin=255,rmax=0,gmin=255,gmax=0,bmin=255,bmax=0,weight=0;
+    for(const it of items){if(it.r<rmin)rmin=it.r;if(it.r>rmax)rmax=it.r;if(it.g<gmin)gmin=it.g;if(it.g>gmax)gmax=it.g;
+      if(it.b<bmin)bmin=it.b;if(it.b>bmax)bmax=it.b;weight+=it.count;}
+    const rr=rmax-rmin,gr=gmax-gmin,br=bmax-bmin;const longest=(gr>=rr&&gr>=br)?"g":(rr>=br?"r":"b");
+    return{items,weight,volume:(rr+1)*(gr+1)*(br+1),longest};}
+  function medianCut(entries,nColors){if(entries.length===0)return[[0,0,0]];
+    if(entries.length<=nColors)return entries.map(e=>[Math.round(e.r),Math.round(e.g),Math.round(e.b)]);
+    let boxes=[makeBox(entries)];
+    while(boxes.length<nColors){let target=-1,best=-1;
+      for(let i=0;i<boxes.length;i++){const b=boxes[i];if(b.items.length<2)continue;const score=b.volume*b.weight;if(score>best){best=score;target=i;}}
+      if(target<0)break;const b=boxes[target],ch=b.longest;b.items.sort((x,y)=>x[ch]-y[ch]);
+      const half=b.weight/2;let acc=0,split=1;
+      for(let i=0;i<b.items.length;i++){acc+=b.items[i].count;if(acc>=half){split=Math.max(1,Math.min(i+1,b.items.length-1));break;}}
+      boxes.splice(target,1,makeBox(b.items.slice(0,split)),makeBox(b.items.slice(split)));}
+    return boxes.map(b=>{let r=0,g=0,bl=0,w=0;for(const it of b.items){r+=it.r*it.count;g+=it.g*it.count;bl+=it.b*it.count;w+=it.count;}
+      return[Math.round(r/w),Math.round(g/w),Math.round(bl/w)];});}
+  function kmeans(entries,nColors){if(entries.length===0)return[[0,0,0]];
+    if(entries.length<=nColors)return entries.map(e=>[Math.round(e.r),Math.round(e.g),Math.round(e.b)]);
+    let cent=medianCut(entries,nColors).map(c=>[c[0],c[1],c[2]]);const k=cent.length;
+    for(let iter=0;iter<8;iter++){const sr=new Float64Array(k),sg=new Float64Array(k),sb=new Float64Array(k),cn=new Float64Array(k);
+      for(const e of entries){let bi=0,bd=Infinity;for(let i=0;i<k;i++){const dr=e.r-cent[i][0],dg=e.g-cent[i][1],db=e.b-cent[i][2],d=dr*dr+dg*dg+db*db;if(d<bd){bd=d;bi=i;}}
+        sr[bi]+=e.r*e.count;sg[bi]+=e.g*e.count;sb[bi]+=e.b*e.count;cn[bi]+=e.count;}
+      for(let i=0;i<k;i++)if(cn[i]>0)cent[i]=[sr[i]/cn[i],sg[i]/cn[i],sb[i]/cn[i]];}
+    return cent.map(c=>[Math.round(c[0]),Math.round(c[1]),Math.round(c[2])]);}
+  function nearestP(palette,r,g,b){let bestD=Infinity,best=palette[0];
+    for(const c of palette){const dr=r-c[0],dg=g-c[1],db=b-c[2],d=dr*dr+dg*dg+db*db;if(d<bestD){bestD=d;best=c;}}return best;}
+  function nearestCached(palette,cache,r,g,b){r=r<0?0:r>255?255:r|0;g=g<0?0:g>255?255:g|0;b=b<0?0:b>255?255:b|0;
+    const key=(r<<16)|(g<<8)|b;let p=cache.get(key);if(p===undefined){p=nearestP(palette,r,g,b);cache.set(key,p);}return p;}
+  const BAYER=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5].map(v=>v/16-0.5);
+  function mapImage(data,w,h,palette,mode,strength){if(mode==="fs")return mapFS(data,w,h,palette,strength);
+    if(mode==="bayer")return mapBayer(data,w,h,palette,strength);const cache=new Map();
+    for(let i=0;i<data.length;i+=4){if(data[i+3]<8)continue;const p=nearestCached(palette,cache,data[i],data[i+1],data[i+2]);data[i]=p[0];data[i+1]=p[1];data[i+2]=p[2];}}
+  function mapFS(data,w,h,palette,strength){const cache=new Map();const buf=new Float32Array(w*h*3);
+    for(let i=0,j=0;i<data.length;i+=4,j+=3){buf[j]=data[i];buf[j+1]=data[i+1];buf[j+2]=data[i+2];}
+    const push=(x,y,er,eg,eb,f)=>{if(x<0||x>=w||y<0||y>=h)return;const j=(y*w+x)*3;buf[j]+=er*f;buf[j+1]+=eg*f;buf[j+2]+=eb*f;};
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;if(data[i+3]<8)continue;
+      const j=(y*w+x)*3,or=buf[j],og=buf[j+1],ob=buf[j+2];const p=nearestCached(palette,cache,or,og,ob);
+      data[i]=p[0];data[i+1]=p[1];data[i+2]=p[2];const er=(or-p[0])*strength,eg=(og-p[1])*strength,eb=(ob-p[2])*strength;
+      push(x+1,y,er,eg,eb,7/16);push(x-1,y+1,er,eg,eb,3/16);push(x,y+1,er,eg,eb,5/16);push(x+1,y+1,er,eg,eb,1/16);}}
+  function mapBayer(data,w,h,palette,strength){const cache=new Map();const amp=Math.min(64,Math.max(16,220/Math.sqrt(palette.length)))*strength;
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;if(data[i+3]<8)continue;const t=BAYER[(y&3)*4+(x&3)]*amp;
+      const p=nearestCached(palette,cache,data[i]+t,data[i+1]+t,data[i+2]+t);data[i]=p[0];data[i+1]=p[1];data[i+2]=p[2];}}
+  function majorityDownsample(src,sw,sh,dst,gw,gh,palette){const cache=new Map();
+    for(let gy=0;gy<gh;gy++){const y0=Math.floor(gy*sh/gh),y1=Math.max(y0+1,Math.floor((gy+1)*sh/gh));
+      for(let gx=0;gx<gw;gx++){const x0=Math.floor(gx*sw/gw),x1=Math.max(x0+1,Math.floor((gx+1)*sw/gw));
+        const votes=new Map();let transp=0,opaque=0;
+        for(let y=y0;y<y1&&y<sh;y++)for(let x=x0;x<x1&&x<sw;x++){const i=(y*sw+x)*4;
+          if(src[i+3]<8){transp++;continue;}opaque++;const p=nearestCached(palette,cache,src[i],src[i+1],src[i+2]);
+          const key=(p[0]<<16)|(p[1]<<8)|p[2];votes.set(key,(votes.get(key)||0)+1);}
+        const di=(gy*gw+gx)*4;if(opaque===0||transp>opaque){dst[di]=dst[di+1]=dst[di+2]=dst[di+3]=0;continue;}
+        let bestKey=0,bestN=-1;for(const[k,n]of votes)if(n>bestN){bestN=n;bestKey=k;}
+        dst[di]=(bestKey>>16)&255;dst[di+1]=(bestKey>>8)&255;dst[di+2]=bestKey&255;dst[di+3]=255;}}}
+  function applyAlpha(data,keep,bgHex,th){if(keep){for(let i=0;i<data.length;i+=4)data[i+3]=data[i+3]>=th?255:0;}
+    else{const br=parseInt(bgHex.slice(1,3),16),bg=parseInt(bgHex.slice(3,5),16),bb=parseInt(bgHex.slice(5,7),16);
+      for(let i=0;i<data.length;i+=4){const a=data[i+3]/255;data[i]=Math.round(data[i]*a+br*(1-a));
+        data[i+1]=Math.round(data[i+1]*a+bg*(1-a));data[i+2]=Math.round(data[i+2]*a+bb*(1-a));data[i+3]=255;}}}
+  function paletteFor(p,data){if(p.palSource!=='auto'&&PRESETS[p.palSource])return PRESETS[p.palSource];
+    const entries=getEntries(data);return p.quantAlgo==='median'?medianCut(entries,p.colors):kmeans(entries,p.colors);}
+  // Compute grid dimensions for an image at given dot size + long-edge cap.
+  function gridDims(img,p){const dot=Math.max(1,p.dot);let gw=Math.max(1,Math.floor(img.width/dot)),gh=Math.max(1,Math.floor(img.height/dot));
+    const cap=Math.max(1,p.cap||128);if(Math.max(gw,gh)>cap){const s=cap/Math.max(gw,gh);gw=Math.max(1,Math.round(gw*s));gh=Math.max(1,Math.round(gh*s));}return{gw,gh};}
+  // Main: returns {gw, gh, data:Uint8ClampedArray(RGBA), palette:[[r,g,b],...]}
+  function convert(img,p){
+    const dot=Math.max(1,p.dot);const{gw,gh}=gridDims(img,p);
+    const fitW=Math.max(1,gw*dot), fitH=Math.max(1,gh*dot);
+    let filter=`brightness(${p.bri}%) saturate(${p.sat}%) contrast(${p.con}%) hue-rotate(${p.hue}deg)`;
+    if(p.smooth>0)filter+=` blur(${(p.smooth/100*dot*0.9).toFixed(2)}px)`;
+    fitCv.width=fitW;fitCv.height=fitH;fitCtx.clearRect(0,0,fitW,fitH);
+    fitCtx.imageSmoothingEnabled=true;fitCtx.imageSmoothingQuality='high';fitCtx.filter=filter;
+    fitCtx.drawImage(img,0,0,fitW,fitH);fitCtx.filter='none';
+    const fitImg=fitCtx.getImageData(0,0,fitW,fitH);const fd=fitImg.data;
+    if(p.dilate>0)erodeImage(fd,fitW,fitH,p.dilate);
+    work.width=gw;work.height=gh;const imgData=workCtx.createImageData(gw,gh);const data=imgData.data;let palette;
+    if(p.sample==='majority'){
+      palette=paletteFor(p,fd);majorityDownsample(fd,fitW,fitH,data,gw,gh,palette);
+      let modified=false;if(p.sharp>0){sharpen(data,gw,gh,p.sharp/100);modified=true;}
+      if(p.outline>0){addOutline(data,gw,gh,p.outline/100);modified=true;}
+      if(modified)mapImage(data,gw,gh,palette,'none',1);
+    }else if(p.sample==='point'){
+      for(let gy=0;gy<gh;gy++){const sy=Math.min(fitH-1,Math.floor(gy*fitH/gh));
+        for(let gx=0;gx<gw;gx++){const sx=Math.min(fitW-1,Math.floor(gx*fitW/gw));
+          const si=(sy*fitW+sx)*4,di=(gy*gw+gx)*4;data[di]=fd[si];data[di+1]=fd[si+1];data[di+2]=fd[si+2];data[di+3]=fd[si+3];}}
+      if(p.sharp>0)sharpen(data,gw,gh,p.sharp/100);if(p.outline>0)addOutline(data,gw,gh,p.outline/100);
+      palette=paletteFor(p,data);mapImage(data,gw,gh,palette,'none',1);
+    }else{
+      fitCtx.putImageData(fitImg,0,0);workCtx.clearRect(0,0,gw,gh);
+      workCtx.imageSmoothingEnabled=true;workCtx.imageSmoothingQuality='high';workCtx.drawImage(fitCv,0,0,gw,gh);
+      const small=workCtx.getImageData(0,0,gw,gh);data.set(small.data);
+      if(p.sharp>0)sharpen(data,gw,gh,p.sharp/100);if(p.outline>0)addOutline(data,gw,gh,p.outline/100);
+      palette=paletteFor(p,data);mapImage(data,gw,gh,palette,p.dither,p.dstr/100);
+    }
+    applyAlpha(data,p.keepAlpha,p.bg,p.alphaTh);
+    return{gw,gh,data,palette};
+  }
+  return{convert,gridDims};
+})();
+
+/* ---- Converter modal controller ---- */
+let convImg=null;                 // the source <img> currently being converted
+function convParams(){return {
+  palSource:$('#cvPalSource').value, quantAlgo:$('#cvQuant').value, colors:+$('#cvColors').value,
+  dot:+$('#cvDot').value, cap:+$('#cvCap').value, smooth:+$('#cvSmooth').value,
+  sample:$('#cvSample').value, dither:$('#cvDither').value, dstr:+$('#cvDstr').value,
+  sharp:+$('#cvSharp').value, outline:+$('#cvOutline').value, dilate:+$('#cvDilate').value,
+  bri:+$('#cvBri').value, sat:+$('#cvSat').value, con:+$('#cvCon').value, hue:+$('#cvHue').value,
+  keepAlpha:$('#cvKeepAlpha').checked, bg:$('#cvBg').value, alphaTh:+$('#cvAlphaTh').value };}
+function setConvParams(p){if(!p)return;
+  const S=(id,v)=>{if(v!==undefined)$(id).value=v;};
+  S('#cvPalSource',p.palSource);S('#cvQuant',p.quantAlgo);S('#cvColors',p.colors);S('#cvDot',p.dot);S('#cvCap',p.cap);
+  S('#cvSmooth',p.smooth);S('#cvSample',p.sample);S('#cvDither',p.dither);S('#cvDstr',p.dstr);S('#cvSharp',p.sharp);
+  S('#cvOutline',p.outline);S('#cvDilate',p.dilate);S('#cvBri',p.bri);S('#cvSat',p.sat);S('#cvCon',p.con);S('#cvHue',p.hue);
+  if(p.keepAlpha!==undefined)$('#cvKeepAlpha').checked=p.keepAlpha;S('#cvBg',p.bg);S('#cvAlphaTh',p.alphaTh);}
+function convLabels(){const p=convParams();
+  $('#cvColorsV').textContent=p.colors;$('#cvDotV').textContent=p.dot+' px';$('#cvCapV').textContent=p.cap+' px';
+  $('#cvSmoothV').textContent=p.smooth+'%';$('#cvDstrV').textContent=p.dstr+'%';$('#cvSharpV').textContent=p.sharp+'%';
+  $('#cvOutlineV').textContent=p.outline+'%';$('#cvBriV').textContent=p.bri+'%';$('#cvSatV').textContent=p.sat+'%';
+  $('#cvConV').textContent=p.con+'%';$('#cvHueV').textContent=p.hue+'°';$('#cvAlphaThV').textContent=p.alphaTh;
+  $('#cvColors').disabled=(p.palSource!=='auto');$('#cvQuant').disabled=(p.palSource!=='auto');
+  $('#cvBgRow').style.display=p.keepAlpha?'none':'';}
+let convLastResult=null, convPrevTimer=null;
+function convRender(){convLabels();if(!convImg)return;
+  const p=convParams();const r=Converter.convert(convImg,p);convLastResult=r;
+  const cv=$('#convCv');cv.width=r.gw;cv.height=r.gh;
+  // display at an integer scale that fits the ~300px preview box
+  const box=300;const scale=Math.max(1,Math.floor(Math.min(box/r.gw,box/r.gh)))||1;
+  cv.style.width=(r.gw*scale)+'px';cv.style.height=(r.gh*scale)+'px';
+  const ctx=cv.getContext('2d');const id=ctx.createImageData(r.gw,r.gh);id.data.set(r.data);ctx.putImageData(id,0,0);
+  $('#convInfo').textContent=`${r.gw} × ${r.gh} ドット / ${r.palette.length} 色`;}
+function scheduleConvPreview(){clearTimeout(convPrevTimer);convPrevTimer=setTimeout(convRender,40);}
+function openConverter(img,params){convImg=img;
+  $('#convTitle').textContent=params?'🎛 変換を再調整':'🎨 ドット絵に変換';
+  if(params)setConvParams(params);
+  $('#convModal').classList.add('show');convRender();}
+function reopenConverter(){if(!doc.convert||!doc.convert.src){toast('再調整できる変換元がありません');return;}
+  const img=new Image();img.onload=()=>openConverter(img,doc.convert.params);
+  img.onerror=()=>toast('変換元画像を読み込めませんでした');img.src=doc.convert.src;}
+$('#convModal').querySelectorAll('input,select').forEach(el=>{
+  el.addEventListener('input',scheduleConvPreview);el.addEventListener('change',scheduleConvPreview);});
+$('#convCancel').onclick=()=>$('#convModal').classList.remove('show');
+$('#convModal').addEventListener('click',e=>{if(e.target===$('#convModal'))$('#convModal').classList.remove('show');});
+$('#convApply').onclick=()=>{if(!convImg)return;
+  const p=convParams();const r=convLastResult&&!convPrevTimer?convLastResult:Converter.convert(convImg,p);
+  applyConvertResult(r,convImg,p);$('#convModal').classList.remove('show');
+  toast('変換しました '+r.gw+'×'+r.gh);};
+$('#convRaw').onclick=()=>{if(!convImg)return;importImageRaw(convImg);$('#convModal').classList.remove('show');};
+function applyConvertResult(r,img,p){
+  newDoc(r.gw,r.gh);const cel=getCel(0,0);const d=r.data;
+  for(let i=0;i<r.gw*r.gh;i++)cel[i]=rgba(d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]);
+  // adopt the converted palette (keep a transparent slot first)
+  palette=['#00000000'].concat(r.palette.map(c=>'#'+[c[0],c[1],c[2]].map(v=>v.toString(16).padStart(2,'0')).join('')));
+  activeSwatch=1;renderPalette();
+  doc.convert={src:img.src,params:p};$('#mReconvert').style.display='';
+  refreshTimeline();render();updateCelThumb(0,0);
+}
+function importImageRaw(img){
+  let iw=img.width, ih=img.height;const CAP=2048;let scaled=false;
+  if(iw>CAP||ih>CAP){const s=Math.min(CAP/iw,CAP/ih);iw=Math.max(1,Math.round(iw*s));ih=Math.max(1,Math.round(ih*s));scaled=true;}
+  newDoc(iw,ih);const tmp=document.createElement('canvas');tmp.width=iw;tmp.height=ih;
+  const tc=tmp.getContext('2d');tc.imageSmoothingEnabled=false;tc.drawImage(img,0,0,iw,ih);
+  const d=tc.getImageData(0,0,iw,ih).data;const cel=getCel(0,0);
+  for(let i=0;i<iw*ih;i++)cel[i]=rgba(d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]);
+  refreshTimeline();render();updateCelThumb(0,0);
+  toast('画像を読み込みました '+iw+'×'+ih+(scaled?'（縮小）':''));}
+// Menu: convert a chosen image file
+$('#fileConv').onchange=e=>{const f=e.target.files[0];if(!f)return;
+  const img=new Image();img.onload=()=>openConverter(img);
+  img.onerror=()=>toast('画像の読み込みに失敗');img.src=URL.createObjectURL(f);e.target.value='';};
+
+/* ---- Clipboard copy / paste ---- */
+async function copyFramePNG(){
+  try{const cv=frameToCanvas(activeFrame,1);const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);toast('現フレームをコピーしました');}
+  catch(err){toast('コピー失敗: '+(err.message||err));}}
+async function pasteFromClipboard(){
+  try{if(!navigator.clipboard||!navigator.clipboard.read)throw new Error('この端末は貼り付け未対応');
+    const items=await navigator.clipboard.read();
+    for(const it of items){const type=it.types.find(t=>t.startsWith('image/'));
+      if(type){const blob=await it.getType(type);const img=new Image();
+        img.onload=()=>openConverter(img);img.src=URL.createObjectURL(blob);return;}}
+    toast('クリップボードに画像がありません');}
+  catch(err){toast('貼り付け失敗: '+(err.message||err));}}
+window.addEventListener('paste',e=>{const items=[...(e.clipboardData?.items||[])].filter(i=>i.type.startsWith('image/'));
+  if(!items.length)return;e.preventDefault();const blob=items[0].getAsFile();const img=new Image();
+  img.onload=()=>openConverter(img);img.src=URL.createObjectURL(blob);});
 
 /* ---- Aseprite (.ase / .aseprite) importer ---- */
 async function inflateZlib(bytes){
@@ -1796,11 +2167,12 @@ window.addEventListener('load',()=>{try{const bridge=sessionStorage.getItem('pxb
 function b64FromU32(u32){const u8=new Uint8Array(u32.buffer);let s='';for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
 function u32FromB64(b64){const s=atob(b64);const u8=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u8[i]=s.charCodeAt(i);return new Uint32Array(u8.buffer);}
 function saveProject(){const cels={};doc.cels.forEach((v,k)=>cels[k]=b64FromU32(v));
-  const data={ver:1,W,H,palette,layers:doc.layers,frames:doc.frames,cels,activeLayer,activeFrame};
+  const data={ver:1,W,H,palette,layers:doc.layers,frames:doc.frames,cels,activeLayer,activeFrame,convert:doc.convert||null};
   downloadBlob(new Blob([JSON.stringify(data)],{type:'application/json'}),'pixel-'+Date.now()+'.pxproj');toast('保存しました');}
 $('#fileProj').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>{try{const d=JSON.parse(rd.result);W=d.W;H=d.H;doc={layers:d.layers,frames:d.frames,cels:new Map()};
     for(const k in d.cels)doc.cels.set(k,u32FromB64(d.cels[k]));palette=d.palette||DEFAULT_PAL.slice();
+    doc.convert=d.convert||null;$('#mReconvert').style.display=doc.convert?'':'none';
     activeLayer=d.activeLayer||0;activeFrame=d.activeFrame||0;
     nextId=Math.max(...doc.layers.map(l=>l.id),...doc.frames.map(f=>f.id),0)+1;
     undoStack=[];redoStack=[];selection=null;ensureComp();$('#docsize').textContent=W+'×'+H;
