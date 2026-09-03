@@ -227,6 +227,10 @@
   .toast.show{opacity:1;}
 
   #pnlSide.hidden{display:none;}
+  .dockprev{position:absolute;z-index:44;pointer-events:none;display:none;
+    background:rgba(91,140,255,.22);border:2px solid var(--accent);border-radius:10px;
+    box-shadow:inset 0 0 0 2px rgba(91,140,255,.3);}
+  .dockprev.show{display:block;}
   @media (max-width:760px){
     .mbar{display:flex;}
     .tool{width:38px;height:38px;font-size:18px;}
@@ -248,6 +252,9 @@
     <canvas id="view"></canvas>
     <div class="brushcursor" id="brushcursor"></div>
   </div>
+
+  <!-- Docking drop-zone preview -->
+  <div class="dockprev" id="dockPrev"></div>
 
   <!-- Floating selection modifier buttons (Ctrl/Alt equivalents) -->
   <div class="selmod" id="selMod">
@@ -1345,41 +1352,82 @@ $$('#nudge .nu').forEach(btn=>{
 });
 function togglePanel(){$('#pnlSide').classList.toggle('hidden');}
 
-/* ================= Floating panel layout (drag / resize / persist) ================= */
+/* ================= Docking panel layout (drag → dock preview → snap) ================= */
 const workspace=$('#workspace');
 const PANELS={gauge:'#pnlGauge',tools:'#pnlTools',side:'#pnlSide',tl:'#pnlTl'};
-const LAYOUT_KEY='pxeditor-layout-v1';
-function defaultLayout(){const w=workspace.clientWidth||innerWidth,h=workspace.clientHeight||innerHeight;
-  return {
-    gauge:{left:8,top:8,height:Math.max(240,Math.min(460,h-230))},
-    tools:{left:70,top:8},
-    side:{left:Math.max(140,w-214),top:8,height:Math.min(h-230,540)},
-    tl:{left:0,top:Math.max(120,h-200),width:w,height:190}
-  };}
-function applyPanel(el,c){el.style.left=c.left+'px';el.style.top=c.top+'px';
-  el.style.width=c.width!=null?c.width+'px':'';el.style.height=c.height!=null?c.height+'px':'';}
-function initLayout(){let saved=null;try{const s=localStorage.getItem(LAYOUT_KEY);if(s)saved=JSON.parse(s);}catch(_){}
-  const d=defaultLayout();for(const k in PANELS){const c=Object.assign({},d[k],saved&&saved[k]||{});
-    clampPanelCfg($(PANELS[k]),c);applyPanel($(PANELS[k]),c);}}
-function clampPanelCfg(el,c){const w=workspace.clientWidth,h=workspace.clientHeight;
-  if(c.width)c.width=Math.min(c.width,w); c.left=Math.max(0,Math.min((w||9999)-40,c.left));c.top=Math.max(0,Math.min((h||9999)-30,c.top));}
-function saveLayout(){const L={};for(const k in PANELS){const el=$(PANELS[k]);
-  L[k]={left:parseFloat(el.style.left)||0,top:parseFloat(el.style.top)||0};
-  if(el.style.width)L[k].width=parseFloat(el.style.width);if(el.style.height)L[k].height=parseFloat(el.style.height);}
-  try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(L));}catch(_){}}
-function resetLayout(){try{localStorage.removeItem(LAYOUT_KEY);}catch(_){}
-  const d=defaultLayout();for(const k in PANELS)applyPanel($(PANELS[k]),d[k]);saveLayout();render();toast('レイアウトをリセット');}
+const PW={gauge:52,tools:56,side:214,tl:260};   // docked column widths
+const LAYOUT_KEY='pxeditor-dock-v1';
+const EDGE=90;                                   // how close to an edge to dock
+let dockState=defaultDock();
+function defaultDock(){return {gauge:{dock:'left',ord:0},tools:{dock:'left',ord:100},
+  side:{dock:'right',ord:0},tl:{dock:'bottom',ord:0,h:190}};}
+function panelKey(el){for(const k in PANELS)if($(PANELS[k])===el)return k;return null;}
+function measureH(el){const p=el.style.height;el.style.height='';const h=el.offsetHeight;el.style.height=p;return h;}
+
+function relayout(){
+  const W=workspace.clientWidth,H=workspace.clientHeight,M=8,G=8;
+  const sides={left:[],right:[],top:[],bottom:[],float:[]};
+  for(const k in PANELS){const s=dockState[k].dock;(sides[s]||sides.float).push(k);}
+  for(const s in sides)sides[s].sort((a,b)=>(dockState[a].ord||0)-(dockState[b].ord||0));
+  // reserve top/bottom bands
+  const bandH=(list)=>{let sum=0;list.forEach(k=>{sum+=(k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),H*0.5))+G;});return list.length?sum+M:0;};
+  const topH=bandH(sides.top), botH=bandH(sides.bottom);
+  const colTop=M+ (sides.top.length?topH:0), colBot=H-M-(sides.bottom.length?botH:0), colH=Math.max(120,colBot-colTop);
+  // left columns (left→right)
+  let lx=M; sides.left.forEach(k=>{const el=$(PANELS[k]),w=PW[k]||200;
+    el.style.width=w+'px';el.style.left=lx+'px';el.style.top=colTop+'px';el.style.height=colH+'px';lx+=w+G;});
+  // right columns (right→left)
+  let rx=W-M; sides.right.forEach(k=>{const el=$(PANELS[k]),w=PW[k]||200;
+    el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=colTop+'px';el.style.height=colH+'px';rx-=w+G;});
+  // top rows (stacked downward, full width)
+  let ty=M; sides.top.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
+    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=ty+'px';el.style.height=h+'px';ty+=h+G;});
+  // bottom rows (stacked upward, full width)
+  let by=H-M; sides.bottom.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
+    el.style.left=M+'px';el.style.width=(W-2*M)+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';by-=h+G;});
+  // floating
+  sides.float.forEach(k=>{const el=$(PANELS[k]),c=dockState[k];
+    el.style.left=(c.x||40)+'px';el.style.top=(c.y||40)+'px';
+    el.style.width=(c.w||PW[k]||200)+'px';el.style.height=(c.h||300)+'px';});
+}
+function dropZoneFor(px,py){const W=workspace.clientWidth,H=workspace.clientHeight;
+  const dl=px,dr=W-px,dt=py,db=H-py,m=Math.min(dl,dr,dt,db);
+  if(m>EDGE)return 'float';
+  if(m===dl)return 'left';if(m===dr)return 'right';if(m===dt)return 'top';return 'bottom';}
+function showPrev(zone,key){const el=$('#dockPrev'),W=workspace.clientWidth,H=workspace.clientHeight;
+  if(zone==='float'){el.classList.remove('show');return;}
+  const pw=PW[key]||200, ph=(key==='tl'?(dockState.tl.h||190):170);let x,y,w,h;
+  if(zone==='left'){x=6;y=6;w=pw+8;h=H-12;}
+  else if(zone==='right'){w=pw+8;x=W-w-6;y=6;h=H-12;}
+  else if(zone==='top'){x=6;y=6;w=W-12;h=ph;}
+  else{h=ph;x=6;w=W-12;y=H-h-6;}
+  el.style.left=x+'px';el.style.top=y+'px';el.style.width=w+'px';el.style.height=h+'px';el.classList.add('show');}
+function hidePrev(){$('#dockPrev').classList.remove('show');}
+
+function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(dockState));}catch(_){}}
+function loadLayout(){try{const s=localStorage.getItem(LAYOUT_KEY);if(s)return JSON.parse(s);}catch(_){}return null;}
+function resetLayout(){dockState=defaultDock();relayout();saveLayout();render();toast('レイアウトをリセット');}
+
 function startPanelDrag(panel,handle,e){
+  const key=panelKey(panel);if(!key)return;
   e.preventDefault();try{handle.setPointerCapture(e.pointerId);}catch(_){}
-  panel.classList.add('dragging');
+  panel.classList.add('dragging');panel.style.zIndex=50;
   const wr=workspace.getBoundingClientRect(),r=panel.getBoundingClientRect();
-  const offX=e.clientX-r.left, offY=e.clientY-r.top, pw=r.width, ph=r.height;
-  const move=ev=>{let nx=ev.clientX-wr.left-offX, ny=ev.clientY-wr.top-offY;
-    nx=Math.max(-pw+48,Math.min(wr.width-48,nx));ny=Math.max(0,Math.min(wr.height-24,ny));
-    panel.style.left=nx+'px';panel.style.top=ny+'px';};
+  const offX=e.clientX-r.left, offY=e.clientY-r.top;let zone='float';
+  const move=ev=>{
+    panel.style.left=(ev.clientX-wr.left-offX)+'px';panel.style.top=(ev.clientY-wr.top-offY)+'px';
+    zone=dropZoneFor(ev.clientX-wr.left,ev.clientY-wr.top);showPrev(zone,key);
+  };
   const up=ev=>{try{handle.releasePointerCapture(ev.pointerId);}catch(_){}
-    panel.classList.remove('dragging');
-    document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);saveLayout();};
+    panel.classList.remove('dragging');panel.style.zIndex='';hidePrev();
+    document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+    if(zone==='float'){const c=dockState[key];c.dock='float';
+      c.x=Math.max(0,parseFloat(panel.style.left)||40);c.y=Math.max(0,parseFloat(panel.style.top)||40);
+      c.w=panel.offsetWidth;c.h=Math.min(panel.offsetHeight,workspace.clientHeight*0.7);}
+    else{const c=dockState[key];c.dock=zone;
+      c.ord=(zone==='left'||zone==='right')?(parseFloat(panel.style.left)||0):(parseFloat(panel.style.top)||0);}
+    relayout();saveLayout();
+  };
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
 }
 function makePanelsMovable(){
@@ -1396,17 +1444,19 @@ function makePanelsMovable(){
       panel.addEventListener('pointermove',mv);panel.addEventListener('pointerup',clr);panel.addEventListener('pointercancel',clr);
     });
   });
-  // timeline vertical resize (grow upward from the top edge)
+  // timeline vertical resize (drag the top edge)
   $$('.presize').forEach(h=>{const panel=h.closest('.panel');
     h.addEventListener('pointerdown',e=>{e.preventDefault();try{h.setPointerCapture(e.pointerId);}catch(_){}
-      const startY=e.clientY,startH=panel.getBoundingClientRect().height,startTop=parseFloat(panel.style.top)||0;
-      const move=ev=>{let nh=Math.max(90,Math.min(workspace.clientHeight-30,startH-(ev.clientY-startY)));
-        panel.style.height=nh+'px';panel.style.top=(startTop+(startH-nh))+'px';};
+      const startY=e.clientY,startH=panel.getBoundingClientRect().height;
+      const move=ev=>{dockState.tl.h=Math.max(90,Math.min(workspace.clientHeight-40,startH-(ev.clientY-startY)));relayout();};
       const up=ev=>{try{h.releasePointerCapture(ev.pointerId);}catch(_){}
         document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);saveLayout();};
       document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);});
   });
 }
+function initLayout(){const saved=loadLayout();dockState=saved||defaultDock();
+  const d=defaultDock();for(const k in PANELS)if(!dockState[k])dockState[k]=d[k];
+  relayout();makePanelsMovable();}
 $('#mPanel').onclick=togglePanel;
 
 document.addEventListener('keydown',e=>{
@@ -1651,9 +1701,9 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
 
 /* ================= Boot ================= */
 function boot(){
-  initLayout();makePanelsMovable();
+  initLayout();
   newDoc(32,32);setTool('pencil');updateGauge();updateSelBtns();$('#selSec').style.display='none';
-  window.addEventListener('resize',()=>{fitView();render();});
+  window.addEventListener('resize',()=>{relayout();fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
   // Purge any previously-registered service worker + caches (they caused
   // stale loads). No SW is registered now: the page always loads fresh.
