@@ -44,10 +44,12 @@
     background:var(--panel3);color:var(--muted);font-size:11px;cursor:grab;touch-action:none;
     user-select:none;letter-spacing:1px;border-bottom:1px solid var(--border);}
   .pgrip:active{cursor:grabbing;}
-  .presize{flex:none;height:8px;cursor:ns-resize;touch-action:none;background:var(--panel3);
-    border-bottom:1px solid var(--border);}
-  .presize::after{content:"";display:block;width:38px;height:3px;border-radius:2px;
-    background:var(--border);margin:2px auto 0;}
+  .presize{flex:none;height:22px;cursor:ns-resize;touch-action:none;background:var(--panel3);
+    border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;}
+  .presize::after{content:"";display:block;width:52px;height:5px;border-radius:3px;
+    background:var(--muted);}
+  .presize:active{background:var(--accent);}
+  .presize:active::after{background:#fff;}
   /* Panel resize handle (bottom inner corner) */
   .prz{position:absolute;width:20px;height:20px;z-index:6;touch-action:none;
     background:linear-gradient(135deg,transparent 45%,var(--muted) 45%,var(--muted) 55%,transparent 55%,transparent 70%,var(--muted) 70%,var(--muted) 80%,transparent 80%);}
@@ -518,7 +520,7 @@
         </div>
         <div class="cf">
           <div class="cfrow"><label>色数</label><span class="cv" id="cvColorsV">16</span></div>
-          <input type="range" id="cvColors" min="2" max="64" step="1" value="16">
+          <input type="range" id="cvColors" min="2" max="128" step="1" value="16">
         </div>
 
         <div class="csec">ドット化</div>
@@ -664,7 +666,7 @@ function snapshot(){
   const cels={};doc.cels.forEach((v,k)=>{cels[k]=v.slice();});
   return {W,H,layers:JSON.parse(JSON.stringify(doc.layers)),
     frames:JSON.parse(JSON.stringify(doc.frames)),cels,activeLayer,activeFrame,
-    sel:selection?selection.mask.slice():null};
+    sel:selection?selection.mask.slice():null, convert:doc.convert||null};
 }
 function restore(s){
   W=s.W;H=s.H;
@@ -676,6 +678,8 @@ function restore(s){
   // selection is part of history: restore it (guarded to current size)
   if(s.sel&&s.sel.length===W*H){selection={mask:s.sel.slice()};computeSelBounds();}
   else selection=null;
+  doc.convert=s.convert||null;
+  const mr=document.getElementById('mReconvert');if(mr)mr.style.display=doc.convert?'':'none';
   $('#docsize').textContent=W+'×'+H;ensureComp();refreshTimeline();render();
 }
 let lastClearedRedo=[];
@@ -2041,7 +2045,12 @@ $('#cvFit128').onclick=()=>{$('#cvCap').value=128;convRender();};
 $('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
 $('#convApply').onclick=()=>{if(!convImg)return;
   const p=convParams();const r=(convLastResult&&!convPrevTimer)?convLastResult:Converter.convert(convImg,p);
-  applyConvertResult(r,convImg,p);convBackup=null;closeConverter();toast('変換しました '+r.gw+'×'+r.gh);};
+  const back=convBackup;   // pre-conversion doc + history (captured on open)
+  applyConvertResult(r,convImg,p);   // renders via newDoc, which clears undo
+  // make the whole conversion a single undo step back to the pre-conversion doc
+  if(back){undoStack=back.undo.slice();undoStack.push(back.snap);
+    if(undoStack.length>HISTORY_MAX)undoStack.shift();redoStack=[];updateUndoUI();}
+  convBackup=null;closeConverter();toast('変換しました '+r.gw+'×'+r.gh);};
 $('#convRaw').onclick=()=>{if(!convImg)return;convBackup=null;importImageRaw(convImg);closeConverter();};
 // finalize: paint result + record the non-destructive source/params
 function applyConvertResult(r,img,p){
