@@ -71,7 +71,7 @@
   .prz.br{right:0;bottom:0;cursor:nwse-resize;}
   .prz.bl{left:0;bottom:0;cursor:nesw-resize;transform:scaleX(-1);}
   #pnlTools .tools,#pnlSide .side,#pnlGauge .gauge{border:none;}
-  #pnlGauge{width:64px;}
+  #pnlGauge{width:76px;}
   #pnlTl .timeline{max-height:none;height:100%;flex:1;min-height:0;}
 
   /* Brush gauge (Procreate style) */
@@ -85,17 +85,12 @@
   .gauge .gtool{width:40px;height:40px;border:1px solid var(--border);background:var(--panel2);
     border-radius:9px;font-size:20px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;padding:0;}
   .gauge .gtool.active{background:var(--accent);border-color:var(--accent);}
-  /* Discrete +/- steppers for precise finger control */
-  .gauge .gstep{width:46px;height:38px;border:1px solid var(--border);background:var(--panel2);
-    border-radius:9px;font-size:24px;font-weight:600;line-height:1;color:var(--text);cursor:pointer;
-    flex:none;display:flex;align-items:center;justify-content:center;padding:0;touch-action:manipulation;}
-  .gauge .gstep:active{background:var(--accent);border-color:var(--accent);color:#fff;}
-  .g-track{flex:1;width:34px;border-radius:16px;background:var(--panel3);
-    position:relative;overflow:hidden;margin:4px 0;box-shadow:inset 0 0 0 1px var(--border);
+  .g-track{flex:1;width:46px;border-radius:22px;background:var(--panel3);
+    position:relative;overflow:hidden;margin:6px 0;box-shadow:inset 0 0 0 1px var(--border);
     touch-action:none;cursor:ns-resize;}
   .g-fill{position:absolute;left:0;right:0;bottom:0;
     background:linear-gradient(var(--accent2),var(--accent));}
-  .g-dot{position:absolute;left:50%;transform:translate(-50%,50%);width:34px;height:34px;
+  .g-dot{position:absolute;left:50%;transform:translate(-50%,50%);width:44px;height:44px;
     border-radius:50%;background:#fff;box-shadow:0 1px 4px #000a;pointer-events:none;
     border:3px solid var(--accent);}
 
@@ -214,8 +209,9 @@
   .layeropac .lo-track{height:14px;border-radius:8px;background:var(--panel3);overflow:hidden;
     box-shadow:inset 0 0 0 1px var(--border);}
   .layeropac .lo-fill{height:100%;background:linear-gradient(90deg,var(--accent2),var(--accent));}
-  .layeropac .lo-val{margin-top:6px;font-size:15px;font-weight:600;text-align:center;
+  .layeropac .lo-val{margin-top:6px;font-size:18px;font-weight:600;text-align:center;
     font-variant-numeric:tabular-nums;color:#fff;}
+  .layeropac .lo-hint{margin-top:4px;font-size:10px;color:var(--muted);text-align:center;}
   @media (max-width:760px){.selmod{left:120px;} .nudge{left:120px;} .seldel{left:120px;}
     .seldeselect{left:120px;} .rangetol{left:180px;}}
 
@@ -391,6 +387,7 @@
     <div class="lo-name" id="loName">レイヤー</div>
     <div class="lo-track"><div class="lo-fill" id="loFill"></div></div>
     <div class="lo-val" id="loVal">100%</div>
+    <div class="lo-hint">◀ 指を左右にスライド ▶</div>
   </div>
   <div class="nudge" id="nudge">
     <button class="nu up" data-dx="0" data-dy="-1" title="上へ1px">▲</button>
@@ -405,17 +402,13 @@
     <div class="pgrip">⠿ ブラシ</div>
     <div class="gauge" id="gauge" title="ブラシサイズ">
       <span class="g-icon">⬤</span>
-      <button class="gstep" id="brushInc" title="ブラシを太く">＋</button>
       <div class="g-track" id="gtrack"><div class="g-fill" id="gfill"></div><div class="g-dot" id="gdot"></div></div>
-      <button class="gstep" id="brushDec" title="ブラシを細く">−</button>
       <span class="g-val" id="gval">1</span>
       <button class="gshape" id="brushShapeBtn" title="ブラシ形状（四角／円）">◻</button>
     </div>
     <div class="gauge gauge-opac" id="gaugeOpac" title="ブラシ不透明度">
       <span class="g-icon">◐</span>
-      <button class="gstep" id="opacInc" title="不透明度を上げる">＋</button>
       <div class="g-track" id="otrack"><div class="g-fill" id="ofill"></div><div class="g-dot" id="odot"></div></div>
-      <button class="gstep" id="opacDec" title="不透明度を下げる">−</button>
       <span class="g-val" id="oval">100</span>
     </div>
   </div>
@@ -554,11 +547,11 @@
         <div class="csec">出力サイズ</div>
         <div class="cf">
           <div class="cfrow"><label>キャンバス長辺（ドット数）</label><span class="cv" id="cvCapV">200 px</span></div>
-          <input type="range" id="cvCap" min="16" max="512" step="8" value="200">
+          <input type="range" id="cvCap" min="8" max="512" step="4" value="200">
         </div>
         <div class="cf">
           <div class="cfrow"><label>ドットの粗さ（1ドット=Npx）</label><span class="cv" id="cvDotV">3 px</span></div>
-          <input type="range" id="cvDot" min="1" max="32" step="1" value="3">
+          <input type="range" id="cvDot" min="1" max="64" step="1" value="3">
         </div>
         <div class="preset" style="margin:6px 0 2px">
           <button class="hbtn" id="cvFitMax" title="元画像の解像度いっぱい（最大の細かさ）">最大</button>
@@ -955,7 +948,7 @@ function wandShape(x,y){
 }
 // Quick selection: brush over the canvas to grow the selection to contiguous
 // pixels of a similar color. Works with the +/- (add/subtract) modes.
-let qLast=null, quickSubtract=false, rangeTol=48, lastRange=null, tolBase=null;
+let qLast=null, quickSubtract=false, rangeTol=48, lastRange=null;
 function colorClose(a,b,tol){
   const t=(tol==null?rangeTol:tol);
   const aa=(a>>>24)&255, ba=(b>>>24)&255;
@@ -985,26 +978,7 @@ function quickFlood(x,y,subtract){
   let any=false;for(let i=0;i<selection.mask.length;i++)if(selection.mask[i]){any=true;break;}
   if(!any)selection=null;else computeSelBounds();
 }
-function deselect(){selection=null;lastRange=null;tolBase=null;render();}
-// Color tolerance for ANY selection tool: grab the current selection as a base,
-// then the 色域許容 slider grows/shrinks it contiguously by color similarity.
-function captureTolBase(){
-  if(!selection){tolBase=null;return;}
-  const cel=activeCel();const seen=new Set();const colors=[];
-  for(let i=0;i<W*H;i++)if(selection.mask[i]){const c=cel[i];
-    if(!seen.has(c)){seen.add(c);colors.push(c);if(colors.length>=64)break;}}
-  tolBase={mask:selection.mask.slice(),colors};
-}
-function applyTol(tol){
-  if(!tolBase)return;
-  const cel=activeCel(),N=W*H,m=tolBase.mask.slice(),colors=tolBase.colors;
-  const match=c=>{for(let k=0;k<colors.length;k++)if(colorClose(c,colors[k],tol))return true;return false;};
-  const stack=[];for(let i=0;i<N;i++)if(m[i])stack.push(i);
-  while(stack.length){const i=stack.pop(),x=i%W,y=(i-x)/W;
-    const push=j=>{if(!m[j]&&match(cel[j])){m[j]=1;stack.push(j);}};
-    if(x>0)push(i-1);if(x<W-1)push(i+1);if(y>0)push(i-W);if(y<H-1)push(i+W);}
-  selection={mask:m};computeSelBounds();render();
-}
+function deselect(){selection=null;lastRange=null;render();}
 let antsPhase=0;
 function drawSelectionOverlay(){
   // live previews
@@ -1462,8 +1436,9 @@ function attachLayerOpacityScrub(el,L){
     const move=ev=>{
       if(!scrubbing){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>8){clearTimeout(t);cleanup();}return;}
       ev.preventDefault();
+      // the gauge stays put; only left/right movement changes the value
       const op=Math.max(0,Math.min(255,Math.round(startOp+(ev.clientX-sx)*1.5)));
-      L.opacity=op;paint(op);place(ev.clientX,sy);render();};
+      L.opacity=op;paint(op);render();};
     const up=()=>{clearTimeout(t);
       if(scrubbing){hover.classList.remove('show');guard.classList.remove('show');
         try{guard.releasePointerCapture(pid);}catch(_){}
@@ -1696,17 +1671,6 @@ gtrack.addEventListener('pointerdown',e=>{gtrack.setPointerCapture(e.pointerId);
 gtrack.addEventListener('pointermove',e=>{if(gaugeDrag)setBrushFromY(e.clientY);});
 gtrack.addEventListener('pointerup',()=>{gaugeDrag=false;});
 gtrack.addEventListener('pointercancel',()=>{gaugeDrag=false;});
-function stepBrush(d){brushSize=Math.max(1,Math.min(MAXBRUSH,brushSize+d));
-  if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
-// +/- steppers with press-and-hold repeat for precise finger control
-function bindStepper(el,fn){let t=null,iv=null;
-  const start=e=>{e.preventDefault();fn();
-    t=setTimeout(()=>{iv=setInterval(fn,70);},380);};
-  const stop=()=>{clearTimeout(t);clearInterval(iv);t=iv=null;};
-  el.addEventListener('pointerdown',start);
-  el.addEventListener('pointerup',stop);el.addEventListener('pointercancel',stop);el.addEventListener('pointerleave',stop);}
-bindStepper($('#brushInc'),()=>stepBrush(1));bindStepper($('#brushDec'),()=>stepBrush(-1));
-
 /* ---- Brush opacity gauge (stacked under the size gauge) ---- */
 const otrack=$('#otrack'),ofill=$('#ofill'),odot=$('#odot'),oval=$('#oval');
 let opacDrag=false;
@@ -1718,8 +1682,6 @@ otrack.addEventListener('pointerdown',e=>{otrack.setPointerCapture(e.pointerId);
 otrack.addEventListener('pointermove',e=>{if(opacDrag)setOpacFromY(e.clientY);});
 otrack.addEventListener('pointerup',()=>{opacDrag=false;});
 otrack.addEventListener('pointercancel',()=>{opacDrag=false;});
-function stepOpac(d){opacity=Math.max(1,Math.min(255,opacity+d));updateOpacGauge();}
-bindStepper($('#opacInc'),()=>stepOpac(13));bindStepper($('#opacDec'),()=>stepOpac(-13));
 $('#brushShapeBtn').onclick=()=>{brushShape=brushShape==='square'?'circle':'square';
   $('#brushShapeBtn').textContent=brushShape==='square'?'◻':'◯';updateBrushCursor();toast(brushShape==='square'?'ブラシ: 四角':'ブラシ: 円');};
 
@@ -1730,18 +1692,10 @@ $('#ppBtn').onclick=()=>{pixelPerfect=!pixelPerfect;$('#ppBtn').classList.toggle
   toast(pixelPerfect?'ピクセルパーフェクト ON':'ピクセルパーフェクト OFF');};
 $('#gridBtn').onclick=()=>{showGridFlag=!showGridFlag;$('#gridBtn').classList.toggle('on',showGridFlag);render();};
 $('#fillGap').onchange=e=>{fillOnMove=e.target.checked;toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
-// grab the current selection as the tolerance base when you touch the slider
-$('#rangeTol').addEventListener('pointerdown',()=>{if(tool!=='range')captureTolBase();});
+// 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
-  if(tool==='range'&&lastRange){
-    // color-range tool: re-pick globally as the tolerance changes
-    selection=lastRange.base?{mask:lastRange.base.slice()}:null;
-    applyShape(rangeShape(lastRange.x,lastRange.y),lastRange.mode);render();
-  }else{
-    // any other selection tool: grow/shrink the current selection by color
-    if(!tolBase)captureTolBase();
-    applyTol(rangeTol);
-  }};
+  if(lastRange){selection=lastRange.base?{mask:lastRange.base.slice()}:null;
+    applyShape(rangeShape(lastRange.x,lastRange.y),lastRange.mode);render();}};
 $('#colorPick').oninput=e=>setColorHex(e.target.value);
 $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){palette.push(hex);renderPalette();}};
 $('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#mUndo').onclick=undo;$('#mRedo').onclick=redo;
@@ -1768,7 +1722,7 @@ function updateSelModVisible(){
   $('#nudge').classList.toggle('show',!!selection);
   $('#selDel').classList.toggle('show',!!selection);
   $('#selDeselect').classList.toggle('show',!!selection);
-  $('#rangeTolFloat').classList.toggle('show',tool==='range'||!!selection);
+  $('#rangeTolFloat').classList.toggle('show',tool==='range');
   if(typeof positionSelControls==='function')positionSelControls();
 }
 // Delete (clear) the selected pixels on the active layer (undoable).
@@ -1822,8 +1776,8 @@ function togglePanel(){$('#pnlSide').classList.toggle('hidden');}
 /* ================= Docking panel layout (drag → dock preview → snap) ================= */
 const workspace=$('#workspace');
 const PANELS={gauge:'#pnlGauge',tools:'#pnlTools',side:'#pnlSide',tl:'#pnlTl'};
-const PW={gauge:64,tools:64,side:214,tl:260};   // docked column widths
-const LAYOUT_KEY='pxeditor-dock-v2';
+const PW={gauge:76,tools:64,side:214,tl:260};   // docked column widths
+const LAYOUT_KEY='pxeditor-dock-v3';
 const EDGE=90;                                   // how close to an edge to dock
 let dockState=defaultDock();
 function defaultDock(){return {gauge:{dock:'left',ord:0},tools:{dock:'left',ord:100},
@@ -1841,17 +1795,23 @@ function relayout(){
   for(const k in PANELS){const s=dockState[k].dock;(sides[s]||sides.float).push(k);}
   for(const s in sides)sides[s].sort((a,b)=>(dockState[a].ord||0)-(dockState[b].ord||0));
   const bandTot=(list)=>{let sum=0;list.forEach((k,i)=>{sum+=(k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),H*0.5))+(i?G:0);});return sum;};
-  const topH=sides.top.length?bandTot(sides.top)+G:0, botH=sides.bottom.length?bandTot(sides.bottom):0;
-  const colTop=topH, colBot=H-botH, colH=Math.max(120,colBot-colTop);
-  let lx=0; sides.left.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
-    el.style.width=w+'px';el.style.left=lx+'px';el.style.top=colTop+'px';el.style.height=h+'px';setPrz(el,'br');lx+=w+G;});
-  let rx=W; sides.right.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,colH):colH;
-    el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=colTop+'px';el.style.height=h+'px';setPrz(el,'bl');rx-=w+G;});
+  const topH=sides.top.length?bandTot(sides.top)+G:0;
+  const availH=Math.max(120,H-topH);
+  // Left & right columns run the FULL height (below any top band). The bottom
+  // timeline insets between them → an "|＿" shape with the tool/brush columns
+  // owning the left edge.
+  let leftWtot=0; sides.left.forEach(k=>leftWtot+=pw(k)+G);
+  let rightWtot=0; sides.right.forEach(k=>rightWtot+=pw(k)+G);
+  let lx=0; sides.left.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,availH):availH;
+    el.style.width=w+'px';el.style.left=lx+'px';el.style.top=topH+'px';el.style.height=h+'px';setPrz(el,'br');lx+=w+G;});
+  let rx=W; sides.right.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,availH):availH;
+    el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=topH+'px';el.style.height=h+'px';setPrz(el,'bl');rx-=w+G;});
   let ty=0; sides.top.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
     el.style.left='0px';el.style.width=W+'px';el.style.top=ty+'px';el.style.height=h+'px';setPrz(el,null);ty+=h+G;});
-  // bottom: flush to the very bottom edge, full width (no gap under the timeline)
+  // bottom timeline: flush to the bottom edge, spanning only between the columns
+  const bx=leftWtot, bw=Math.max(120,W-leftWtot-rightWtot);
   let by=H; sides.bottom.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
-    el.style.left='0px';el.style.width=W+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';setPrz(el,null);by-=h;});
+    el.style.left=bx+'px';el.style.width=bw+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';setPrz(el,null);by-=h;});
   sides.float.forEach(k=>{const el=$(PANELS[k]),c=dockState[k];
     el.style.left=(c.x||40)+'px';el.style.top=(c.y||40)+'px';
     el.style.width=(c.w||PW[k]||200)+'px';el.style.height=(c.h||300)+'px';setPrz(el,'br');});
@@ -2228,9 +2188,9 @@ function scheduleConvPreview(){clearTimeout(convPrevTimer);convPrevTimer=setTime
 function openConverter(img,params){convImg=img;convBackup={snap:snapshot(),undo:undoStack,redo:redoStack};
   $('#convTitle').textContent=params?'🎛 変換を再調整':'🎨 ドット絵に変換';
   if(params){setConvParams(params);}
-  else{ // fresh image: default the canvas long-edge to native dot resolution (references the source size)
-    const dot=+$('#cvDot').value;let cap=Math.min(512,Math.max(16,Math.round(srcLongEdge(img)/dot)));
-    cap=Math.min(512,Math.ceil(cap/8)*8);$('#cvCap').value=cap;}
+  else{ // fresh image: default the canvas long-edge to native dot resolution (capped so huge images stay manageable)
+    const dot=+$('#cvDot').value;let cap=Math.min(256,Math.max(16,Math.round(srcLongEdge(img)/dot)));
+    cap=Math.min(256,Math.ceil(cap/8)*8);$('#cvCap').value=cap;}
   $('#convModal').classList.add('show');convRender();}
 function reopenConverter(){if(!doc.convert||!doc.convert.src){toast('再調整できる変換元がありません');return;}
   const img=new Image();img.onload=()=>openConverter(img,doc.convert.params);
@@ -2277,9 +2237,9 @@ async function copyFramePNG(){
   try{const cv=frameToCanvas(activeFrame,1);const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
     await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);toast('現フレームをコピーしました');}
   catch(err){toast('コピー失敗: '+(err.message||err));}}
-// Paste opens the clipboard image as a NEW canvas tab (original size).
+// Paste opens the clipboard image in a NEW tab, going through the dot converter.
 function pasteImageAsTab(blob){const img=new Image();
-  img.onload=()=>{newDocTab(32,32,'貼り付け');importImageRaw(img);setTabName('貼り付け');};
+  img.onload=()=>{newDocTab(32,32,'貼り付け');openConverter(img);};
   img.onerror=()=>toast('画像を読み込めませんでした');img.src=URL.createObjectURL(blob);}
 async function pasteFromClipboard(){
   try{if(!navigator.clipboard||!navigator.clipboard.read)throw new Error('この端末は貼り付け未対応');
