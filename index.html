@@ -250,6 +250,7 @@
       <span class="tbsep"></span>
       <button class="tbtn" id="pasteBtn">📥 貼り付け</button>
       <button class="tbtn" id="copyImgBtn">📋 PNGをコピー</button>
+      <button class="tbtn" id="openEditorBtn" title="変換結果をドット絵エディタで開く">✏️ エディタで開く</button>
       <span class="sp"></span>
       <span class="hint">ホイール=スクロール / Alt+ホイール=ズーム / 中ドラッグ=移動</span>
     </div>
@@ -472,6 +473,9 @@
 <script>
 (() => {
   "use strict";
+  // Purge any old service worker + caches that could serve stale pages.
+  if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});
+  if (window.caches) caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(() => {});
   const $ = id => document.getElementById(id);
   const els = {
     viewport: $("viewport"), stage: $("stage"), canvas: $("outCanvas"),
@@ -1358,6 +1362,21 @@
     if (activeIndex < 0) return;
     els.canvas.toBlob(b => download(b, images[activeIndex].name + "_pixel.png"), "image/png");
   }
+  // 変換結果（ドット等倍）をエディタへ受け渡して開く
+  function openInEditor() {
+    if (!lastRender) { alert("先に画像を変換してください"); return; }
+    recompositeOutput();
+    const { gridW, gridH } = lastRender;
+    const tmp = document.createElement("canvas");
+    tmp.width = gridW; tmp.height = gridH;
+    tmp.getContext("2d").drawImage(work, 0, 0); // work は等倍ドット解像度
+    try {
+      sessionStorage.setItem("pxbridge", tmp.toDataURL("image/png"));
+      location.href = "editor.html";
+    } catch (e) {
+      alert("エディタへの受け渡しに失敗しました: " + e.message);
+    }
+  }
   async function copyImage() {
     if (activeIndex < 0) return;
     try {
@@ -1530,6 +1549,7 @@
   els.save.addEventListener("click", save);
   els.saveAll.addEventListener("click", saveAll);
   els.copyImg.addEventListener("click", copyImage);
+  document.getElementById("openEditorBtn").addEventListener("click", openInEditor);
   els.pasteBtn.addEventListener("click", pasteFromClipboard);
   els.pasteLink.addEventListener("click", pasteFromClipboard);
   window.addEventListener("keydown", e => {
