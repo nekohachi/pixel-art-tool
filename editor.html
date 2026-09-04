@@ -253,7 +253,7 @@
   .tl-lhead .grip{width:24px;flex:none;text-align:center;cursor:grab;touch-action:none;
     color:var(--muted);font-size:17px;line-height:1;align-self:stretch;display:flex;align-items:center;justify-content:center;}
   .tl-lhead .eye,.tl-lhead .lock{font-size:13px;width:19px;text-align:center;flex:none;cursor:pointer;}
-  .tl-lhead .lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;outline:none;}
+  .tl-lhead .lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;outline:none;touch-action:none;}
   .tl-lhead.drag,.tl-fnum.drag{opacity:.35;}
   .tl-ghost{position:fixed;z-index:100;pointer-events:none;background:var(--panel3);
     border:1px solid var(--accent);border-radius:6px;padding:4px 8px;font-size:12px;
@@ -797,9 +797,12 @@ const stage=$('#stage'), view=$('#view'), vctx=view.getContext('2d');
 let zoom=8, panX=0, panY=0;
 let comp=document.createElement('canvas'), cctx;
 function ensureComp(){comp.width=W;comp.height=H;cctx=comp.getContext('2d');}
+const MINZOOM=0.05, MAXZOOM=64;
 function fitView(){
   const rect=stage.getBoundingClientRect();
-  zoom=Math.max(1,Math.floor(Math.min(rect.width/W,rect.height/H)*0.9));
+  let z=Math.min(rect.width/W,rect.height/H)*0.9;
+  z=z>=1?Math.floor(z):z;                 // integer zoom when it fits, fractional for huge canvases
+  zoom=Math.max(MINZOOM,z);
   panX=Math.round((rect.width-W*zoom)/2);panY=Math.round((rect.height-H*zoom)/2);
 }
 function screenToPix(sx,sy){
@@ -963,17 +966,28 @@ function rangeShape(x,y){
   for(let i=0;i<W*H;i++)if(colorClose(cel[i],target))shp[i]=1;
   return shp;
 }
-// Quick selection = a color-aware brush: within the brush footprint (size &
-// shape from the brush UI) select the pixels matching the color under the brush.
+// Quick selection (Photoshop-style): brushing seeds a contiguous flood that
+// grows the selection outward to the same region of a similar color (QUICKTOL).
+// Drag to keep growing; the +/- modes add or subtract. Brush size widens the
+// seed so a stroke can span across into neighbouring regions.
 function quickFlood(x,y,subtract){
   if(!inBounds(x,y))return;
   if(!selection)selection={mask:new Uint8Array(W*H)};
   const cel=activeCel(), target=cel[y*W+x];
   const s=Math.max(1,brushSize),h1=Math.floor((s-1)/2),h2=s-1-h1,ccx=(h2-h1)/2,r=s/2,r2=r*r;
+  const visited=new Uint8Array(W*H), st=[];
+  const consider=i=>{if(visited[i])return;visited[i]=1;if(colorClose(cel[i],target,QUICKTOL))st.push(i);};
+  // seed: brush-footprint pixels matching the sampled color
   for(let dy=-h1;dy<=h2;dy++)for(let dx=-h1;dx<=h2;dx++){
     if(brushShape==='circle'&&(dx-ccx)*(dx-ccx)+(dy-ccx)*(dy-ccx)>r2)continue;
-    const px=x+dx,py=y+dy;if(!inBounds(px,py))continue;const i=py*W+px;
-    if(colorClose(cel[i],target))selection.mask[i]=subtract?0:1;
+    const px=x+dx,py=y+dy;if(inBounds(px,py))consider(py*W+px);
+  }
+  // contiguous flood outward, bounded by color similarity to the sampled color
+  while(st.length){const i=st.pop();
+    selection.mask[i]=subtract?0:1;
+    const x0=i%W,y0=(i-x0)/W;
+    if(x0>0)consider(i-1);if(x0<W-1)consider(i+1);
+    if(y0>0)consider(i-W);if(y0<H-1)consider(i+W);
   }
   let any=false;for(let i=0;i<selection.mask.length;i++)if(selection.mask[i]){any=true;break;}
   if(!any)selection=null;else computeSelBounds();
@@ -1222,12 +1236,16 @@ function commitPick(){
 stage.addEventListener('pointermove',e=>{
   if(pointers.has(e.pointerId))pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(picking){updatePick(e.clientX,e.clientY);return;}
-  if(['pencil','eraser','quick'].includes(tool)&&e.pointerType!=='touch'){
-    bc.style.display='block';bc.classList.toggle('round',brushShape==='circle');
-    const bs=Math.max(1,brushSize),s=bs*zoom;const{x,y}=screenToPix(e.clientX,e.clientY);
-    const off=Math.floor((bs-1)/2)*zoom;
-    bc.style.left=(panX+x*zoom-off)+'px';bc.style.top=(panY+y*zoom-off)+'px';bc.style.width=s+'px';bc.style.height=s+'px';
-  } else if(e.pointerType!=='touch') bc.style.display='none';
+  // Hover cursor: for pen/mouse show where the cursor is over the canvas, for
+  // every tool (brush tools use the brush size/shape, others a single cell).
+  if(e.pointerType!=='touch'){
+    const{x,y}=screenToPix(e.clientX,e.clientY);const paint=['pencil','eraser','quick'].includes(tool);
+    if(inBounds(x,y)){
+      bc.style.display='block';bc.classList.toggle('round',brushShape==='circle'&&paint);
+      const bs=paint?Math.max(1,brushSize):1,s=bs*zoom,off=Math.floor((bs-1)/2)*zoom;
+      bc.style.left=(panX+x*zoom-off)+'px';bc.style.top=(panY+y*zoom-off)+'px';bc.style.width=s+'px';bc.style.height=s+'px';
+    } else bc.style.display='none';
+  }
   if(pinch&&pointers.size>=2){
     const pts=[...pointers.values()];const d=dist(pts[0],pts[1]);
     const cx=(pts[0].x+pts[1].x)/2,cy=(pts[0].y+pts[1].y)/2;
@@ -1241,7 +1259,7 @@ stage.addEventListener('pointermove',e=>{
       // re-anchor so motion starts smoothly from here
       pinch.d=d;pinch.cx=cx;pinch.cy=cy;pinch.zoom=zoom;pinch.panX=panX;pinch.panY=panY;
     }
-    let nz=Math.max(1,Math.min(64,pinch.zoom*(d/pinch.d)));
+    let nz=Math.max(MINZOOM,Math.min(MAXZOOM,pinch.zoom*(d/pinch.d)));
     const rect=stage.getBoundingClientRect();
     const ox=(pinch.cx-rect.left-pinch.panX)/pinch.zoom, oy=(pinch.cy-rect.top-pinch.panY)/pinch.zoom;
     zoom=nz;panX=(cx-rect.left)-ox*zoom;panY=(cy-rect.top)-oy*zoom;renderView();return;
@@ -1260,6 +1278,9 @@ stage.addEventListener('pointermove',e=>{
   const cel=activeCel();const erase=tool==='eraser';
   lineTo(cel,lastPix.x,lastPix.y,x,y,erase);lastPix={x,y};render();updateCelThumbThrottled();
 });
+// hide the hover cursor when the pen/mouse leaves the canvas
+stage.addEventListener('pointerleave',()=>{if(!drawing)bc.style.display='none';});
+stage.addEventListener('pointerout',e=>{if(!drawing&&e.pointerType==='pen')bc.style.display='none';});
 
 function endPointer(e){
   try{stage.releasePointerCapture(e.pointerId);}catch(_){}
@@ -1418,36 +1439,38 @@ function pickColor(x,y){
 function attachLong(el,fn){let t;
   el.addEventListener('pointerdown',()=>{t=setTimeout(fn,550);});
   ['pointerup','pointerleave','pointercancel'].forEach(ev=>el.addEventListener(ev,()=>clearTimeout(t)));}
-// Long-press a layer name -> a floating opacity gauge appears; slide left/right, release to confirm.
+// Long-press a layer name -> a fixed opacity gauge appears; slide left/right, release to confirm.
+// The pointer is captured on the layer name itself at press time, so pen/finger events keep
+// flowing to us even when the finger leaves the row (mouse already worked; this fixes pen/touch).
 function attachLayerOpacityScrub(el,L){
   el.addEventListener('pointerdown',e=>{
     if(el.isContentEditable)return;
+    try{el.setPointerCapture(e.pointerId);}catch(_){}
     const sx=e.clientX, sy=e.clientY, startOp=L.opacity; let scrubbing=false,t;
-    const hover=$('#layerOpacHover');
+    const hover=$('#layerOpacHover'),guard=$('#scrubGuard'),pid=e.pointerId;
     const paint=op=>{$('#loFill').style.width=(op/255*100)+'%';$('#loVal').textContent=Math.round(op/255*100)+'%';};
     const place=(cx,cy)=>{const w=200;let x=cx-w/2;x=Math.max(8,Math.min(innerWidth-w-8,x));
-      hover.style.left=x+'px';hover.style.top=Math.max(8,cy-86)+'px';};
-    const guard=$('#scrubGuard');const pid=e.pointerId;
-    // while scrubbing, a full-screen guard captures the pointer so it keeps
-    // tracking anywhere on screen (not just over the layer row) until release.
-    const enter=()=>{scrubbing=true;guard.classList.add('show');try{guard.setPointerCapture(pid);}catch(_){}
+      hover.style.left=x+'px';hover.style.top=Math.max(8,cy-96)+'px';};
+    const enter=()=>{scrubbing=true;guard.classList.add('show');
       $('#loName').textContent=L.name;paint(L.opacity);place(sx,sy);hover.classList.add('show');};
-    t=setTimeout(enter,320);
+    // hold ~260ms then it becomes a scrub; a larger pre-enter tolerance so a
+    // pen/finger's natural jitter doesn't cancel the long-press.
+    t=setTimeout(enter,260);
     const move=ev=>{
-      if(!scrubbing){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>8){clearTimeout(t);cleanup();}return;}
+      if(!scrubbing){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>18){clearTimeout(t);cleanup();}return;}
       ev.preventDefault();
       // the gauge stays put; only left/right movement changes the value
       const op=Math.max(0,Math.min(255,Math.round(startOp+(ev.clientX-sx)*1.5)));
       L.opacity=op;paint(op);render();};
-    const up=()=>{clearTimeout(t);
+    const up=()=>{clearTimeout(t);try{el.releasePointerCapture(pid);}catch(_){}
       if(scrubbing){hover.classList.remove('show');guard.classList.remove('show');
-        try{guard.releasePointerCapture(pid);}catch(_){}
         justDragged=true;setTimeout(()=>justDragged=false,80);refreshTimeline();render();}
       cleanup();};
+    // capture is on `el`, but captured events still bubble to document, so we
+    // listen there (single set) and keep tracking wherever the pointer goes.
     function cleanup(){document.removeEventListener('pointermove',move);
       document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
-    document.addEventListener('pointermove',move);
-    document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+    document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
   });}
 function drawCelThumb(ctx,layerId,fi){
   ctx.clearRect(0,0,W,H);const cel=doc.cels.get(celKey(layerId,fi));if(!cel)return;
@@ -1952,7 +1975,7 @@ document.addEventListener('keyup',e=>{if(e.key===' ')spaceHand=false;});
 stage.addEventListener('wheel',e=>{
   e.preventDefault();const rect=stage.getBoundingClientRect();
   const ox=(e.clientX-rect.left-panX)/zoom,oy=(e.clientY-rect.top-panY)/zoom;
-  zoom=Math.max(1,Math.min(64,zoom*(e.deltaY<0?1.15:0.87)));
+  zoom=Math.max(MINZOOM,Math.min(MAXZOOM,zoom*(e.deltaY<0?1.15:0.87)));
   panX=(e.clientX-rect.left)-ox*zoom;panY=(e.clientY-rect.top)-oy*zoom;renderView();
 },{passive:false});
 
