@@ -40,14 +40,13 @@
   .hbtn.on{background:var(--accent);border-color:var(--accent);color:#fff;}
   .hbtn.icon{padding:6px 9px;}
 
-  /* Canvas tabs */
-  .doctabs{flex:none;display:flex;align-items:stretch;gap:2px;padding:3px 4px;overflow-x:auto;
-    background:var(--panel2);border-bottom:1px solid var(--border);min-height:34px;}
+  /* Canvas tabs — live at the left of the top bar, boxed off from the buttons */
+  .doctabs{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;
+    border-right:1px solid var(--border);padding-right:8px;margin-right:2px;}
   .doctabs .dtab{flex:none;display:flex;align-items:center;gap:6px;max-width:170px;
-    padding:5px 8px;border:1px solid var(--border);border-radius:7px 7px 0 0;background:var(--panel);
+    padding:5px 9px;border:1px solid var(--border);border-radius:7px;background:var(--panel2);
     color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;touch-action:manipulation;}
-  .doctabs .dtab.active{background:var(--panel3);color:var(--text);border-bottom-color:var(--panel3);
-    box-shadow:inset 0 -2px 0 var(--accent);}
+  .doctabs .dtab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
   .doctabs .dtab .dt-name{overflow:hidden;text-overflow:ellipsis;max-width:120px;}
   .doctabs .dtab .dt-x{flex:none;width:18px;height:18px;border-radius:50%;line-height:1;
     display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted);}
@@ -88,6 +87,19 @@
   .gauge .g-val{font-size:15px;color:var(--text);font-variant-numeric:tabular-nums;
     background:var(--panel3);border-radius:6px;padding:3px 0;width:46px;text-align:center;}
   .gauge-opac{border-top:1px solid var(--border);}
+  /* Current-color dot at the top of the brush panel (opens the color popover) */
+  .gauge .colordot{width:44px;height:44px;flex:none;border-radius:50%;cursor:pointer;padding:0;
+    border:3px solid var(--panel3);box-shadow:0 0 0 1px var(--border),0 2px 6px #0007;background:#e6e8ee;
+    background-image:linear-gradient(45deg,#0003 25%,transparent 25%),linear-gradient(-45deg,#0003 25%,transparent 25%);
+    background-size:12px 12px;touch-action:manipulation;}
+  .gauge .colordot:active{transform:scale(.94);}
+  /* Procreate-style color popover */
+  .colorpop{position:absolute;z-index:40;display:none;width:248px;padding:14px;border-radius:16px;
+    background:var(--panel);border:1px solid var(--border);box-shadow:0 12px 34px #000b;flex-direction:column;gap:10px;}
+  .colorpop.show{display:flex;}
+  .colorpop .wheelwrap{position:relative;width:100%;display:flex;justify-content:center;}
+  .colorpop .cp-val{width:100%;height:30px;}
+  .colorpop .cp-row{display:flex;align-items:center;gap:10px;}
   .gauge .gtool{width:40px;height:40px;border:1px solid var(--border);background:var(--panel2);
     border-radius:9px;font-size:20px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;padding:0;}
   .gauge .gtool.active{background:var(--accent);border-color:var(--accent);}
@@ -178,8 +190,9 @@
     color:var(--text);font-size:18px;box-shadow:0 3px 10px #0008;cursor:pointer;
     display:flex;align-items:center;justify-content:center;}
   .nudge .nu:active{background:var(--accent);border-color:var(--accent);color:#fff;}
-  .nudge .up{grid-area:1/2}.nudge .left{grid-area:2/1}.nudge .mid{grid-area:2/2;
-    border:none;background:transparent;box-shadow:none;font-size:9px;color:var(--muted);pointer-events:none;}
+  .nudge .up{grid-area:1/2}.nudge .left{grid-area:2/1}
+  .nudge .mid{grid-area:2/2;font-size:18px;}
+  .nudge .mid.on{background:var(--accent2);border-color:#fff;color:#fff;box-shadow:0 0 0 2px var(--accent2),0 3px 10px #0008;}
   .nudge .right{grid-area:2/3}.nudge .down{grid-area:3/2}
   /* Selection delete button: top-left, red, away from the +/- and D-pad */
   .seldel{position:absolute;left:132px;top:12px;z-index:15;display:none;
@@ -236,6 +249,7 @@
     overflow-x:auto;overflow-y:hidden;cursor:ns-resize;touch-action:pan-x;
     box-shadow:inset 0 3px 0 -1px var(--border);}
   .tl-ctrls .vsep{width:1px;height:22px;background:var(--border);margin:0 3px;flex:none;}
+  .tl-docsize{flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;padding-right:2px;}
   .tl-ctrls .lbl{color:var(--muted);font-size:11px;flex:none;white-space:nowrap;}
   .playbtn{flex:none;width:52px;height:36px;border:1px solid var(--accent);background:var(--accent);
     color:#fff;border-radius:9px;font-size:18px;cursor:pointer;line-height:1;}
@@ -339,7 +353,7 @@
   #pnlSide.hidden{display:none;}
   /* Color wheel */
   .wheelwrap{position:relative;width:100%;display:flex;justify-content:center;}
-  #colorWheel{width:100%;max-width:180px;height:auto;aspect-ratio:1;touch-action:none;cursor:crosshair;}
+  #colorWheel{width:100%;max-width:220px;height:auto;aspect-ratio:1;touch-action:none;cursor:crosshair;}
   .wheel-cursor{position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #fff;
     box-shadow:0 0 0 1px #000,0 1px 3px #000a;transform:translate(-50%,-50%);pointer-events:none;}
   .dockprev{position:absolute;z-index:44;pointer-events:none;display:none;
@@ -353,8 +367,8 @@
 </head>
 <body>
 <header>
-  <h1>✏️ ドット絵エディタ <small id="docsize">32×32</small></h1>
-  <span class="grow"></span>
+  <!-- Canvas tabs occupy the left side of the top bar, up to the clipboard buttons -->
+  <div id="docTabbar" class="doctabs"></div>
   <button class="hbtn" id="pasteBtn" title="クリップボードから貼り付け（新規タブ）">📥</button>
   <button class="hbtn" id="copyBtn" title="現在のフレームをクリップボードにコピー">📋</button>
   <button class="hbtn" id="ppBtn" title="ピクセルパーフェクト">◠ PP</button>
@@ -364,9 +378,6 @@
   <button class="hbtn icon" id="redoBtn" title="やり直し">↷</button>
   <button class="hbtn" id="menuBtn" title="メニュー">☰</button>
 </header>
-
-<!-- Canvas tabs (Photoshop-style), just under the top bar -->
-<div id="docTabbar" class="doctabs"></div>
 
 <div id="workspace">
   <!-- Canvas (fills the workspace; panels float above) -->
@@ -409,16 +420,15 @@
   <div class="nudge" id="nudge">
     <button class="nu up" data-dx="0" data-dy="-1" title="上へ1px">▲</button>
     <button class="nu left" data-dx="-1" data-dy="0" title="左へ1px">◀</button>
-    <span class="nu mid">1px</span>
+    <button class="nu mid" id="fillGapBtn" title="移動時に隙間を埋める（端を引き伸ばし）">🩹</button>
     <button class="nu right" data-dx="1" data-dy="0" title="右へ1px">▶</button>
     <button class="nu down" data-dx="0" data-dy="1" title="下へ1px">▼</button>
   </div>
 
-  <!-- Brush gauges panel (size + opacity, stacked) -->
+  <!-- Brush gauges panel (color dot + size + opacity, stacked) -->
   <div class="panel" id="pnlGauge">
-    <div class="pgrip">⠿ ブラシ</div>
     <div class="gauge" id="gauge" title="ブラシサイズ">
-      <span class="g-icon">⬤</span>
+      <button class="colordot" id="colorDot" title="カラー（タップで開く）"></button>
       <div class="g-track" id="gtrack"><div class="g-fill" id="gfill"></div><div class="g-dot" id="gdot"></div></div>
       <span class="g-val" id="gval">1</span>
       <button class="gshape" id="brushShapeBtn" title="ブラシ形状（四角／円）">◻</button>
@@ -432,7 +442,6 @@
 
   <!-- Tool rail panel -->
   <div class="panel" id="pnlTools">
-    <div class="pgrip">⠿ ツール</div>
     <div class="tools" id="tools">
       <button class="tool active" data-tool="pencil" title="ペン (B)">✏️</button>
       <button class="tool" data-tool="eraser" title="消しゴム (E)">🧽</button>
@@ -454,38 +463,20 @@
     </div>
   </div>
 
-  <!-- Color / settings panel -->
-  <div class="panel" id="pnlSide">
-    <div class="pgrip">⠿ カラー / 設定</div>
-    <div class="side" id="side">
-      <div class="sec">
-        <div class="wheelwrap">
-          <canvas id="colorWheel" width="180" height="180"></canvas>
-          <div class="wheel-cursor" id="wheelCursor"></div>
-        </div>
-        <div class="field" style="margin:8px 0 6px"><label>明るさ</label>
-          <input type="range" id="valSlider" min="0" max="100" value="90">
-        </div>
-        <div class="colrow">
-          <div class="swatch"><i id="curColor" style="background:#e6e8ee"></i></div>
-          <input type="color" id="colorPick" value="#e6e8ee">
-          <div style="flex:1"></div>
-          <button class="minibtn" id="addSwatch" title="パレットに追加">＋</button>
-        </div>
-        <div class="palette" id="palette"></div>
-      </div>
-
-      <div class="sec" id="selSec">
-        <h3>選択オプション</h3>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px">
-          <input type="checkbox" id="fillGap"> 🩹 移動時に隙間を埋める（端を引き伸ばし）
-        </label>
-        <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5">
-          左の <b style="color:var(--accent2)">＋ / −</b> を押しながら選択で追加／除外。色域選択は 🗑 の右の「色域許容」で範囲調整。PCは Ctrl=追加 / Alt=除外。
-        </div>
-      </div>
-
+  <!-- Procreate-style color popover: opens from the ● color dot on the brush panel -->
+  <div class="colorpop" id="colorPop">
+    <div class="wheelwrap">
+      <canvas id="colorWheel" width="220" height="220"></canvas>
+      <div class="wheel-cursor" id="wheelCursor"></div>
     </div>
+    <input type="range" id="valSlider" class="cp-val" min="0" max="100" value="90" title="明るさ">
+    <div class="cp-row">
+      <div class="swatch"><i id="curColor" style="background:#e6e8ee"></i></div>
+      <input type="color" id="colorPick" value="#e6e8ee" title="スポイト / 直接指定">
+      <div style="flex:1"></div>
+      <button class="minibtn" id="addSwatch" title="パレットに追加">＋ 保存</button>
+    </div>
+    <div class="palette" id="palette"></div>
   </div>
 
   <!-- Timeline panel (dock-bottom; drag the controls row to change its height) -->
@@ -505,6 +496,8 @@
         <span class="lbl" style="color:var(--danger)">削除</span>
         <button class="minibtn danger dellabel" id="frameDel" title="現在のフレームを削除">🗑ﾌﾚｰﾑ</button>
         <button class="minibtn danger dellabel" id="layerDel" title="現在のレイヤーを削除">🗑ﾚｲﾔｰ</button>
+        <span class="vsep"></span>
+        <span class="tl-docsize" id="docsize" title="キャンバス解像度">32×32</span>
       </div>
       <div class="tl-scroll"><div class="tl-grid" id="tlGrid"></div></div>
     </div>
@@ -1067,7 +1060,6 @@ function setTool(t){
   $$('.gtool').forEach(b=>b.classList.toggle('active',b.dataset.tool===t)); // left pen/eraser icons
   if(['pencil','eraser','bucket','line','rect','ellipse'].includes(t))lastPaintTool=t;
   if(SIZETOOLS.includes(t)){brushSize=brushSizes[t];updateGauge();} // load this tool's size
-  $('#selSec').style.display=SELTOOL.includes(t)?'block':'none';
   updateSelModVisible();
   updateBrushCursor();
 }
@@ -1392,7 +1384,9 @@ function renderPalette(){
     el.appendChild(d);
   });
 }
-function setColorHex(hex){color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;syncWheel(hex);}
+function setColorHex(hex){color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;
+  const dot=$('#colorDot');if(dot){dot.style.background=hex;dot.style.backgroundImage='none';}
+  syncWheel(hex);}
 
 /* ---- Color wheel (hue+sat disc, brightness slider) ---- */
 function hsv2rgb(h,s,v){h/=360;const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);
@@ -1743,13 +1737,32 @@ document.addEventListener('fullscreenchange',()=>{const on=!!document.fullscreen
 // Hide the button if it can't do anything (iOS) or we're already a standalone app
 (()=>{const standalone=matchMedia('(display-mode:fullscreen)').matches||matchMedia('(display-mode:standalone)').matches||navigator.standalone;
   if(standalone||!fsSupported())$('#fsBtn').style.display='none';})();
-$('#fillGap').onchange=e=>{fillOnMove=e.target.checked;toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
+// Fill-gap toggle lives in the center of the D-pad
+$('#fillGapBtn').onclick=()=>{fillOnMove=!fillOnMove;$('#fillGapBtn').classList.toggle('on',fillOnMove);
+  toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
   if(lastRange){selection=lastRange.base?{mask:lastRange.base.slice()}:null;
     applyShape(rangeShape(lastRange.x,lastRange.y),lastRange.mode);render();}};
 $('#colorPick').oninput=e=>setColorHex(e.target.value);
 $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){palette.push(hex);renderPalette();}};
+// Procreate-style color popover, opened from the ● color dot on the brush panel
+function positionColorPop(){const pop=$('#colorPop'),dot=$('#colorDot');if(!pop||!dot)return;
+  const wr=workspace.getBoundingClientRect(),d=dot.getBoundingClientRect();
+  let x=d.right-wr.left+10, y=d.top-wr.top;
+  const pw=pop.offsetWidth||248, ph=pop.offsetHeight||320;
+  x=Math.min(x, wr.width-pw-8); y=Math.min(Math.max(8,y), wr.height-ph-8);
+  pop.style.left=x+'px';pop.style.top=y+'px';}
+function openColorPop(){const pop=$('#colorPop');pop.classList.add('show');
+  positionColorPop();drawWheel();syncWheel(toHex(color));updateWheelCursor();}
+function closeColorPop(){$('#colorPop').classList.remove('show');}
+function toggleColorPop(){$('#colorPop').classList.contains('show')?closeColorPop():openColorPop();}
+$('#colorDot').onclick=e=>{e.stopPropagation();toggleColorPop();};
+// tap outside closes it
+document.addEventListener('pointerdown',e=>{const pop=$('#colorPop');
+  if(!pop.classList.contains('show'))return;
+  if(pop.contains(e.target)||e.target.closest('#colorDot'))return;
+  closeColorPop();},true);
 $('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#mUndo').onclick=undo;$('#mRedo').onclick=redo;
 $('#pasteBtn').onclick=pasteFromClipboard;$('#copyBtn').onclick=copyFramePNG;
 $('#selDeselect').onclick=()=>{deselect();toast('選択解除');};
@@ -1826,17 +1839,17 @@ $$('#nudge .nu').forEach(btn=>{
   btn.addEventListener('pointerdown',e=>{e.preventDefault();try{btn.setPointerCapture(e.pointerId);}catch(_){}startNudge(dx,dy);});
   ['pointerup','pointercancel','pointerleave'].forEach(ev=>btn.addEventListener(ev,stopNudge));
 });
-function togglePanel(){$('#pnlSide').classList.toggle('hidden');}
+function togglePanel(){toggleColorPop();}   // legacy: 🎨 opens the color popover now
 
 /* ================= Docking panel layout (drag → dock preview → snap) ================= */
 const workspace=$('#workspace');
-const PANELS={gauge:'#pnlGauge',tools:'#pnlTools',side:'#pnlSide',tl:'#pnlTl'};
-const PW={gauge:76,tools:64,side:214,tl:260};   // docked column widths
-const LAYOUT_KEY='pxeditor-dock-v3';
+const PANELS={gauge:'#pnlGauge',tools:'#pnlTools',tl:'#pnlTl'};
+const PW={gauge:76,tools:64,tl:260};   // docked column widths
+const LAYOUT_KEY='pxeditor-dock-v4';
 const EDGE=90;                                   // how close to an edge to dock
 let dockState=defaultDock();
 function defaultDock(){return {gauge:{dock:'left',ord:0},tools:{dock:'left',ord:100},
-  side:{dock:'right',ord:0},tl:{dock:'bottom',ord:0,h:190}};}
+  tl:{dock:'bottom',ord:0,h:190}};}
 function panelKey(el){for(const k in PANELS)if($(PANELS[k])===el)return k;return null;}
 function measureH(el){const p=el.style.height;el.style.height='';const h=el.offsetHeight;el.style.height=p;return h;}
 
@@ -1960,7 +1973,7 @@ function makePanelsMovable(){
   $$('.panel .pgrip').forEach(g=>{const panel=g.closest('.panel');if(panel.id==='pnlTl')return;
     g.addEventListener('pointerdown',e=>startPanelDrag(panel,g,e));});
   // resize handles on gauge/tools/side
-  ['pnlGauge','pnlTools','pnlSide'].forEach(id=>{const panel=$('#'+id);
+  ['pnlGauge','pnlTools'].forEach(id=>{const panel=$('#'+id);
     let p=panel.querySelector('.prz');if(!p){p=document.createElement('div');p.className='prz br';panel.appendChild(p);}
     p.addEventListener('pointerdown',e=>startPanelResize(panel,p,e));});
   // long-press on a panel's empty area also starts a move
@@ -2506,7 +2519,7 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
 /* ================= Boot ================= */
 function boot(){
   initLayout();initWheel();
-  newDocTab(32,32,'キャンバス 1');setTool('pencil');updateGauge();updateOpacGauge();updateSelBtns();$('#selSec').style.display='none';
+  newDocTab(32,32,'キャンバス 1');setTool('pencil');updateGauge();updateOpacGauge();updateSelBtns();
   window.addEventListener('resize',()=>{relayout();fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
   // Register the network-first worker so the app is installable (full-screen
