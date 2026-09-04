@@ -29,7 +29,8 @@
   button{font-family:inherit;color:inherit;}
 
   header{flex:none;display:flex;align-items:center;gap:8px;padding:6px 10px;
-    background:var(--panel);border-bottom:1px solid var(--border);}
+    background:var(--panel);border-bottom:1px solid var(--border);overflow-x:auto;}
+  header .hbtn{flex:none;}
   header h1{font-size:14px;margin:0;font-weight:600;white-space:nowrap;}
   header h1 small{color:var(--muted);font-weight:400;font-size:11px;}
   .grow{flex:1;}
@@ -187,6 +188,13 @@
     box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
   .seldel.show{display:flex;}
   .seldel:active{background:var(--danger);color:#fff;}
+  /* Invert-selection button: right of the trash */
+  .selinvert{position:absolute;left:194px;top:12px;z-index:15;display:none;
+    width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:22px;cursor:pointer;
+    box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
+  .selinvert.show{display:flex;}
+  .selinvert:active{background:var(--accent);border-color:var(--accent);color:#fff;}
   /* Deselect button: sits just below the trash */
   .seldeselect{position:absolute;left:132px;top:74px;z-index:15;display:none;
     width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
@@ -222,8 +230,11 @@
 
   /* Aseprite-style timeline */
   .timeline{background:var(--panel);display:flex;flex-direction:column;min-height:0;}
-  .tl-ctrls{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);
-    overflow-x:auto;}
+  /* Controls row doubles as the timeline's vertical-resize handle: horizontal
+     drags still scroll it (pan-x), vertical drags on empty space resize. */
+  .tl-ctrls{display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid var(--border);
+    overflow-x:auto;overflow-y:hidden;cursor:ns-resize;touch-action:pan-x;
+    box-shadow:inset 0 3px 0 -1px var(--border);}
   .tl-ctrls .vsep{width:1px;height:22px;background:var(--border);margin:0 3px;flex:none;}
   .tl-ctrls .lbl{color:var(--muted);font-size:11px;flex:none;white-space:nowrap;}
   .playbtn{flex:none;width:52px;height:36px;border:1px solid var(--accent);background:var(--accent);
@@ -336,7 +347,6 @@
     box-shadow:inset 0 0 0 2px rgba(91,140,255,.3);}
   .dockprev.show{display:block;}
   @media (max-width:760px){
-    .mbar{display:flex;}
     .tool{width:44px;height:44px;font-size:20px;}
   }
 </style>
@@ -380,8 +390,9 @@
     </div>
   </div>
   <button class="seldel" id="selDel" title="選択範囲を削除（元に戻す/2本指タップで復帰）">🗑</button>
+  <button class="selinvert" id="selInvert" title="選択範囲を反転">🔃</button>
   <button class="seldeselect" id="selDeselect" title="選択解除">⬚</button>
-  <!-- Color-range tolerance: appears right of the trash while the 色域選択 tool is active -->
+  <!-- Color-range tolerance: appears right of the invert button while the 色域選択 tool is active -->
   <div class="rangetol" id="rangeTolFloat">
     <div class="rt-lbl">色域許容 <span id="rangeTolV">48</span></div>
     <input type="range" id="rangeTol" min="0" max="180" value="48">
@@ -477,12 +488,10 @@
     </div>
   </div>
 
-  <!-- Timeline panel (dock-bottom by default; resize via top edge, move via grip) -->
+  <!-- Timeline panel (dock-bottom; drag the controls row to change its height) -->
   <div class="panel" id="pnlTl">
-    <div class="presize" title="ドラッグで高さ変更"></div>
-    <div class="pgrip">⠿ タイムライン</div>
     <div class="timeline">
-      <div class="tl-ctrls">
+      <div class="tl-ctrls" id="tlCtrls" title="この段を上下にドラッグで高さ変更">
         <button class="playbtn" id="playBtn" title="再生 / 停止">▶</button>
         <button class="minibtn" id="onionBtn" title="オニオンスキン：前後のフレームを薄く重ねて表示（作画の目安）">🧅</button>
         <span class="lbl">FPS</span>
@@ -1744,6 +1753,8 @@ $('#addSwatch').onclick=()=>{const hex=toHex(color);if(!palette.includes(hex)){p
 $('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#mUndo').onclick=undo;$('#mRedo').onclick=redo;
 $('#pasteBtn').onclick=pasteFromClipboard;$('#copyBtn').onclick=copyFramePNG;
 $('#selDeselect').onclick=()=>{deselect();toast('選択解除');};
+$('#selInvert').onclick=()=>{if(!selection)return;const m=selection.mask;for(let i=0;i<m.length;i++)m[i]=m[i]?0:1;
+  computeSelBounds();render();toast('選択範囲を反転');};
 // Big +/- buttons act as Ctrl/Alt: hold to modify momentarily, tap to lock.
 let selHoldTime=0;
 function bindSelMod(btn,mode){
@@ -1765,6 +1776,7 @@ function updateSelModVisible(){
   $('#nudge').classList.toggle('show',!!selection);
   $('#selDel').classList.toggle('show',!!selection);
   $('#selDeselect').classList.toggle('show',!!selection);
+  $('#selInvert').classList.toggle('show',!!selection);
   $('#rangeTolFloat').classList.toggle('show',tool==='range');
   if(typeof positionSelControls==='function')positionSelControls();
 }
@@ -1845,10 +1857,12 @@ function relayout(){
   // owning the left edge.
   let leftWtot=0; sides.left.forEach(k=>leftWtot+=pw(k)+G);
   let rightWtot=0; sides.right.forEach(k=>rightWtot+=pw(k)+G);
-  let lx=0; sides.left.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,availH):availH;
-    el.style.width=w+'px';el.style.left=lx+'px';el.style.top=topH+'px';el.style.height=h+'px';setPrz(el,'br');lx+=w+G;});
-  let rx=W; sides.right.forEach(k=>{const el=$(PANELS[k]),w=pw(k),h=dockState[k].h?Math.min(dockState[k].h,availH):availH;
-    el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=topH+'px';el.style.height=h+'px';setPrz(el,'bl');rx-=w+G;});
+  // Left/right docked columns ALWAYS run the full height (ignore any stored
+  // height) so resizing their width never leaves a gap at the bottom.
+  let lx=0; sides.left.forEach(k=>{const el=$(PANELS[k]),w=pw(k);
+    el.style.width=w+'px';el.style.left=lx+'px';el.style.top=topH+'px';el.style.height=availH+'px';setPrz(el,'br');lx+=w+G;});
+  let rx=W; sides.right.forEach(k=>{const el=$(PANELS[k]),w=pw(k);
+    el.style.width=w+'px';el.style.left=(rx-w)+'px';el.style.top=topH+'px';el.style.height=availH+'px';setPrz(el,'bl');rx-=w+G;});
   let ty=0; sides.top.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
     el.style.left='0px';el.style.width=W+'px';el.style.top=ty+'px';el.style.height=h+'px';setPrz(el,null);ty+=h+G;});
   // bottom timeline: flush to the bottom edge, spanning only between the columns
@@ -1869,11 +1883,12 @@ function positionSelControls(){
   const x=leftEdge+12;
   const tl=$('#pnlTl'),tlTop=tl?(parseFloat(tl.style.top)||H):H;
   const bottomGap=H-tlTop;
-  const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge'),dz=$('#selDeselect'),rt=$('#rangeTolFloat');
+  const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge'),dz=$('#selDeselect'),rt=$('#rangeTolFloat'),iv=$('#selInvert');
   if(sm){sm.style.left=x+'px';sm.style.top=Math.max(70,(colTopVal()+tlTop)/2)+'px';}
-  if(sd){sd.style.left=x+'px';sd.style.top='12px';}
-  if(dz){dz.style.left=x+'px';dz.style.top='74px';}            // just below the trash
-  if(rt){rt.style.left=(x+62)+'px';rt.style.top='12px';}        // to the right of the trash
+  if(sd){sd.style.left=x+'px';sd.style.top='12px';}              // 🗑 delete
+  if(iv){iv.style.left=(x+62)+'px';iv.style.top='12px';}         // 🔃 invert, right of delete
+  if(rt){rt.style.left=(x+124)+'px';rt.style.top='12px';}        // 色域許容, right of invert
+  if(dz){dz.style.left=x+'px';dz.style.top='74px';}              // ⬚ deselect, below delete
   if(nu){nu.style.left=x+'px';nu.style.bottom=(bottomGap+12)+'px';}
 }
 function colTopVal(){const M=8;let topH=0;for(const k in PANELS)if(dockState[k].dock==='top'){topH+= (k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),innerHeight*0.5))+8;}return M+(topH?topH+M:0);}
@@ -1960,14 +1975,19 @@ function makePanelsMovable(){
       panel.addEventListener('pointermove',mv);panel.addEventListener('pointerup',clr);panel.addEventListener('pointercancel',clr);
     });
   });
-  // timeline vertical resize (drag the top edge)
-  $$('.presize').forEach(h=>{const panel=h.closest('.panel');
-    h.addEventListener('pointerdown',e=>{e.preventDefault();try{h.setPointerCapture(e.pointerId);}catch(_){}
-      const startY=e.clientY,startH=panel.getBoundingClientRect().height;
-      const move=ev=>{dockState.tl.h=Math.max(90,Math.min(workspace.clientHeight-40,startH-(ev.clientY-startY)));relayout();};
-      const up=ev=>{try{h.releasePointerCapture(ev.pointerId);}catch(_){}
-        document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);saveLayout();};
-      document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);});
+  // timeline vertical resize: drag the controls (play-button) row up/down.
+  // Buttons/sliders inside it still work; only empty-area drags resize.
+  const tlc=$('#tlCtrls');
+  if(tlc)tlc.addEventListener('pointerdown',e=>{
+    if(e.target.closest('button,input,select,textarea,label'))return;
+    e.preventDefault();try{tlc.setPointerCapture(e.pointerId);}catch(_){}
+    const startY=e.clientY,startH=dockState.tl.h||190;let moved=false;
+    const move=ev=>{if(Math.abs(ev.clientY-startY)>2)moved=true;
+      dockState.tl.h=Math.max(84,Math.min(workspace.clientHeight-40,startH-(ev.clientY-startY)));relayout();};
+    const up=ev=>{try{tlc.releasePointerCapture(ev.pointerId);}catch(_){}
+      document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+      document.removeEventListener('pointercancel',up);if(moved)saveLayout();};
+    document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
   });
 }
 function initLayout(){const saved=loadLayout();dockState=saved||defaultDock();
