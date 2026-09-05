@@ -1579,6 +1579,7 @@ function refreshTimeline(){
       const cv=document.createElement('canvas');cv.width=W;cv.height=H;cell.appendChild(cv);
       drawCelThumb(cv.getContext('2d'),L.id,fi);
       cell.onclick=()=>{if(justDragged)return;activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);refreshTimeline();render();};
+      bindCellLong(cell,li,fi);
       row.appendChild(cell);
     });
     grid.appendChild(row);
@@ -1605,6 +1606,16 @@ function bindTimelineItem(el,kind,idx){
     document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
   });
 }
+// Long-press a preview cell -> frame radial (its column's frame)
+function bindCellLong(cell,li,fi){cell.addEventListener('pointerdown',e=>{
+  const sx=e.clientX,sy=e.clientY;
+  const t=setTimeout(()=>{justDragged=true;setTimeout(()=>justDragged=false,140);
+    activeLayer=li;activeFrame=fi;openRadial('frame',fi,sx,sy);cleanup();},430);
+  const mv=ev=>{if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){clearTimeout(t);cleanup();}};
+  const up=()=>{clearTimeout(t);cleanup();};
+  function cleanup(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+  document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+});}
 function itemAt(kind,x,y){const sel=kind==='layer'?'.tl-lhead':'.tl-fnum';
   for(const el of $$('#tlGrid '+sel)){const r=el.getBoundingClientRect();
     if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom)return +(kind==='layer'?el.dataset.li:el.dataset.fi);}
@@ -1644,8 +1655,11 @@ function openRadial(kind,idx,cx,cy){
   ];
   showRadial(cx,cy,items);
 }
-function showRadial(cx,cy,items){
-  const n=items.length, R=94;
+function showRadial(px,py,items){
+  const n=items.length, R=94, pad=R+46;
+  // clamp the menu centre so every item stays on-screen (even near an edge)
+  const cx=Math.max(pad,Math.min(innerWidth-pad,px));
+  const cy=Math.max(pad,Math.min(innerHeight-pad,py));
   const guard=document.createElement('div');guard.className='radial-guard';
   const wrap=document.createElement('div');wrap.className='radial';
   document.body.appendChild(guard);document.body.appendChild(wrap);
@@ -1659,7 +1673,9 @@ function showRadial(cx,cy,items){
     wrap.appendChild(it);els.push(it);}
   let hi=-1;
   const setHi=i=>{if(i===hi)return;hi=i;els.forEach((e,k)=>e.classList.toggle('on',k===i));cen.classList.toggle('on',i===-1);};
-  const pick=(x,y)=>{const dx=x-cx,dy=y-cy;if(Math.hypot(dx,dy)<40){setHi(-1);return;}
+  // selection is decided purely by how far/which way the finger moved from the
+  // press point (px,py) — not by where the (clamped) menu is drawn.
+  const pick=(x,y)=>{const dx=x-px,dy=y-py;if(Math.hypot(dx,dy)<38){setHi(-1);return;}
     const ang=Math.atan2(dy,dx);let best=-1,bd=1e9;
     for(let i=0;i<n;i++){let da=Math.abs(Math.atan2(Math.sin(ang-angs[i]),Math.cos(ang-angs[i])));if(da<bd){bd=da;best=i;}}
     setHi(best);};
