@@ -304,7 +304,7 @@
     box-shadow:0 0 6px var(--accent);}
   .tl-cell{width:44px;height:46px;flex:none;border-right:1px solid var(--border);
     border-bottom:1px solid var(--border);cursor:pointer;background:#0e0f13;
-    display:flex;align-items:center;justify-content:center;padding:3px;}
+    display:flex;align-items:center;justify-content:center;padding:3px;touch-action:pan-x;}
   .tl-cell.active{box-shadow:inset 0 0 0 2px var(--accent);}
   .tl-cell.sel{background:#161b22;box-shadow:inset 0 0 0 2px var(--accent2);}
   .tl-cell.active.sel{box-shadow:inset 0 0 0 2px var(--accent);}
@@ -1540,6 +1540,10 @@ function refreshTimeline(){
   grid.style.setProperty('--lcolw',layerColW+'px');
   const hrow=document.createElement('div');hrow.className='tl-row tl-head';
   const corner=document.createElement('div');corner.className='tl-corner';
+  const mkc=(txt,title,fn)=>{const b=document.createElement('button');b.className='corner-btn';b.textContent=txt;b.title=title;
+    b.onclick=e=>{e.stopPropagation();fn();};return b;};
+  corner.appendChild(mkc('＋','新規レイヤー',addLayer));
+  corner.appendChild(mkc('🗑','レイヤー削除',deleteLayersSel));
   const colgrip=document.createElement('div');colgrip.className='tl-colgrip';colgrip.title='レイヤー欄の幅を調整';
   colgrip.addEventListener('pointerdown',startLayerColResize);
   corner.appendChild(colgrip);
@@ -1663,8 +1667,6 @@ function showRadial(px,py,items){
   const guard=document.createElement('div');guard.className='radial-guard';
   const wrap=document.createElement('div');wrap.className='radial';
   document.body.appendChild(guard);document.body.appendChild(wrap);
-  const cen=document.createElement('div');cen.className='radial-center';cen.textContent='✕';
-  cen.style.left=cx+'px';cen.style.top=cy+'px';wrap.appendChild(cen);
   const els=[];const angs=[];
   for(let i=0;i<n;i++){const ang=-Math.PI/2 + i*(2*Math.PI/n);angs.push(ang);
     const x=cx+Math.cos(ang)*R, y=cy+Math.sin(ang)*R;
@@ -1672,18 +1674,22 @@ function showRadial(px,py,items){
     it.innerHTML=`<div class="ri-ic">${items[i].icon}</div><div class="ri-lb">${items[i].label}</div>`;
     wrap.appendChild(it);els.push(it);}
   let hi=-1;
-  const setHi=i=>{if(i===hi)return;hi=i;els.forEach((e,k)=>e.classList.toggle('on',k===i));cen.classList.toggle('on',i===-1);};
+  const setHi=i=>{if(i===hi)return;hi=i;els.forEach((e,k)=>e.classList.toggle('on',k===i));};
   // selection is decided purely by how far/which way the finger moved from the
   // press point (px,py) — not by where the (clamped) menu is drawn.
   const pick=(x,y)=>{const dx=x-px,dy=y-py;if(Math.hypot(dx,dy)<38){setHi(-1);return;}
     const ang=Math.atan2(dy,dx);let best=-1,bd=1e9;
     for(let i=0;i<n;i++){let da=Math.abs(Math.atan2(Math.sin(ang-angs[i]),Math.cos(ang-angs[i])));if(da<bd){bd=da;best=i;}}
     setHi(best);};
+  const t0=performance.now();
   const move=ev=>pick(ev.clientX,ev.clientY);
-  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
-    document.removeEventListener('pointercancel',up);wrap.remove();guard.remove();
+  const finish=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);
+    document.removeEventListener('pointercancel',onCancel);wrap.remove();guard.remove();
     if(hi>=0)items[hi].fn();};
-  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+  // ignore a spurious pointercancel right after opening (e.g. DOM churn from
+  // refreshTimeline removing the pressed cell) so the menu doesn't close instantly
+  const onCancel=()=>{if(performance.now()-t0<250)return;finish();};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',finish);document.addEventListener('pointercancel',onCancel);
   setHi(-1);
 }
 
