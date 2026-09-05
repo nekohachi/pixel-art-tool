@@ -279,14 +279,23 @@
     padding:9px 0;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
     cursor:grab;touch-action:none;}
   .tl-fnum.active{background:var(--accent);color:#fff;}
+  .tl-fnum.sel{background:var(--accent2);color:#fff;}
+  .tl-fnum.active.sel{background:var(--accent);box-shadow:inset 0 -3px 0 var(--accent2);}
   .tl-lhead{width:var(--lcolw,118px);flex:none;position:sticky;left:0;z-index:2;background:var(--panel2);
-    display:flex;align-items:center;gap:1px;padding:0 3px;border-right:1px solid var(--border);
-    border-bottom:1px solid var(--border);cursor:pointer;height:46px;}
+    display:flex;align-items:stretch;gap:0;padding:0;border-right:1px solid var(--border);
+    border-bottom:1px solid var(--border);cursor:pointer;height:46px;touch-action:none;}
   .tl-lhead.active{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent);}
-  .tl-lhead .grip{width:24px;flex:none;text-align:center;cursor:grab;touch-action:none;
-    color:var(--muted);font-size:17px;line-height:1;align-self:stretch;display:flex;align-items:center;justify-content:center;}
-  .tl-lhead .eye,.tl-lhead .lock{font-size:13px;width:19px;text-align:center;flex:none;cursor:pointer;}
-  .tl-lhead .lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;outline:none;touch-action:none;}
+  .tl-lhead.sel{background:#2f3a44;}
+  .tl-lhead.active.sel{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent),inset -3px 0 0 var(--accent2);}
+  .tl-lhead .grip{width:22px;flex:none;text-align:center;cursor:grab;touch-action:none;
+    color:var(--muted);font-size:16px;line-height:1;align-self:stretch;display:flex;align-items:center;justify-content:center;}
+  /* buttonized eye / opacity / lock icons with dividers */
+  .tl-lhead .lbtn{flex:none;width:30px;align-self:stretch;border:none;border-left:1px solid var(--border);
+    background:transparent;color:var(--text);font-size:15px;cursor:pointer;padding:0;line-height:1;
+    display:flex;align-items:center;justify-content:center;touch-action:manipulation;}
+  .tl-lhead .lbtn:active{background:var(--accent);}
+  .tl-lhead .lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;
+    outline:none;touch-action:none;padding:0 4px;border-left:1px solid var(--border);display:flex;align-items:center;}
   .tl-lhead.drag,.tl-fnum.drag{opacity:.35;}
   .tl-ghost{position:fixed;z-index:100;pointer-events:none;background:var(--panel3);
     border:1px solid var(--accent);border-radius:6px;padding:4px 8px;font-size:12px;
@@ -297,6 +306,21 @@
     border-bottom:1px solid var(--border);cursor:pointer;background:#0e0f13;
     display:flex;align-items:center;justify-content:center;padding:3px;}
   .tl-cell.active{box-shadow:inset 0 0 0 2px var(--accent);}
+  .tl-cell.sel{background:#161b22;box-shadow:inset 0 0 0 2px var(--accent2);}
+  .tl-cell.active.sel{box-shadow:inset 0 0 0 2px var(--accent);}
+  /* Apex-style radial menu */
+  .radial-guard{position:fixed;inset:0;z-index:89;background:#0006;touch-action:none;}
+  .radial{position:fixed;inset:0;z-index:90;pointer-events:none;}
+  .radial-center{position:fixed;transform:translate(-50%,-50%);width:56px;height:56px;border-radius:50%;
+    background:#000a;border:2px solid var(--border);color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:18px;}
+  .radial-center.on{border-color:var(--danger);color:var(--danger);}
+  .radial-item{position:fixed;transform:translate(-50%,-50%);width:66px;height:66px;border-radius:50%;
+    background:var(--panel2);border:2px solid var(--border);box-shadow:0 4px 14px #000a;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;}
+  .radial-item .ri-ic{font-size:20px;line-height:1;}
+  .radial-item .ri-lb{font-size:10px;color:var(--muted);}
+  .radial-item.on{background:var(--accent);border-color:#fff;transform:translate(-50%,-50%) scale(1.15);}
+  .radial-item.on .ri-lb{color:#fff;}
   .tl-cell canvas{max-width:100%;max-height:100%;image-rendering:pixelated;
     background-image:linear-gradient(45deg,#3a3a3a 25%,transparent 25%),linear-gradient(-45deg,#3a3a3a 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#3a3a3a 75%),linear-gradient(-45deg,transparent 75%,#3a3a3a 75%);
     background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0;}
@@ -488,18 +512,16 @@
       <div class="tl-ctrls" id="tlCtrls" title="この段を上下にドラッグで高さ変更">
         <button class="playbtn" id="playBtn" title="再生 / 停止">▶</button>
         <button class="minibtn" id="onionBtn" title="オニオンスキン：前後のフレームを薄く重ねて表示（作画の目安）">🧅</button>
+        <span class="vsep"></span>
+        <button class="minibtn nav" id="frFirst" title="最初のフレーム">⏮</button>
+        <button class="minibtn nav" id="frPrev" title="前のフレーム">◁</button>
+        <button class="minibtn nav" id="frNext" title="次のフレーム">▷</button>
+        <button class="minibtn nav" id="frLast" title="最後のフレーム">⏭</button>
+        <span class="vsep"></span>
         <span class="lbl">FPS</span>
         <input type="range" id="fps" min="1" max="30" value="8" class="fps-slider" title="再生スピード">
         <span id="fpsV" class="lbl" style="min-width:46px">8&nbsp;fps</span>
-        <span class="vsep"></span>
-        <span class="lbl">フレーム</span>
-        <button class="minibtn" id="frameAdd" title="フレーム追加">＋</button>
-        <button class="minibtn" id="frameDup" title="フレーム複製">⧉</button>
         <span style="flex:1;min-width:16px"></span>
-        <span class="lbl" style="color:var(--danger)">削除</span>
-        <button class="minibtn danger dellabel" id="frameDel" title="現在のフレームを削除">🗑ﾌﾚｰﾑ</button>
-        <button class="minibtn danger dellabel" id="layerDel" title="現在のレイヤーを削除">🗑ﾚｲﾔｰ</button>
-        <span class="vsep"></span>
         <span class="tl-docsize" id="docsize" title="キャンバス解像度">32×32</span>
       </div>
       <div class="tl-scroll"><div class="tl-grid" id="tlGrid"></div></div>
@@ -541,6 +563,7 @@
       <button class="hbtn" data-act="exportSheet">🗂 スプライトシート書き出し</button>
       <button class="hbtn" data-act="exportSeq">🔢 PNG連番書き出し（ZIP）</button>
       <button class="hbtn" data-act="exportGif">🎞 アニメGIF書き出し</button>
+      <button class="hbtn" data-act="exportAse">🅰 Aseprite書き出し (.aseprite)</button>
       <button class="hbtn" data-act="copyPng">📋 現フレームをコピー(PNG)</button>
     </div>
     <div class="row"><button class="hbtn" id="menuClose">閉じる</button></div>
@@ -724,6 +747,7 @@ function newDoc(w,h){
   doc={layers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
        frames:[{id:uid(),duration:125}], cels:new Map()};
   activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;
+  selLayers=new Set([0]);selFrames=new Set([0]);
   $('#docsize').textContent=W+'×'+H;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display='none';
   ensureComp();fitView();buildPalette();refreshTimeline();render();updateUndoUI();
@@ -739,6 +763,7 @@ function loadBundle(s){
   doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
   undoStack=s.undoStack;redoStack=s.redoStack;selection=s.selection;
   palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;
+  selLayers=new Set([activeLayer]);selFrames=new Set([activeFrame]);
   $('#docsize').textContent=W+'×'+H;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display=(doc&&doc.convert)?'':'none';
   ensureComp();renderPalette();refreshTimeline();render();updateUndoUI();updateSelModVisible();}
@@ -765,6 +790,7 @@ function newDocTab(w,h,name){
   doc={layers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
        frames:[{id:uid(),duration:125}], cels:new Map()};
   activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;
+  selLayers=new Set([0]);selFrames=new Set([0]);
   palette=DEFAULT_PAL.slice();activeSwatch=18;
   const nm=name||('キャンバス '+(tabSeq++));
   docTabs.push(bundleFromGlobals(nm));curTab=docTabs.length-1;
@@ -1498,56 +1524,203 @@ function startLayerColResize(e){e.preventDefault();e.stopPropagation();
   const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
     document.removeEventListener('pointercancel',up);try{localStorage.setItem('pxeditor-lcolw',layerColW);}catch(_){}};
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);}
+// Multi-selection (Aseprite-style) + cross-tab clipboards (module globals persist across tabs)
+let selLayers=new Set(), selFrames=new Set();
+let layerClip=null, frameClip=null;
+function selModeNow(){return selHold||stickySel||'replace';}   // from the +/- selection modifier buttons
+function normalizeSel(){
+  selLayers=new Set([...selLayers].filter(i=>i>=0&&i<doc.layers.length));
+  selFrames=new Set([...selFrames].filter(i=>i>=0&&i<doc.frames.length));
+  if(!selLayers.size)selLayers.add(activeLayer);
+  if(!selFrames.size)selFrames.add(activeFrame);
+}
 function refreshTimeline(){
+  normalizeSel();
   const grid=$('#tlGrid');grid.innerHTML='';
   grid.style.setProperty('--lcolw',layerColW+'px');
   const hrow=document.createElement('div');hrow.className='tl-row tl-head';
   const corner=document.createElement('div');corner.className='tl-corner';
-  const mkc=(txt,title,fn)=>{const b=document.createElement('button');b.className='corner-btn';b.textContent=txt;b.title=title;b.onclick=fn;return b;};
-  corner.appendChild(mkc('＋','レイヤー追加',addLayer));
-  corner.appendChild(mkc('⧉','レイヤー複製',dupLayerFn));
-  corner.appendChild(mkc('⬇','下と結合',mergeLayerFn));
   const colgrip=document.createElement('div');colgrip.className='tl-colgrip';colgrip.title='レイヤー欄の幅を調整';
   colgrip.addEventListener('pointerdown',startLayerColResize);
   corner.appendChild(colgrip);
   hrow.appendChild(corner);
   doc.frames.forEach((f,fi)=>{
-    const c=document.createElement('div');c.className='tl-fnum'+(fi===activeFrame?' active':'');c.textContent=fi+1;
+    const c=document.createElement('div');
+    c.className='tl-fnum'+(fi===activeFrame?' active':'')+(selFrames.has(fi)?' sel':'');c.textContent=fi+1;
     c.dataset.fi=fi;
-    c.onclick=()=>{if(justDragged)return;activeFrame=fi;refreshTimeline();render();};
-    c.addEventListener('pointerdown',e=>beginReorder('frame',c,e));
+    bindTimelineItem(c,'frame',fi);
     hrow.appendChild(c);
   });
   grid.appendChild(hrow);
   for(let li=doc.layers.length-1;li>=0;li--){
     const L=doc.layers[li];const row=document.createElement('div');row.className='tl-row';
-    const head=document.createElement('div');head.className='tl-lhead'+(li===activeLayer?' active':'');head.dataset.li=li;
-    head.innerHTML=`<span class="grip" title="ドラッグで並べ替え">⠿</span><span class="eye">${L.visible?'👁':'🚫'}</span><span class="lock">${L.locked?'🔒':'🔓'}</span><span class="lname">${L.name}</span>`;
+    const head=document.createElement('div');
+    head.className='tl-lhead'+(li===activeLayer?' active':'')+(selLayers.has(li)?' sel':'');head.dataset.li=li;
+    head.innerHTML=`<span class="grip" title="ドラッグで並べ替え">⠿</span>`+
+      `<button class="lbtn eye" title="表示/非表示">${L.visible?'👁':'🚫'}</button>`+
+      `<button class="lbtn opac" title="不透明度（押しながら左右）">◐</button>`+
+      `<button class="lbtn lock" title="ロック">${L.locked?'🔒':'🔓'}</button>`+
+      `<span class="lname" title="ダブルタップで名前変更">${L.name}</span>`;
     head.querySelector('.grip').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();beginReorder('layer',head,e);});
     head.querySelector('.eye').onclick=e=>{e.stopPropagation();L.visible=!L.visible;refreshTimeline();render();};
     head.querySelector('.lock').onclick=e=>{e.stopPropagation();L.locked=!L.locked;refreshTimeline();};
+    attachLayerOpacityScrub(head.querySelector('.opac'),L);   // opacity now lives on its own button
     const ln=head.querySelector('.lname');
-    attachLayerOpacityScrub(ln,L);
-    head.onclick=()=>{if(justDragged)return;activeLayer=li;refreshTimeline();syncLayerPanel();};
     ln.ondblclick=e=>{e.stopPropagation();ln.contentEditable=true;ln.focus();
       const r=document.createRange();r.selectNodeContents(ln);const s=getSelection();s.removeAllRanges();s.addRange(r);};
     ln.onblur=()=>{ln.contentEditable=false;L.name=ln.textContent.trim()||L.name;refreshTimeline();};
     ln.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();ln.blur();}};
+    bindTimelineItem(head,'layer',li);
     row.appendChild(head);
     doc.frames.forEach((f,fi)=>{
       const cell=document.createElement('div');
-      cell.className='tl-cell'+(li===activeLayer&&fi===activeFrame?' active':'');
+      cell.className='tl-cell'+(li===activeLayer&&fi===activeFrame?' active':'')+((selLayers.has(li)&&selFrames.has(fi))?' sel':'');
       cell.dataset.l=li;cell.dataset.f=fi;
       const cv=document.createElement('canvas');cv.width=W;cv.height=H;cell.appendChild(cv);
       drawCelThumb(cv.getContext('2d'),L.id,fi);
-      cell.onclick=()=>{activeLayer=li;activeFrame=fi;refreshTimeline();render();syncLayerPanel();};
-      attachLong(cell,()=>{activeLayer=li;activeFrame=fi;if(confirm('このセルを消去しますか？')){pushUndo();activeCel().fill(0);refreshTimeline();render();}});
+      cell.onclick=()=>{if(justDragged)return;activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);refreshTimeline();render();};
       row.appendChild(cell);
     });
     grid.appendChild(row);
   }
-  syncLayerPanel();
 }
+// Unified tap / long-press(radial) / swipe-select / 2-finger handler for layer heads & frame numbers
+let tlPtrs=new Set();
+function bindTimelineItem(el,kind,idx){
+  el.addEventListener('pointerdown',e=>{
+    if(e.target.closest('.grip,.lbtn')||e.target.isContentEditable)return;
+    tlPtrs.add(e.pointerId);
+    if(tlPtrs.size>=2){   // 2-finger tap toggles multi-selection
+      toggleSel(kind,idx);return;
+    }
+    const sx=e.clientX, sy=e.clientY; let phase='pending', lt;
+    lt=setTimeout(()=>{if(phase==='pending'){phase='radial';cleanup();openRadial(kind,idx,sx,sy);}},430);
+    const move=ev=>{
+      if(phase==='pending'&&Math.hypot(ev.clientX-sx,ev.clientY-sy)>10)phase='swipe';
+      if(phase==='swipe')selectRange(kind,idx,itemAt(kind,ev.clientX,ev.clientY));};
+    const up=ev=>{clearTimeout(lt);const p=phase;cleanup();
+      if(p==='pending')tapSelect(kind,idx);};
+    function cleanup(){document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+      document.removeEventListener('pointercancel',up);tlPtrs.delete(e.pointerId);}
+    document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+  });
+}
+function itemAt(kind,x,y){const sel=kind==='layer'?'.tl-lhead':'.tl-fnum';
+  for(const el of $$('#tlGrid '+sel)){const r=el.getBoundingClientRect();
+    if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom)return +(kind==='layer'?el.dataset.li:el.dataset.fi);}
+  return kind==='layer'?activeLayer:activeFrame;}
+function setActiveItem(kind,idx){if(kind==='layer'){activeLayer=idx;}else{activeFrame=idx;}}
+function tapSelect(kind,idx){if(justDragged)return;const mode=selModeNow();
+  const set=kind==='layer'?selLayers:selFrames;
+  if(mode==='add'){set.add(idx);setActiveItem(kind,idx);}
+  else if(mode==='subtract'){set.delete(idx);if(!set.size)set.add(idx);setActiveItem(kind,[...set][0]);}
+  else{set.clear();set.add(idx);setActiveItem(kind,idx);}
+  refreshTimeline();render();}
+function toggleSel(kind,idx){const set=kind==='layer'?selLayers:selFrames;
+  if(set.has(idx)&&set.size>1)set.delete(idx);else set.add(idx);
+  setActiveItem(kind,idx);refreshTimeline();render();}
+function selectRange(kind,a,b){const set=kind==='layer'?selLayers:selFrames;
+  const lo=Math.min(a,b),hi=Math.max(a,b);set.clear();for(let i=lo;i<=hi;i++)set.add(i);
+  setActiveItem(kind,b);refreshTimeline();render();}
+
+/* ---- Apex-style radial long-press menu (slide toward an item, release to run) ---- */
+function openRadial(kind,idx,cx,cy){
+  const set=kind==='layer'?selLayers:selFrames;
+  if(!set.has(idx)){set.clear();set.add(idx);}   // pressing outside the current selection re-anchors to it
+  setActiveItem(kind,idx);refreshTimeline();
+  const items = kind==='layer' ? [
+    {icon:'＋',label:'新規',fn:addLayer},
+    {icon:'⧉',label:'複製',fn:dupLayersSel},
+    {icon:'🗑',label:'削除',fn:deleteLayersSel},
+    {icon:'📋',label:'コピー',fn:copyLayersSel},
+    {icon:'📥',label:'貼付',fn:pasteLayers},
+    {icon:'⬇',label:'結合',fn:mergeLayersSel},
+  ] : [
+    {icon:'＋',label:'新規',fn:addFrame},
+    {icon:'🗑',label:'削除',fn:deleteFramesSel},
+    {icon:'⧉',label:'複製',fn:dupFramesSel},
+    {icon:'📋',label:'コピー',fn:copyFramesSel},
+    {icon:'📥',label:'貼付',fn:pasteFrames},
+  ];
+  showRadial(cx,cy,items);
+}
+function showRadial(cx,cy,items){
+  const n=items.length, R=94;
+  const guard=document.createElement('div');guard.className='radial-guard';
+  const wrap=document.createElement('div');wrap.className='radial';
+  document.body.appendChild(guard);document.body.appendChild(wrap);
+  const cen=document.createElement('div');cen.className='radial-center';cen.textContent='✕';
+  cen.style.left=cx+'px';cen.style.top=cy+'px';wrap.appendChild(cen);
+  const els=[];const angs=[];
+  for(let i=0;i<n;i++){const ang=-Math.PI/2 + i*(2*Math.PI/n);angs.push(ang);
+    const x=cx+Math.cos(ang)*R, y=cy+Math.sin(ang)*R;
+    const it=document.createElement('div');it.className='radial-item';it.style.left=x+'px';it.style.top=y+'px';
+    it.innerHTML=`<div class="ri-ic">${items[i].icon}</div><div class="ri-lb">${items[i].label}</div>`;
+    wrap.appendChild(it);els.push(it);}
+  let hi=-1;
+  const setHi=i=>{if(i===hi)return;hi=i;els.forEach((e,k)=>e.classList.toggle('on',k===i));cen.classList.toggle('on',i===-1);};
+  const pick=(x,y)=>{const dx=x-cx,dy=y-cy;if(Math.hypot(dx,dy)<40){setHi(-1);return;}
+    const ang=Math.atan2(dy,dx);let best=-1,bd=1e9;
+    for(let i=0;i<n;i++){let da=Math.abs(Math.atan2(Math.sin(ang-angs[i]),Math.cos(ang-angs[i])));if(da<bd){bd=da;best=i;}}
+    setHi(best);};
+  const move=ev=>pick(ev.clientX,ev.clientY);
+  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+    document.removeEventListener('pointercancel',up);wrap.remove();guard.remove();
+    if(hi>=0)items[hi].fn();};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+  setHi(-1);
+}
+
+/* ---- Multi-aware layer ops ---- */
+function blitClip(dst,src,sw,sh){if(sw===W&&sh===H){dst.set(src);return;}
+  const cw=Math.min(sw,W),ch=Math.min(sh,H);for(let y=0;y<ch;y++)for(let x=0;x<cw;x++)dst[y*W+x]=src[y*sw+x];}
+function dupLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);pushUndo();
+  idxs.forEach(li=>{const src=doc.layers[li];const nl={id:uid(),name:src.name+' コピー',visible:true,opacity:src.opacity,locked:false};
+    doc.layers.splice(li+1,0,nl);doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});});
+  activeLayer=Math.min(activeLayer+1,doc.layers.length-1);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを複製');}
+function deleteLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);
+  if(idxs.length>=doc.layers.length){toast('全レイヤーは削除できません');return;}
+  pushUndo();idxs.forEach(li=>{const L=doc.layers[li];doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));doc.layers.splice(li,1);});
+  activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤー削除');}
+function copyLayersSel(){const idxs=[...selLayers].sort((a,b)=>a-b);
+  layerClip=idxs.map(li=>{const L=doc.layers[li];return {name:L.name,opacity:L.opacity,visible:L.visible,locked:L.locked,W,H,
+    cels:doc.frames.map((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));return c?c.slice():null;})};});
+  toast(idxs.length+'レイヤーをコピー');}
+function pasteLayers(){if(!layerClip||!layerClip.length){toast('コピーされたレイヤーがありません');return;}
+  pushUndo();const at=activeLayer;
+  layerClip.forEach((lc,k)=>{const nl={id:uid(),name:lc.name,visible:lc.visible,opacity:lc.opacity,locked:false};
+    doc.layers.splice(at+1+k,0,nl);
+    doc.frames.forEach((f,fi)=>{const src=lc.cels[fi];if(src){const cel=newCel();blitClip(cel,src,lc.W,lc.H);doc.cels.set(celKey(nl.id,fi),cel);}});});
+  activeLayer=at+layerClip.length;selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを貼り付け');}
+function mergeLayersSel(){let idxs=[...selLayers].sort((a,b)=>a-b);
+  if(idxs.length<2){if(activeLayer===0){toast('下にレイヤーがありません');return;}idxs=[activeLayer-1,activeLayer];}
+  pushUndo();const bottom=idxs[0],bot=doc.layers[bottom];
+  doc.frames.forEach((f,fi)=>{let bcel=doc.cels.get(celKey(bot.id,fi));
+    for(let k=1;k<idxs.length;k++){const top=doc.layers[idxs[k]];const tc=doc.cels.get(celKey(top.id,fi));if(!tc)continue;
+      if(!bcel){bcel=newCel();doc.cels.set(celKey(bot.id,fi),bcel);}
+      for(let i=0;i<tc.length;i++){const s=tc[i];const sa=Math.round(((s>>>24)&255)*top.opacity/255);if(sa)bcel[i]=blend(bcel[i],s,sa);}}});
+  idxs.slice(1).sort((a,b)=>b-a).forEach(li=>{const L=doc.layers[li];doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));doc.layers.splice(li,1);});
+  activeLayer=bottom;selLayers=new Set([bottom]);refreshTimeline();render();toast('レイヤーを結合');}
+
+/* ---- Multi-aware frame ops ---- */
+function insertFrameAt(pos,fc){const nm=new Map();
+  doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);nm.set(f>=pos?(lid+':'+(f+1)):k,v);});doc.cels=nm;
+  doc.frames.splice(pos,0,{id:uid(),duration:fc?fc.duration:125});
+  if(fc)doc.layers.forEach((L,li)=>{const src=fc.cels[li];if(src){const cel=newCel();blitClip(cel,src,fc.W,fc.H);doc.cels.set(celKey(L.id,pos),cel);}});}
+function dupFramesSel(){const idxs=[...selFrames].sort((a,b)=>b-a);pushUndo();
+  idxs.forEach(fi=>{const fc={duration:doc.frames[fi].duration,W,H,cels:doc.layers.map(L=>{const c=doc.cels.get(celKey(L.id,fi));return c?c.slice():null;})};insertFrameAt(fi+1,fc);});
+  activeFrame=Math.min(activeFrame+1,doc.frames.length-1);selFrames=new Set([activeFrame]);refreshTimeline();render();toast('フレームを複製');}
+function deleteFramesSel(){const idxs=[...selFrames].sort((a,b)=>b-a);
+  if(idxs.length>=doc.frames.length){toast('全フレームは削除できません');return;}
+  pushUndo();idxs.forEach(fi=>{doc.layers.forEach(L=>doc.cels.delete(celKey(L.id,fi)));reindexAfterDelete(fi);doc.frames.splice(fi,1);});
+  activeFrame=Math.max(0,Math.min(activeFrame,doc.frames.length-1));selFrames=new Set([activeFrame]);refreshTimeline();render();toast('フレーム削除');}
+function copyFramesSel(){const idxs=[...selFrames].sort((a,b)=>a-b);
+  frameClip=idxs.map(fi=>({duration:doc.frames[fi].duration,W,H,
+    cels:doc.layers.map(L=>{const c=doc.cels.get(celKey(L.id,fi));return c?c.slice():null;})}));
+  toast(idxs.length+'フレームをコピー');}
+function pasteFrames(){if(!frameClip||!frameClip.length){toast('コピーされたフレームがありません');return;}
+  pushUndo();let pos=activeFrame+1;frameClip.forEach(fc=>{insertFrameAt(pos,fc);pos++;});
+  activeFrame=activeFrame+1;selFrames=new Set([activeFrame]);refreshTimeline();render();toast('フレームを貼り付け');}
 
 /* ---- Drag & drop reorder for layers (vertical) and frames (horizontal) ---- */
 let drag=null, justDragged=false;
@@ -1641,7 +1814,7 @@ function highlightTimeline(){
 function syncLayerPanel(){/* layer opacity is now edited via long-press on the layer name */}
 
 /* Layer ops */
-function addLayer(){pushUndo();doc.layers.splice(activeLayer+1,0,{id:uid(),name:'レイヤー '+(doc.layers.length+1),visible:true,opacity:255,locked:false});activeLayer++;refreshTimeline();render();}
+function addLayer(){pushUndo();doc.layers.splice(activeLayer+1,0,{id:uid(),name:'レイヤー '+(doc.layers.length+1),visible:true,opacity:255,locked:false});activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();}
 function dupLayerFn(){pushUndo();const src=doc.layers[activeLayer];
   const nl={id:uid(),name:src.name+' コピー',visible:true,opacity:src.opacity,locked:false};
   doc.layers.splice(activeLayer+1,0,nl);
@@ -1657,7 +1830,6 @@ function mergeLayerFn(){if(activeLayer===0){toast('下にレイヤーがあり�
     for(let i=0;i<tc.length;i++){const s=tc[i];const sa=Math.round(((s>>>24)&255)*top.opacity/255);if(sa)bcel[i]=blend(bcel[i],s,sa);}
     doc.cels.delete(celKey(top.id,fi));});
   doc.layers.splice(activeLayer,1);activeLayer--;refreshTimeline();render();}
-$('#layerDel').onclick=delLayerFn;
 
 /* Frame ops */
 function reindexAfterDelete(delIdx){const nm=new Map();
@@ -1672,9 +1844,14 @@ function deleteFrame(fi){if(doc.frames.length<=1){toast('最後のフレーム�
   doc.frames.splice(fi,1);activeFrame=Math.max(0,fi-1);refreshTimeline();render();}
 function frameMenu(fi){activeFrame=fi;refreshTimeline();
   if(confirm('フレーム '+(fi+1)+' を削除しますか？（キャンセルで複製）'))deleteFrame(fi);else duplicateFrame(fi);}
-$('#frameAdd').onclick=()=>{pushUndo();doc.frames.push({id:uid(),duration:Math.round(1000/(+$('#fps').value||8))});activeFrame=doc.frames.length-1;refreshTimeline();render();};
-$('#frameDup').onclick=()=>duplicateFrame(activeFrame);
-$('#frameDel').onclick=()=>deleteFrame(activeFrame);
+// Frame navigation (Aseprite-style): first / prev / next / last
+function gotoFrame(fi){activeFrame=Math.max(0,Math.min(doc.frames.length-1,fi));
+  selFrames=new Set([activeFrame]);refreshTimeline();render();}
+$('#frFirst').onclick=()=>gotoFrame(0);
+$('#frPrev').onclick=()=>gotoFrame(activeFrame-1);
+$('#frNext').onclick=()=>gotoFrame(activeFrame+1);
+$('#frLast').onclick=()=>gotoFrame(doc.frames.length-1);
+function addFrame(){pushUndo();doc.frames.push({id:uid(),duration:Math.round(1000/(+$('#fps').value||8))});activeFrame=doc.frames.length-1;selFrames=new Set([activeFrame]);refreshTimeline();render();}
 
 /* Playback */
 let playing=false, playT=null;
@@ -2050,7 +2227,8 @@ function menuAction(a){$('#menuModal').classList.remove('show');
     case 'import':$('#fileImg').click();break;case 'save':saveProject();break;case 'load':$('#fileProj').click();break;
     case 'convert':$('#fileConv').click();break;case 'reconvert':reopenConverter();break;
     case 'paste':pasteFromClipboard();break;case 'copyPng':copyFramePNG();break;
-    case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;}}
+    case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
+    case 'exportAse':exportAse();break;}}
 function clearCel(){pushUndo();activeCel().fill(0);render();updateCelThumb(activeLayer,activeFrame);}
 
 let sizeMode='new';
@@ -2398,6 +2576,55 @@ async function loadAse(ab){
   activeLayer=doc.layers.length-1;activeFrame=0;undoStack=[];redoStack=[];selection=null;
   ensureComp();$('#docsize').textContent=W+'×'+H;fitView();refreshTimeline();render();updateUndoUI();
   toast('Asepriteを読み込みました '+w+'×'+h+' / '+nFrames+'フレーム');
+}
+/* ---- Aseprite (.aseprite) EXPORT ---- */
+async function deflateZlib(u8){
+  if(!('CompressionStream' in window))throw new Error('この端末はzlib圧縮(CompressionStream)に非対応');
+  const cs=new CompressionStream('deflate');const w=cs.writable.getWriter();w.write(u8);w.close();
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+function AseBW(){return {a:[],
+  u8(v){this.a.push(v&255);return this;},
+  u16(v){this.u8(v);this.u8(v>>8);return this;},
+  u32(v){this.u16(v);this.u16(v>>>16);return this;},
+  i16(v){this.u16(v&0xffff);return this;},
+  bytes(arr){for(let i=0;i<arr.length;i++)this.a.push(arr[i]&255);return this;},
+  str(s){const b=new TextEncoder().encode(s);this.u16(b.length);this.bytes(b);return this;}};}
+async function exportAse(){
+ try{
+  const nF=doc.frames.length;
+  // compress every cel's raw RGBA (our Uint32Array bytes are already R,G,B,A in memory)
+  const comp=new Map();
+  for(const L of doc.layers)for(let f=0;f<nF;f++){
+    const c=doc.cels.get(celKey(L.id,f));
+    const raw=c?new Uint8Array(c.buffer):new Uint8Array(W*H*4);
+    comp.set(L.id+':'+f,await deflateZlib(raw));
+  }
+  const writeChunk=(fb,type,cb)=>{fb.u32(6+cb.a.length);fb.u16(type);fb.bytes(cb.a);};
+  const frameBufs=[];
+  for(let f=0;f<nF;f++){
+    const fb=AseBW();let chunks=0;
+    if(f===0)doc.layers.forEach(L=>{const cb=AseBW();
+      cb.u16((L.visible?1:0)|2).u16(0).u16(0).u16(0).u16(0).u16(0).u8(L.opacity).u8(0).u8(0).u8(0).str(L.name);
+      writeChunk(fb,0x2004,cb);chunks++;});
+    doc.layers.forEach((L,li)=>{const data=comp.get(L.id+':'+f);const cb=AseBW();
+      cb.u16(li).i16(0).i16(0).u8(255).u16(2);for(let z=0;z<7;z++)cb.u8(0);cb.u16(W).u16(H).bytes(data);
+      writeChunk(fb,0x2005,cb);chunks++;});
+    const dur=doc.frames[f].duration||125;
+    const fh=AseBW();fh.u32(16+fb.a.length).u16(0xF1FA).u16(chunks>0xFFFF?0xFFFF:chunks).u16(dur).u8(0).u8(0).u32(chunks);
+    frameBufs.push(new Uint8Array([...fh.a,...fb.a]));
+  }
+  const total=frameBufs.reduce((s,b)=>s+b.length,0);
+  const hd=AseBW();
+  hd.u32(128+total).u16(0xA5E0).u16(nF).u16(W).u16(H).u16(32).u32(1).u16(doc.frames[0].duration||125)
+    .u32(0).u32(0).u8(0).u8(0).u8(0).u8(0).u16(0).u8(1).u8(1).i16(0).i16(0).u16(16).u16(16);
+  for(let i=0;i<84;i++)hd.u8(0);
+  const out=new Uint8Array(128+total);out.set(new Uint8Array(hd.a),0);let o=128;
+  for(const b of frameBufs){out.set(b,o);o+=b.length;}
+  const nm=(docTabs[curTab]?docTabs[curTab].name:'pixel').replace(/[^\w\-一-龠ぁ-んァ-ン]/g,'_');
+  downloadBlob(new Blob([out],{type:'application/octet-stream'}),nm+'.aseprite');
+  toast('Aseprite書き出し完了 '+W+'×'+H+' / '+nF+'フレーム');
+ }catch(err){console.error(err);toast('書き出し失敗: '+(err.message||err));}
 }
 function blitAse(buf,src,x,y,cw,ch,depth,palette,transIndex,W,H){
   for(let yy=0;yy<ch;yy++){const ty=y+yy;if(ty<0||ty>=H)continue;
