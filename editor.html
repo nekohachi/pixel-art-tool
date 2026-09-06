@@ -366,6 +366,11 @@
   .tl-lhead.active{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent);}
   .tl-lhead.sel{background:#2f3a44;}
   .tl-lhead.active.sel{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent),inset -3px 0 0 var(--accent2);}
+  .tl-lhead.group{background:var(--panel3);}
+  .tl-lhead.group .lname{font-weight:700;}
+  .tl-lhead.child{box-shadow:inset 8px 0 0 var(--panel3);}
+  .tl-lhead.child .grip{margin-left:8px;}
+  .tl-lhead .collapse{width:20px;}
   .tl-lhead .grip{width:22px;flex:none;text-align:center;cursor:grab;touch-action:none;
     color:var(--muted);font-size:16px;line-height:1;align-self:stretch;display:flex;align-items:center;justify-content:center;}
   /* buttonized eye / opacity / lock icons with dividers */
@@ -2220,17 +2225,22 @@ function refreshTimeline(){
     grid.appendChild(trow);
   }
   for(let li=doc.layers.length-1;li>=0;li--){
-    const L=doc.layers[li];const row=document.createElement('div');row.className='tl-row';
+    const L=doc.layers[li];
+    if(L.parent){const g=layerById(L.parent);if(g&&g.collapsed)continue;}   // hide collapsed group's children
+    const isGroup=!!L.group,isChild=!!L.parent,isAdj=!!L.adj;
+    const row=document.createElement('div');row.className='tl-row';
     const head=document.createElement('div');
-    head.className='tl-lhead'+(li===activeLayer?' active':'')+(selLayers.has(li)?' sel':'');head.dataset.li=li;
+    head.className='tl-lhead'+(li===activeLayer?' active':'')+(selLayers.has(li)?' sel':'')+(isChild?' child':'')+(isGroup?' group':'');head.dataset.li=li;
     head.innerHTML=`<span class="grip" title="ドラッグで並べ替え">⠿</span>`+
+      (isGroup?`<button class="lbtn collapse" title="開閉">${L.collapsed?'▸':'▾'}</button>`:'')+
       `<button class="lbtn eye" title="表示/非表示">${L.visible?'👁':'🚫'}</button>`+
       `<button class="lbtn opac" title="不透明度（押しながら左右）">◐</button>`+
       `<button class="lbtn lock" title="ロック">${L.locked?'🔒':'🔓'}</button>`+
-      `<span class="lname" title="ダブルタップで名前変更">${L.name}</span>`;
+      `<span class="lname" title="ダブルタップで名前変更">${isGroup?'📁 ':isAdj?'🎨 ':''}${L.name}</span>`;
     head.querySelector('.grip').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();beginReorder('layer',head,e);});
     head.querySelector('.eye').onclick=e=>{e.stopPropagation();L.visible=!L.visible;refreshTimeline();render();};
     head.querySelector('.lock').onclick=e=>{e.stopPropagation();L.locked=!L.locked;refreshTimeline();};
+    const cb=head.querySelector('.collapse');if(cb)cb.onclick=e=>{e.stopPropagation();L.collapsed=!L.collapsed;refreshTimeline();};
     attachLayerOpacityScrub(head.querySelector('.opac'),L);   // opacity now lives on its own button
     const ln=head.querySelector('.lname');
     ln.ondblclick=e=>{e.stopPropagation();ln.contentEditable=true;ln.focus();
@@ -2316,14 +2326,22 @@ function openRadial(kind,idx,cx,cy){
   const set=kind==='layer'?selLayers:selFrames;
   if(!set.has(idx)){set.clear();set.add(idx);}   // pressing outside the current selection re-anchors to it
   setActiveItem(kind,idx);refreshTimeline();
-  const items = kind==='layer' ? [
-    {icon:'＋',label:'新規',fn:addLayer},
-    {icon:'⧉',label:'複製',fn:dupLayersSel},
-    {icon:'🗑',label:'削除',fn:deleteLayersSel},
-    {icon:'📋',label:'コピー',fn:copyLayersSel},
-    {icon:'📥',label:'貼付',fn:pasteLayers},
-    {icon:'⬇',label:'結合',fn:mergeLayersSel},
-  ] : [
+  let items;
+  if(kind==='layer'){
+    items=[
+      {icon:'＋',label:'新規',fn:addLayer},
+      {icon:'📁',label:'新規G',fn:addGroup},
+      {icon:'⧉',label:'複製',fn:dupLayersSel},
+      {icon:'🗑',label:'削除',fn:deleteLayersSel},
+      {icon:'📋',label:'コピー',fn:copyLayersSel},
+      {icon:'📥',label:'貼付',fn:pasteLayers},
+      {icon:'⬇',label:'結合',fn:mergeLayersSel},
+    ];
+    if(selLayers.size>=2)items.splice(2,0,{icon:'🗂',label:'グループ化',fn:groupLayersSel});
+    const L=doc.layers[idx];if(L&&L.group)items.push({icon:'📂',label:'解除',fn:()=>ungroupLayer(idx)});
+    showRadial(cx,cy,items);return;
+  }
+  items = [
     {icon:'＋',label:'新規',fn:addFrame},
     {icon:'🗑',label:'削除',fn:deleteFramesSel},
     {icon:'⧉',label:'複製',fn:dupFramesSel},
@@ -2395,10 +2413,33 @@ function dupLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);pushUndo();
     if(src.adj)nl.adj=JSON.parse(JSON.stringify(src.adj));if(src.parent)nl.parent=src.parent;
     doc.layers.splice(li+1,0,nl);doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});});
   activeLayer=Math.min(activeLayer+1,doc.layers.length-1);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを複製');}
-function deleteLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);
-  if(idxs.length>=doc.layers.length){toast('全レイヤーは削除できません');return;}
-  pushUndo();idxs.forEach(li=>{const L=doc.layers[li];doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));doc.layers.splice(li,1);});
+function deleteLayersSel(){
+  const ids=new Set();
+  [...selLayers].forEach(i=>{const L=doc.layers[i];if(!L)return;ids.add(L.id);
+    if(L.group)doc.layers.forEach(c=>{if(c.parent===L.id)ids.add(c.id);});});   // a group takes its children
+  const remaining=doc.layers.filter(l=>!ids.has(l.id));
+  if(!remaining.some(l=>!l.group&&!l.adj)){toast('全レイヤーは削除できません');return;}
+  pushUndo();
+  doc.layers.filter(l=>ids.has(l.id)).forEach(L=>doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi))));
+  doc.layers=remaining;
   activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤー削除');}
+/* ---- Layer groups (single level: a group header + its contiguous children) ---- */
+function addGroup(){pushUndo();
+  const g={id:uid(),name:'グループ',visible:true,opacity:255,locked:false,group:true,collapsed:false};
+  doc.layers.splice(activeLayer+1,0,g);activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();toast('グループを追加');}
+function groupLayersSel(){
+  const idxs=[...selLayers].sort((a,b)=>a-b);if(!idxs.length)return;
+  if(idxs.some(i=>doc.layers[i].group)){toast('グループ同士はまとめられません');return;}
+  pushUndo();
+  const gid=uid();const children=idxs.map(i=>doc.layers[i]);children.forEach(c=>c.parent=gid);
+  idxs.slice().sort((a,b)=>b-a).forEach(i=>doc.layers.splice(i,1));   // remove (high→low)
+  const at=Math.min(...idxs,doc.layers.length);
+  const group={id:gid,name:'グループ',visible:true,opacity:255,locked:false,group:true,collapsed:false};
+  doc.layers.splice(at,0,...children,group);   // children (bottom→top) then header on top
+  activeLayer=doc.layers.indexOf(group);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('グループ化');}
+function ungroupLayer(idx){const g=doc.layers[idx];if(!g||!g.group)return;pushUndo();
+  doc.layers.forEach(l=>{if(l.parent===g.id)delete l.parent;});
+  doc.layers.splice(idx,1);activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('グループ解除');}
 function copyLayersSel(){const idxs=[...selLayers].sort((a,b)=>a-b);
   layerClip=idxs.map(li=>{const L=doc.layers[li];return {name:L.name,opacity:L.opacity,visible:L.visible,locked:L.locked,W,H,
     cels:doc.frames.map((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));return c?c.slice():null;})};});
@@ -2494,11 +2535,35 @@ function finishDrag(e){
   dragMove(e);
   const {kind,row,items,ghost,ind}=drag;
   row.classList.remove('drag');ghost.remove();ind.remove();
-  const fromD=items.indexOf(row);let toD=drag.slot==null?fromD:drag.slot;
-  if(toD>fromD)toD--;
-  drag=null;
-  if(toD===fromD||toD<0)return;
-  if(kind==='layer')reorderLayerDisplay(fromD,toD);else moveFrame(fromD,toD);
+  const slot=drag.slot;drag=null;
+  if(kind==='layer'){dropLayer(row,items,slot);return;}
+  const fromD=items.indexOf(row);let toD=slot==null?fromD:slot;if(toD>fromD)toD--;
+  if(toD!==fromD&&toD>=0)moveFrame(fromD,toD);
+}
+// Drop a layer at the target visible slot, assigning/clearing its group parent
+// from the drop neighbours (Photoshop-style).
+function dropLayer(row,items,slot){
+  const L=doc.layers[+row.dataset.li];if(!L)return;
+  const seq=items.map(el=>doc.layers[+el.dataset.li]).filter(l=>l&&l!==L);   // visible top→bottom, without L
+  let toVis=slot==null?seq.length:slot;const fromVis=items.map(el=>+el.dataset.li).indexOf(+row.dataset.li);
+  if(slot!=null&&slot>fromVis)toVis--;toVis=Math.max(0,Math.min(seq.length,toVis));
+  seq.splice(toVis,0,L);
+  const pos=seq.indexOf(L),aboveL=seq[pos-1],belowL=seq[pos+1];
+  let parent;
+  if(L.group)parent=undefined;                                   // groups stay top-level (single nesting)
+  else if(aboveL){parent=(aboveL.group&&!aboveL.collapsed)?aboveL.id:aboveL.parent;}
+  else if(belowL)parent=belowL.parent;
+  if(parent)L.parent=parent;else delete L.parent;
+  pushUndo();rebuildLayerOrder(seq);
+  activeLayer=doc.layers.indexOf(L);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを移動');
+}
+// Rebuild doc.layers (bottom→top) from a visible top→bottom sequence, re-inserting
+// any hidden children right under their (collapsed) group header.
+function rebuildLayerOrder(seqTB){
+  const hidden={};doc.layers.forEach(l=>{if(l.parent&&!seqTB.includes(l))(hidden[l.parent]=hidden[l.parent]||[]).push(l);});
+  const outTB=[];seqTB.forEach(l=>{outTB.push(l);if(l.group&&hidden[l.id]){outTB.push(...hidden[l.id]);delete hidden[l.id];}});
+  doc.layers.forEach(l=>{if(!outTB.includes(l))outTB.push(l);});   // safety: keep any stragglers
+  doc.layers=outTB.reverse();
 }
 // display order (top->bottom) == doc.layers reversed
 function reorderLayerDisplay(fromD,toD){
