@@ -231,6 +231,26 @@
     box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
   .selinvert.show{display:flex;}
   .selinvert:active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  /* Transform button + toolbar */
+  .xfbtn{position:absolute;left:256px;top:12px;z-index:15;display:none;
+    width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:22px;cursor:pointer;
+    box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
+  .xfbtn.show{display:flex;}
+  .xfbtn.on{background:var(--accent2);border-color:#fff;color:#fff;}
+  .xfoverlay{position:absolute;inset:0;z-index:6;pointer-events:none;display:none;}
+  .xfoverlay.show{display:block;}
+  .xfbar{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);z-index:40;
+    display:none;gap:8px;padding:8px 10px;border-radius:14px;background:var(--panel);
+    border:1px solid var(--border);box-shadow:0 10px 30px #000b;align-items:center;}
+  .xfbar.show{display:flex;}
+  .xfbar .xfmod{height:40px;padding:0 14px;border-radius:10px;border:2px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:14px;cursor:pointer;}
+  .xfbar .xfmod.on{background:var(--accent2);border-color:#fff;color:#fff;}
+  .xfbar .xfok,.xfbar .xfcancel{width:44px;height:40px;border-radius:10px;border:2px solid var(--border);
+    font-size:18px;cursor:pointer;}
+  .xfbar .xfok{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .xfbar .xfcancel{background:var(--panel2);color:var(--text);}
   /* Regular-shape (Shift) toggle for the shape tools */
   .shapereg{position:absolute;left:132px;top:12px;z-index:15;display:none;
     width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
@@ -451,6 +471,7 @@
   <!-- Canvas (fills the workspace; panels float above) -->
   <div class="stage" id="stage">
     <canvas id="view"></canvas>
+    <canvas id="xfOverlay" class="xfoverlay"></canvas>
     <div class="brushcursor" id="brushcursor"></div>
   </div>
 
@@ -470,6 +491,14 @@
   </div>
   <button class="seldel" id="selDel" title="選択範囲を削除（元に戻す/2本指タップで復帰）">🗑</button>
   <button class="selinvert" id="selInvert" title="選択範囲を反転">🔃</button>
+  <button class="xfbtn" id="xfBtn" title="変形（選択画像を拡大縮小・回転・変形）">🔲</button>
+  <!-- Transform toolbar: replaces the +/- modifiers while transforming -->
+  <div class="xfbar" id="xfBar">
+    <button class="xfmod" id="xfShiftBtn" title="縦横比を保持（Shift）">⇧ 比率</button>
+    <button class="xfmod" id="xfCtrlBtn" title="自由変形／ゆがみ（Ctrl）">⌃ 自由</button>
+    <button class="xfok" id="xfOk" title="確定">✓</button>
+    <button class="xfcancel" id="xfCancel" title="取消">✕</button>
+  </div>
   <button class="seldeselect" id="selDeselect" title="選択解除">⬚</button>
   <!-- Regular-shape toggle: appears while a shape tool is active (Shift shortcut) -->
   <button class="shapereg" id="shapeReg" title="正方形・正円・正多角形で描く（Shift）">⬜<span class="sr-k">⇧</span></button>
@@ -952,6 +981,10 @@ function screenToPix(sx,sy){
   const rect=stage.getBoundingClientRect();
   return {x:Math.floor((sx-rect.left-panX)/zoom),y:Math.floor((sy-rect.top-panY)/zoom)};
 }
+function screenToPixF(sx,sy){   // float image coords (for smooth transform handles)
+  const rect=stage.getBoundingClientRect();
+  return {x:(sx-rect.left-panX)/zoom,y:(sy-rect.top-panY)/zoom};
+}
 let onion=false, showGridFlag=false;
 function blend(dst,src,srcA){
   const sr=src&255,sg=(src>>8)&255,sb=(src>>16)&255;
@@ -1002,8 +1035,9 @@ function paintView(){
     vctx.drawImage(tmp,0,0,W,H,panX,panY,W*zoom,H*zoom);
   }
   if(showGridFlag&&zoom>=6)drawGrid();
-  drawSelectionOverlay();
+  if(!xf)drawSelectionOverlay();   // the transform quad replaces the marquee while transforming
   updateSelModVisible();
+  if(xf)drawXfOverlay();
 }
 function drawFrameLayer(fi,alpha){
   const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;
@@ -1181,6 +1215,7 @@ let tool='pencil', lastPaintTool='pencil';
 let color=packHex('#e6e8ee',255);
 let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false, brushShape='square';
 let previewCel=null;
+let xf=null;   // active free-transform state (see Free transform section)
 const SHAPE=['line','rect','ellipse','arrow','polygon','star'];
 const SELTOOL=['select','lasso','wand','quick','range'];
 const GRADTOOL=['lgrad','rgrad'];
@@ -1469,6 +1504,11 @@ stage.addEventListener('pointerdown',e=>{
     return;
   }
 
+  if(xf){   // free-transform active: single-pointer drives the handles
+    const r=stage.getBoundingClientRect();const hit=xfHitTest(e.clientX-r.left,e.clientY-r.top);
+    if(hit)startXfDrag(hit,e.clientX,e.clientY);
+    return;
+  }
   const{x,y}=screenToPix(e.clientX,e.clientY);
   maybeStartOutsideMenu(e,x,y);   // long-press outside the image → copy/paste radial
   if(tool==='hand'||spaceHand){panning=true;panStart={x:e.clientX,y:e.clientY,panX,panY};return;}
@@ -1733,6 +1773,119 @@ function maybeStartOutsideMenu(e,x,y){
   function cleanup(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
   document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
 }
+
+/* ================= Free transform (Photoshop-style) ================= */
+// xf = {srcW,srcH,srcBuf,base,corners:[TL,TR,BR,BL]} (corners in image coords).
+let xfShift=false, xfCtrl=false, ctrlHeld=false;
+const XF_HIT=22;   // handle hit radius (screen px)
+function xfProp(){return xfShift||shiftHeld;}       // keep aspect ratio
+function xfDistort(){return xfCtrl||ctrlHeld;}      // free-distort a single corner
+function solve2(ux,uy,vx,vy,dx,dy){const det=ux*vy-uy*vx;if(Math.abs(det)<1e-6)return null;
+  return {a:(dx*vy-dy*vx)/det,b:(ux*dy-uy*dx)/det};}
+function xfCentroid(c){return {x:(c[0].x+c[1].x+c[2].x+c[3].x)/4,y:(c[0].y+c[1].y+c[2].y+c[3].y)/4};}
+function beginTransform(){
+  if(!selection){toast('選択範囲がありません');return;}
+  if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
+  computeSelBounds();const{x0,y0,x1,y1}=selection.bounds;if(x1<0){toast('選択範囲が空です');return;}
+  pushUndo();
+  const w=x1-x0+1,h=y1-y0+1,cel=activeCel(),m=selection.mask;
+  const srcBuf=new Uint32Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])srcBuf[y*w+x]=cel[si];}
+  const base=cel.slice();for(let i=0;i<W*H;i++)if(m[i])base[i]=0;   // cut the floating selection
+  xf={srcW:w,srcH:h,srcBuf,base,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}]};
+  applyTransformRender();
+  $('#xfBar').classList.add('show');$('#xfOverlay').classList.add('show');$('#xfBtn').classList.add('on');
+  updateSelModVisible();drawXfOverlay();toast('変形：ハンドルをドラッグ / ✓で確定');
+}
+// unit-square (0,0)(1,0)(1,1)(0,1) → quad homography [a,b,c,d,e,f,g,h,1]
+function xfHomography(q){const p0=q[0],p1=q[1],p2=q[2],p3=q[3];
+  const dx1=p1.x-p2.x,dx2=p3.x-p2.x,dx3=p0.x-p1.x+p2.x-p3.x;
+  const dy1=p1.y-p2.y,dy2=p3.y-p2.y,dy3=p0.y-p1.y+p2.y-p3.y;
+  let a,b,c,d,e,f,g,h;
+  if(Math.abs(dx3)<1e-9&&Math.abs(dy3)<1e-9){a=p1.x-p0.x;b=p3.x-p0.x;c=p0.x;d=p1.y-p0.y;e=p3.y-p0.y;f=p0.y;g=0;h=0;}
+  else{const den=dx1*dy2-dx2*dy1||1e-9;g=(dx3*dy2-dx2*dy3)/den;h=(dx1*dy3-dx3*dy1)/den;
+    a=p1.x-p0.x+g*p1.x;b=p3.x-p0.x+h*p3.x;c=p0.x;d=p1.y-p0.y+g*p1.y;e=p3.y-p0.y+h*p3.y;f=p0.y;}
+  return [a,b,c,d,e,f,g,h,1];}
+function inv3(m){const[a,b,c,d,e,f,g,h,i]=m;
+  const A=e*i-f*h,B=-(d*i-f*g),C=d*h-e*g;const det=a*A+b*B+c*C;if(Math.abs(det)<1e-12)return null;const id=1/det;
+  return [A*id,(c*h-b*i)*id,(b*f-c*e)*id, B*id,(a*i-c*g)*id,(c*d-a*f)*id, C*id,(b*g-a*h)*id,(a*e-b*d)*id];}
+// paint the floating buffer through the current quad onto the cut base; returns mask of painted pixels
+function xfStamp(cel,fillMask){
+  const inv=inv3(xfHomography(xf.corners));if(!inv)return;
+  let minx=W,miny=H,maxx=0,maxy=0;for(const p of xf.corners){minx=Math.min(minx,p.x);miny=Math.min(miny,p.y);maxx=Math.max(maxx,p.x);maxy=Math.max(maxy,p.y);}
+  minx=Math.max(0,Math.floor(minx));miny=Math.max(0,Math.floor(miny));maxx=Math.min(W-1,Math.ceil(maxx));maxy=Math.min(H-1,Math.ceil(maxy));
+  const{srcW,srcH,srcBuf}=xf;
+  for(let y=miny;y<=maxy;y++)for(let x=minx;x<=maxx;x++){const dx=x+0.5,dy=y+0.5;
+    const wt=inv[6]*dx+inv[7]*dy+inv[8];if(!wt)continue;
+    const u=(inv[0]*dx+inv[1]*dy+inv[2])/wt,v=(inv[3]*dx+inv[4]*dy+inv[5])/wt;
+    if(u<0||v<0||u>=1||v>=1)continue;
+    const sx=Math.min(srcW-1,Math.max(0,Math.floor(u*srcW))),sy=Math.min(srcH-1,Math.max(0,Math.floor(v*srcH)));
+    const px=srcBuf[sy*srcW+sx];if(px){cel[y*W+x]=px;if(fillMask)fillMask[y*W+x]=1;}}
+}
+function applyTransformRender(){const cel=activeCel();cel.set(xf.base);xfStamp(cel,null);render();}
+function xfLocal(p){return {x:panX+p.x*zoom,y:panY+p.y*zoom};}
+function xfHandlePts(){const c=xf.corners.map(xfLocal);
+  const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+  const edges=[mid(c[0],c[1]),mid(c[1],c[2]),mid(c[2],c[3]),mid(c[3],c[0])];
+  const tm=mid(c[0],c[1]);let nx=c[0].y-c[1].y,ny=c[1].x-c[0].x;const nl=Math.hypot(nx,ny)||1;
+  const rot={x:tm.x+nx/nl*34,y:tm.y+ny/nl*34};
+  return {c,edges,rot,tm};}
+function drawXfOverlay(){const cv=$('#xfOverlay');const r=stage.getBoundingClientRect();
+  if(cv.width!==Math.round(r.width)||cv.height!==Math.round(r.height)){cv.width=Math.round(r.width);cv.height=Math.round(r.height);}
+  const g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);if(!xf)return;
+  const{c,edges,rot,tm}=xfHandlePts();
+  g.lineWidth=1.5;g.strokeStyle='#5ab0ff';g.setLineDash([5,4]);
+  g.beginPath();g.moveTo(c[0].x,c[0].y);for(let i=1;i<4;i++)g.lineTo(c[i].x,c[i].y);g.closePath();g.stroke();
+  g.setLineDash([]);g.beginPath();g.moveTo(tm.x,tm.y);g.lineTo(rot.x,rot.y);g.stroke();
+  const sq=(p,fill)=>{g.fillStyle=fill;g.strokeStyle='#fff';g.lineWidth=2;g.beginPath();g.rect(p.x-7,p.y-7,14,14);g.fill();g.stroke();};
+  edges.forEach(p=>sq(p,'#5ab0ff'));c.forEach(p=>sq(p,'#ffffff'));
+  g.beginPath();g.fillStyle='#5ab0ff';g.strokeStyle='#fff';g.lineWidth=2;g.arc(rot.x,rot.y,8,0,Math.PI*2);g.fill();g.stroke();}
+function pointInQuad(px,py,c){let inside=false;for(let i=0,j=3;i<4;j=i++){
+  const xi=c[i].x,yi=c[i].y,xj=c[j].x,yj=c[j].y;
+  if(((yi>py)!==(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))inside=!inside;}return inside;}
+function xfHitTest(lx,ly){const{c,edges,rot}=xfHandlePts();
+  for(let i=0;i<4;i++)if(Math.hypot(lx-c[i].x,ly-c[i].y)<XF_HIT)return{mode:'corner',idx:i};
+  if(Math.hypot(lx-rot.x,ly-rot.y)<XF_HIT)return{mode:'rotate'};
+  for(let i=0;i<4;i++)if(Math.hypot(lx-edges[i].x,ly-edges[i].y)<XF_HIT)return{mode:'edge',idx:i};
+  if(pointInQuad(lx,ly,c))return{mode:'move'};return null;}
+function xfUV(start){const O=start[0],U={x:start[1].x-start[0].x,y:start[1].y-start[0].y},V={x:start[3].x-start[0].x,y:start[3].y-start[0].y};
+  const uh=Math.hypot(U.x,U.y)||1,vh=Math.hypot(V.x,V.y)||1;
+  return{O,U,V,uh,vh,Uh:{x:U.x/uh,y:U.y/uh},Vh:{x:V.x/vh,y:V.y/vh}};}
+function xfFromOUV(O,U,V){return[{x:O.x,y:O.y},{x:O.x+U.x,y:O.y+U.y},{x:O.x+U.x+V.x,y:O.y+U.y+V.y},{x:O.x+V.x,y:O.y+V.y}];}
+function xfScaleCorner(start,k,P){
+  if(xfDistort()){const nc=start.map(q=>({x:q.x,y:q.y}));nc[k]={x:P.x,y:P.y};xf.corners=nc;return;}
+  const{uh,vh,Uh,Vh}=xfUV(start);const sgn=[[-1,-1],[1,-1],[1,1],[-1,1]][k];const A=start[(k+2)%4];
+  const sol=solve2(Uh.x,Uh.y,Vh.x,Vh.y,P.x-A.x,P.y-A.y);if(!sol)return;
+  let lu=Math.max(1,sol.a*sgn[0]),lv=Math.max(1,sol.b*sgn[1]);
+  if(xfProp()){const s=Math.max(lu/uh,lv/vh);lu=uh*s;lv=vh*s;}
+  const nU={x:Uh.x*lu,y:Uh.y*lu},nV={x:Vh.x*lv,y:Vh.y*lv};
+  let nO;if(k===0)nO={x:A.x-nU.x-nV.x,y:A.y-nU.y-nV.y};
+  else if(k===1)nO={x:A.x-nV.x,y:A.y-nV.y};
+  else if(k===2)nO={x:A.x,y:A.y};else nO={x:A.x-nU.x,y:A.y-nU.y};
+  xf.corners=xfFromOUV(nO,nU,nV);}
+function xfScaleEdge(start,e,P){const{O,U,V,Uh,Vh}=xfUV(start);let nO={x:O.x,y:O.y},nU={x:U.x,y:U.y},nV={x:V.x,y:V.y};
+  if(e===1){const lu=Math.max(1,(P.x-O.x)*Uh.x+(P.y-O.y)*Uh.y);nU={x:Uh.x*lu,y:Uh.y*lu};}
+  else if(e===3){const R={x:O.x+U.x,y:O.y+U.y};const lu=Math.max(1,(R.x-P.x)*Uh.x+(R.y-P.y)*Uh.y);nU={x:Uh.x*lu,y:Uh.y*lu};nO={x:R.x-nU.x,y:R.y-nU.y};}
+  else if(e===2){const lv=Math.max(1,(P.x-O.x)*Vh.x+(P.y-O.y)*Vh.y);nV={x:Vh.x*lv,y:Vh.y*lv};}
+  else{const B={x:O.x+V.x,y:O.y+V.y};const lv=Math.max(1,(B.x-P.x)*Vh.x+(B.y-P.y)*Vh.y);nV={x:Vh.x*lv,y:Vh.y*lv};nO={x:B.x-nV.x,y:B.y-nV.y};}
+  xf.corners=xfFromOUV(nO,nU,nV);}
+function startXfDrag(hit,cx,cy){
+  const start=xf.corners.map(p=>({x:p.x,y:p.y}));const p0=screenToPixF(cx,cy);
+  const cen=xfCentroid(start);const ang0=Math.atan2(p0.y-cen.y,p0.x-cen.x);
+  const move=ev=>{const p=screenToPixF(ev.clientX,ev.clientY);
+    if(hit.mode==='move'){const dx=p.x-p0.x,dy=p.y-p0.y;xf.corners=start.map(q=>({x:q.x+dx,y:q.y+dy}));}
+    else if(hit.mode==='rotate'){const a=Math.atan2(p.y-cen.y,p.x-cen.x)-ang0,co=Math.cos(a),si=Math.sin(a);
+      xf.corners=start.map(q=>{const ux=q.x-cen.x,uy=q.y-cen.y;return{x:cen.x+ux*co-uy*si,y:cen.y+ux*si+uy*co};});}
+    else if(hit.mode==='corner')xfScaleCorner(start,hit.idx,p);
+    else if(hit.mode==='edge')xfScaleEdge(start,hit.idx,p);
+    applyTransformRender();drawXfOverlay();};
+  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);}
+function commitTransform(){if(!xf)return;const cel=activeCel();cel.set(xf.base);const nm=selBuf();xfStamp(cel,nm);
+  selection={mask:nm};computeSelBounds();endTransformUI();render();updateCelThumb(activeLayer,activeFrame);toast('変形を適用');}
+function cancelTransform(){if(!xf)return;if(undoStack.length)restore(undoStack.pop());redoStack=lastClearedRedo;updateUndoUI();endTransformUI();render();toast('変形を取消');}
+function endTransformUI(){xf=null;$('#xfBar').classList.remove('show');$('#xfOverlay').classList.remove('show');$('#xfBtn').classList.remove('on');
+  const cv=$('#xfOverlay');cv.getContext('2d').clearRect(0,0,cv.width,cv.height);updateSelModVisible();}
 
 /* ================= Color / palette ================= */
 let palette=[];
@@ -2317,6 +2470,12 @@ updateMoveModeBtn();
 function updateShapeRegBtn(){const b=$('#shapeReg');if(b)b.classList.toggle('on',regularShape||shiftHeld);}
 $('#shapeReg').onclick=()=>{regularShape=!regularShape;updateShapeRegBtn();
   toast(regularShape?'正方形・正円で描く: ON':'OFF');};
+// Transform tool wiring
+$('#xfBtn').onclick=beginTransform;
+$('#xfOk').onclick=commitTransform;
+$('#xfCancel').onclick=cancelTransform;
+$('#xfShiftBtn').onclick=()=>{xfShift=!xfShift;$('#xfShiftBtn').classList.toggle('on',xfShift);};
+$('#xfCtrlBtn').onclick=()=>{xfCtrl=!xfCtrl;$('#xfCtrlBtn').classList.toggle('on',xfCtrl);};
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
   if(lastRange){selection=lastRange.base?{mask:lastRange.base.slice()}:null;
@@ -2393,13 +2552,15 @@ function updateSelBtns(){
   $('#selPlus').classList.toggle('on',add);$('#selMinus').classList.toggle('on',sub);
 }
 function updateSelModVisible(){
-  $('#selMod').classList.toggle('show',SELTOOL.includes(tool)||!!selection);
-  $('#nudge').classList.toggle('show',!!selection);
-  $('#selDel').classList.toggle('show',!!selection);
-  $('#selDeselect').classList.toggle('show',!!selection);
-  $('#selInvert').classList.toggle('show',!!selection);
-  $('#rangeTolFloat').classList.toggle('show',tool==='range');
-  $('#shapeReg').classList.toggle('show',SHAPE.includes(tool));
+  const t=!!xf;   // transforming: the transform toolbar replaces the selection controls
+  $('#selMod').classList.toggle('show',!t&&(SELTOOL.includes(tool)||!!selection));
+  $('#nudge').classList.toggle('show',!t&&!!selection);
+  $('#selDel').classList.toggle('show',!t&&!!selection);
+  $('#selDeselect').classList.toggle('show',!t&&!!selection);
+  $('#selInvert').classList.toggle('show',!t&&!!selection);
+  $('#rangeTolFloat').classList.toggle('show',!t&&tool==='range');
+  $('#shapeReg').classList.toggle('show',!t&&SHAPE.includes(tool));
+  $('#xfBtn').classList.toggle('show',!t&&!!selection);
   if(typeof positionSelControls==='function')positionSelControls();
 }
 // Delete (clear) the selected pixels on the active layer (undoable).
@@ -2520,6 +2681,7 @@ function positionSelControls(){
   if(rt){rt.style.left=(x+124)+'px';rt.style.top='12px';}        // 色域許容, right of invert
   if(dz){dz.style.left=x+'px';dz.style.top='74px';}              // ⬚ deselect, below delete
   if(sr){sr.style.left=x+'px';sr.style.top='12px';}              // ⬜ regular-shape toggle (shape tools)
+  const xb=$('#xfBtn');if(xb){xb.style.left=(x+124)+'px';xb.style.top='12px';}   // 🔲 transform, right of invert
   if(nu){nu.style.left=x+'px';nu.style.bottom=(bottomGap+12)+'px';}
 }
 function colTopVal(){const M=8;let topH=0;for(const k in PANELS)if(dockState[k].dock==='top'){topH+= (k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),innerHeight*0.5))+8;}return M+(topH?topH+M:0);}
@@ -2632,6 +2794,8 @@ document.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if((e.ctrlKey||e.metaKey)&&k==='z'){e.preventDefault();e.shiftKey?redo():undo();return;}
   if((e.ctrlKey||e.metaKey)&&k==='y'){e.preventDefault();redo();return;}
+  if(xf){if(k==='enter'){e.preventDefault();commitTransform();return;}
+    if(k==='escape'){e.preventDefault();cancelTransform();return;}}
   if((e.ctrlKey||e.metaKey)&&k==='c'&&selection){e.preventDefault();copySelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='v'&&pixClip){e.preventDefault();pasteSelectionPixels();return;}
   if(k==='escape'){deselect();return;}
@@ -2643,10 +2807,12 @@ document.addEventListener('keydown',e=>{
   if(k===']'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===' ')spaceHand=true;
   if(e.key==='Shift'){shiftHeld=true;updateShapeRegBtn();}
+  if(e.key==='Control'||e.key==='Meta')ctrlHeld=true;
   if(k==='delete'||k==='backspace'){clearCel();}
 });
 document.addEventListener('keyup',e=>{if(e.key===' ')spaceHand=false;
-  if(e.key==='Shift'){shiftHeld=false;updateShapeRegBtn();}});
+  if(e.key==='Shift'){shiftHeld=false;updateShapeRegBtn();}
+  if(e.key==='Control'||e.key==='Meta')ctrlHeld=false;});
 stage.addEventListener('wheel',e=>{
   e.preventDefault();const rect=stage.getBoundingClientRect();
   const ox=(e.clientX-rect.left-panX)/zoom,oy=(e.clientY-rect.top-panY)/zoom;
