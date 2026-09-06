@@ -261,6 +261,18 @@
   .layeropac .lo-val{margin-top:6px;font-size:18px;font-weight:600;text-align:center;
     font-variant-numeric:tabular-nums;color:#fff;}
   .layeropac .lo-hint{margin-top:4px;font-size:10px;color:var(--muted);text-align:center;}
+  /* History-depth vertical slider */
+  .histslider{position:fixed;z-index:80;display:none;width:64px;padding:12px 10px;
+    border-radius:14px;background:#000d;border:1px solid var(--border);
+    box-shadow:0 8px 26px #000b;pointer-events:none;flex-direction:column;align-items:center;gap:8px;}
+  .histslider.show{display:flex;}
+  .histslider .hs-cap{font-size:11px;color:var(--muted);}
+  .histslider .hs-track{width:16px;height:210px;border-radius:9px;background:var(--panel3);
+    overflow:hidden;position:relative;box-shadow:inset 0 0 0 1px var(--border);}
+  .histslider .hs-fill{position:absolute;left:0;right:0;bottom:0;
+    background:linear-gradient(var(--accent),var(--accent2));}
+  .histslider .hs-val{font-size:18px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums;}
+  .histslider .hs-hint{font-size:9px;color:var(--muted);text-align:center;}
   @media (max-width:760px){.selmod{left:120px;} .nudge{left:120px;} .seldel{left:120px;}
     .seldeselect{left:120px;} .rangetol{left:180px;}}
 
@@ -463,6 +475,13 @@
     <div class="lo-track"><div class="lo-fill" id="loFill"></div></div>
     <div class="lo-val" id="loVal">100%</div>
     <div class="lo-hint">◀ 指を左右にスライド ▶</div>
+  </div>
+  <!-- History-depth vertical slider (long-press the gauge undo/redo buttons) -->
+  <div class="histslider" id="histSlider">
+    <div class="hs-cap">履歴</div>
+    <div class="hs-track"><div class="hs-fill" id="hsFill"></div></div>
+    <div class="hs-val" id="hsVal">200</div>
+    <div class="hs-hint">▲ 上下にスライド ▼</div>
   </div>
   <div class="nudge" id="nudge">
     <button class="nu up" data-dx="0" data-dy="-1" title="上へ1px">▲</button>
@@ -850,7 +869,10 @@ function setTabName(name){if(docTabs[curTab]){docTabs[curTab].name=name;renderTa
 
 /* ================= History ================= */
 let undoStack=[], redoStack=[];
-const HISTORY_MAX=40;
+let HISTORY_MAX=(()=>{try{return Math.max(50,Math.min(1000,+localStorage.getItem('pxeditor-histmax')||200));}catch(_){return 200;}})();
+function setHistoryMax(n){HISTORY_MAX=Math.max(50,Math.min(1000,Math.round(n)));
+  while(undoStack.length>HISTORY_MAX)undoStack.shift();while(redoStack.length>HISTORY_MAX)redoStack.shift();
+  try{localStorage.setItem('pxeditor-histmax',HISTORY_MAX);}catch(_){}updateUndoUI();}
 function snapshot(){
   const cels={};doc.cels.forEach((v,k)=>{cels[k]=v.slice();});
   return {W,H,layers:JSON.parse(JSON.stringify(doc.layers)),
@@ -1257,16 +1279,26 @@ function shapeGeom(sh){
     return {closed:true,pts};}
   return {closed:false,pts:[]};
 }
-// Replace each corner with a small quadratic-bezier arc (rounded corners).
+// Replace each corner with a TRUE circular arc tangent to both edges, so the
+// rounded corners step evenly (clean pixel dots) instead of drifting like a bezier.
 function roundPts(pts,r){
   if(r<=0)return pts;const n=pts.length,out=[];
-  for(let i=0;i<n;i++){const p=pts[(i-1+n)%n],c=pts[i],q=pts[(i+1)%n];
-    let v1x=p.x-c.x,v1y=p.y-c.y,v2x=q.x-c.x,v2y=q.y-c.y;
-    const l1=Math.hypot(v1x,v1y)||1,l2=Math.hypot(v2x,v2y)||1;
-    const rr=Math.min(r,l1/2,l2/2);
-    const t1={x:c.x+v1x/l1*rr,y:c.y+v1y/l1*rr},t2={x:c.x+v2x/l2*rr,y:c.y+v2y/l2*rr};
-    const seg=8;for(let s=0;s<=seg;s++){const t=s/seg,mt=1-t;
-      out.push({x:mt*mt*t1.x+2*mt*t*c.x+t*t*t2.x,y:mt*mt*t1.y+2*mt*t*c.y+t*t*t2.y});}}
+  for(let i=0;i<n;i++){
+    const p=pts[(i-1+n)%n],c=pts[i],q=pts[(i+1)%n];
+    let ux=p.x-c.x,uy=p.y-c.y,vx=q.x-c.x,vy=q.y-c.y;
+    const lu=Math.hypot(ux,uy)||1,lv=Math.hypot(vx,vy)||1;ux/=lu;uy/=lu;vx/=lv;vy/=lv;
+    const dot=Math.max(-1,Math.min(1,ux*vx+uy*vy));const half=Math.acos(dot)/2;
+    if(half<0.06||half>Math.PI/2-0.001){out.push({x:c.x,y:c.y});continue;} // ~straight: no arc
+    let tan=Math.min(r/Math.tan(half),lu/2,lv/2);         // tangent length along each edge
+    const R=tan*Math.tan(half);                            // actual arc radius after clamps
+    const t1={x:c.x+ux*tan,y:c.y+uy*tan},t2={x:c.x+vx*tan,y:c.y+vy*tan};
+    let bx=ux+vx,by=uy+vy;const bl=Math.hypot(bx,by)||1;bx/=bl;by/=bl;   // bisector into the corner
+    const cen={x:c.x+bx*(R/Math.sin(half)),y:c.y+by*(R/Math.sin(half))};
+    let a1=Math.atan2(t1.y-cen.y,t1.x-cen.x),a2=Math.atan2(t2.y-cen.y,t2.x-cen.x);
+    let da=a2-a1;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;
+    const seg=Math.max(2,Math.ceil(Math.abs(da)*R)+1);     // ~1 sample per pixel of arc length
+    for(let s=0;s<=seg;s++){const a=a1+da*s/seg;out.push({x:cen.x+Math.cos(a)*R,y:cen.y+Math.sin(a)*R});}
+  }
   return out;
 }
 // Low-level plot for shapes: bounds only, no selection/mirror coupling.
@@ -1402,7 +1434,7 @@ stage.addEventListener('pointerdown',e=>{
     if(tool==='wand'){applyShape(wandShape(x,y),curSelMode);drawing=false;render();return;}
     if(tool==='range'){lastRange={x:clampX(x),y:clampY(y),base:selection?selection.mask.slice():null,mode:curSelMode};
       applyShape(rangeShape(x,y),curSelMode);drawing=false;render();return;}
-    if(tool==='lasso')lassoPts=[{x:clampX(x),y:clampY(y)}];
+    if(tool==='lasso')lassoPts=[{x,y}];   // keep raw coords so off-canvas loops still reach the edge
     if(tool==='quick'){quickSubtract=(curSelMode==='subtract');
       if(curSelMode==='replace')selection=null;    // new selection grows from here
       qLast={x:clampX(x),y:clampY(y)};quickFlood(qLast.x,qLast.y,quickSubtract);render();return;}
@@ -1508,7 +1540,7 @@ stage.addEventListener('pointermove',e=>{
   if(holdTimer&&holdStart&&Math.hypot(e.clientX-holdStart.cx,e.clientY-holdStart.cy)>6)clearHold(); // moved => it's a stroke
   const{x,y}=screenToPix(e.clientX,e.clientY);
   if(tool==='select'){dragCur={x:clampX(x),y:clampY(y)};render();return;}
-  if(tool==='lasso'){const p={x:clampX(x),y:clampY(y)};const last=lassoPts[lassoPts.length-1];
+  if(tool==='lasso'){const p={x,y};const last=lassoPts[lassoPts.length-1];   // raw coords (may be off-canvas)
     if(!last||last.x!==p.x||last.y!==p.y)lassoPts.push(p);render();return;}
   if(tool==='quick'){const cx=clampX(x),cy=clampY(y);
     if(!qLast||qLast.x!==cx||qLast.y!==cy){qLast={x:cx,y:cy};quickFlood(cx,cy,quickSubtract);render();}return;}
@@ -2218,7 +2250,29 @@ document.addEventListener('pointerdown',e=>{const pop=$('#colorPop');
   if(pop.contains(e.target)||e.target.closest('#colorDot'))return;
   closeColorPop();},true);
 $('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#mUndo').onclick=undo;$('#mRedo').onclick=redo;
-$('#gUndoBtn').onclick=undo;$('#gRedoBtn').onclick=redo;
+// gauge undo/redo: tap = undo/redo, long-press = history-depth vertical slider
+function attachHistorySlider(el){
+  el.addEventListener('pointerdown',e=>{
+    const isRedo=el.id==='gRedoBtn';const sx=e.clientX,sy=e.clientY,startVal=HISTORY_MAX;
+    let scrubbing=false,t;const pop=$('#histSlider'),guard=$('#scrubGuard');
+    try{el.setPointerCapture(e.pointerId);}catch(_){}
+    const paint=v=>{$('#hsFill').style.height=((v-50)/950*100)+'%';$('#hsVal').textContent=v;};
+    const place=(cx,cy)=>{let x=cx-32;x=Math.max(8,Math.min(innerWidth-72,x));
+      pop.style.left=x+'px';pop.style.top=Math.max(8,Math.min(innerHeight-300,cy-150))+'px';};
+    const enter=()=>{scrubbing=true;guard.classList.add('show');paint(HISTORY_MAX);place(sx,sy);pop.classList.add('show');};
+    t=setTimeout(enter,300);
+    const move=ev=>{
+      if(!scrubbing){if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>18){clearTimeout(t);cleanup();}return;}
+      ev.preventDefault();let v=Math.round(startVal-(ev.clientY-sy)*2.6);
+      v=Math.max(50,Math.min(1000,v));HISTORY_MAX=v;paint(v);};
+    const up=()=>{clearTimeout(t);try{el.releasePointerCapture(e.pointerId);}catch(_){}
+      if(scrubbing){pop.classList.remove('show');guard.classList.remove('show');setHistoryMax(HISTORY_MAX);toast('履歴数: '+HISTORY_MAX);}
+      else{isRedo?redo():undo();}
+      cleanup();};
+    function cleanup(){document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+    document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+  });}
+attachHistorySlider($('#gUndoBtn'));attachHistorySlider($('#gRedoBtn'));
 // shape editor controls
 $('#seDone').onclick=closeShapeEditor;
 $('#seRadius').oninput=e=>{$('#seRadiusV').textContent=e.target.value;shapeParam('radius',+e.target.value);};
