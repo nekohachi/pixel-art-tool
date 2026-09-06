@@ -231,6 +231,15 @@
     box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
   .selinvert.show{display:flex;}
   .selinvert:active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  /* Regular-shape (Shift) toggle for the shape tools */
+  .shapereg{position:absolute;left:132px;top:12px;z-index:15;display:none;
+    width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:20px;cursor:pointer;
+    box-shadow:0 3px 10px #0008;align-items:center;justify-content:center;}
+  .shapereg.show{display:flex;}
+  .shapereg.on{background:var(--accent2);border-color:#fff;color:#fff;}
+  .shapereg .sr-k{position:absolute;right:-4px;bottom:-4px;font-size:11px;
+    background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:0 3px;color:var(--muted);}
   /* Deselect button: sits just below the trash */
   .seldeselect{position:absolute;left:132px;top:74px;z-index:15;display:none;
     width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
@@ -462,6 +471,8 @@
   <button class="seldel" id="selDel" title="選択範囲を削除（元に戻す/2本指タップで復帰）">🗑</button>
   <button class="selinvert" id="selInvert" title="選択範囲を反転">🔃</button>
   <button class="seldeselect" id="selDeselect" title="選択解除">⬚</button>
+  <!-- Regular-shape toggle: appears while a shape tool is active (Shift shortcut) -->
+  <button class="shapereg" id="shapeReg" title="正方形・正円・正多角形で描く（Shift）">⬜<span class="sr-k">⇧</span></button>
   <!-- Color-range tolerance: appears right of the invert button while the 色域選択 tool is active -->
   <div class="rangetol" id="rangeTolFloat">
     <div class="rt-lbl">色域許容 <span id="rangeTolV">48</span></div>
@@ -772,6 +783,19 @@
   </div>
 </div>
 
+<div class="modal-bg" id="tabCloseModal">
+  <div class="modal">
+    <h2>キャンバスを閉じる</h2>
+    <p id="tabCloseMsg" style="margin:4px 0 14px;color:var(--muted);font-size:13px;line-height:1.5;">
+      このキャンバスを閉じますか？未保存の内容は失われます。</p>
+    <div class="row" style="flex-direction:column;gap:8px;">
+      <button class="hbtn primary" id="tabSaveClose">💾 保存して閉じる</button>
+      <button class="hbtn" id="tabDiscardClose" style="color:var(--danger);border-color:var(--danger);">🗑 保存せず閉じる</button>
+      <button class="hbtn" id="tabCancelClose">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <input type="file" id="fileImg" accept="image/*,.ase,.aseprite" style="display:none">
 <input type="file" id="fileConv" accept="image/*" style="display:none">
 <input type="file" id="fileProj" accept=".pxproj,application/json" style="display:none">
@@ -839,7 +863,7 @@ function renderTabs(){const bar=$('#docTabbar');if(!bar)return;bar.innerHTML='';
   docTabs.forEach((t,i)=>{const el=document.createElement('div');el.className='dtab'+(i===curTab?' active':'');
     el.innerHTML='<span class="dt-name"></span>'+(docTabs.length>1?'<span class="dt-x" title="タブを閉じる">×</span>':'');
     el.querySelector('.dt-name').textContent=t.name;
-    el.onclick=ev=>{if(ev.target.classList.contains('dt-x')){closeTab(i);return;}switchTab(i);};
+    el.onclick=ev=>{if(ev.target.classList.contains('dt-x')){promptCloseTab(i);return;}switchTab(i);};
     bar.appendChild(el);});
   const add=document.createElement('button');add.className='dtab-add';add.textContent='＋';add.title='新しいキャンバス';
   add.onclick=()=>newDocTab(32,32);bar.appendChild(add);}
@@ -850,6 +874,16 @@ function closeTab(i){if(docTabs.length<=1)return;
   if(wasCur){curTab=Math.min(i,docTabs.length-1);loadBundle(docTabs[curTab]);}
   else if(i<curTab){curTab--;}
   renderTabs();}
+// Ask to save / discard / cancel before closing a canvas tab.
+let pendingCloseTab=-1;
+function promptCloseTab(i){if(docTabs.length<=1){toast('最後のキャンバスは閉じられません');return;}
+  pendingCloseTab=i;
+  $('#tabCloseMsg').textContent='「'+(docTabs[i]?docTabs[i].name:'')+'」を閉じますか？未保存の内容は失われます。';
+  $('#tabCloseModal').classList.add('show');}
+function finishCloseTab(save){const i=pendingCloseTab;$('#tabCloseModal').classList.remove('show');
+  if(i<0)return;pendingCloseTab=-1;
+  if(save){if(i!==curTab)switchTab(i);saveProject();}
+  closeTab(i);}
 // create a fresh blank document in a NEW tab and switch to it
 function newDocTab(w,h,name){
   if(docTabs.length)saveCurrentTab();
@@ -1258,7 +1292,18 @@ function strokeEllipse(cel,x0,y0,x1,y1){
 // A shape layer carries `layer.shape = {type,x0,y0,x1,y1,radius,sides,points,inner,filled,color,op,size}`.
 // It is rasterized into that layer's cel and can be re-rasterized when the shape params change.
 function shapeName(t){return {line:'直線',rect:'矩形',ellipse:'楕円',arrow:'矢印',polygon:'多角形',star:'星'}[t]||'図形';}
+let regularShape=false, shiftHeld=false;   // constrain to square / circle / 45°
+function constrainShape(type,x0,y0,x1,y1){
+  if(type==='line'||type==='arrow'){        // snap to 45° increments, keep length
+    const dx=x1-x0,dy=y1-y0,len=Math.hypot(dx,dy);
+    const a=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4);
+    return [x0,y0,Math.round(x0+Math.cos(a)*len),Math.round(y0+Math.sin(a)*len)];
+  }
+  const dx=x1-x0,dy=y1-y0,s=Math.max(Math.abs(dx),Math.abs(dy));   // equal extent
+  return [x0,y0,x0+(dx<0?-s:s),y0+(dy<0?-s:s)];
+}
 function buildShape(type,x0,y0,x1,y1){
+  if(regularShape||shiftHeld)[x0,y0,x1,y1]=constrainShape(type,x0,y0,x1,y1);
   return {type,x0,y0,x1,y1,radius:0,sides:6,points:5,inner:.5,filled:false,color,op:opacity,size:Math.max(1,brushSize)};}
 function shapeGeom(sh){
   const {type,x0,y0,x1,y1}=sh;
@@ -1425,6 +1470,7 @@ stage.addEventListener('pointerdown',e=>{
   }
 
   const{x,y}=screenToPix(e.clientX,e.clientY);
+  maybeStartOutsideMenu(e,x,y);   // long-press outside the image → copy/paste radial
   if(tool==='hand'||spaceHand){panning=true;panStart={x:e.clientX,y:e.clientY,panX,panY};return;}
   if(tool==='dropper'){pickColor(x,y);return;}
   if(tool==='move'){beginMove(x,y);return;}
@@ -1645,6 +1691,47 @@ function endMove(cancel){
     selection.mask=nm;computeSelBounds();
   }
   moveData=null;render();updateCelThumb(activeLayer,activeFrame);
+}
+
+/* ---- Pixel clipboard (copy/paste a selection; Aseprite-style) ---- */
+let pixClip=null;   // {w,h,x,y,data:Uint32Array}
+function copySelectionPixels(){
+  if(!selection){toast('選択範囲がありません');return;}
+  computeSelBounds();const{x0,y0,x1,y1}=selection.bounds;
+  if(x1<0){toast('選択範囲が空です');return;}
+  const m=selection.mask,cel=activeCel(),w=x1-x0+1,h=y1-y0+1,data=new Uint32Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])data[y*w+x]=cel[si];}
+  pixClip={w,h,x:x0,y:y0,data};toast('コピーしました');
+}
+function pasteSelectionPixels(){
+  if(!pixClip){toast('コピーされた画像がありません');return;}
+  if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
+  pushUndo();const{w,h,data}=pixClip;
+  let px=pixClip.x,py=pixClip.y;               // paste back where it came from (Aseprite), clamped in
+  if(px+w>W)px=W-w;if(py+h>H)py=H-h;px=Math.max(0,px);py=Math.max(0,py);
+  const cel=activeCel(),nm=selBuf();
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=data[y*w+x];if(!v)continue;
+    const dx=px+x,dy=py+y;if(dx<0||dy<0||dx>=W||dy>=H)continue;cel[dy*W+dx]=v;nm[dy*W+dx]=1;}
+  selection={mask:nm};computeSelBounds();setTool('move');   // floating & movable, like Aseprite
+  render();updateCelThumb(activeLayer,activeFrame);updateSelModVisible();toast('貼り付けました（移動できます）');
+}
+// Long-press the stage OUTSIDE the image → radial with copy / paste
+function maybeStartOutsideMenu(e,x,y){
+  if(pointers.size!==1||inBounds(x,y)||!(selection||pixClip))return;
+  const sx=e.clientX,sy=e.clientY;
+  const t=setTimeout(()=>{
+    cancelStroke();if(panning)panning=false;if(moving)cancelMove();
+    drawing=false;lassoPts=null;dragCur=null;
+    const items=[];
+    if(selection)items.push({icon:'📋',label:'コピー',fn:copySelectionPixels});
+    if(pixClip)items.push({icon:'📥',label:'貼付',fn:pasteSelectionPixels});
+    if(items.length)showRadial(sx,sy,items);
+    cleanup();
+  },430);
+  const mv=ev=>{if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){clearTimeout(t);cleanup();}};
+  const up=()=>{clearTimeout(t);cleanup();};
+  function cleanup(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+  document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
 }
 
 /* ================= Color / palette ================= */
@@ -2226,6 +2313,10 @@ function updateMoveModeBtn(){const b=$('#moveModeBtn');if(!b)return;
 $('#moveModeBtn').onclick=()=>{moveMode=moveMode==='image'?'sel':'image';updateMoveModeBtn();
   toast(moveMode==='image'?'移動：画像':'移動：選択範囲のみ');};
 updateMoveModeBtn();
+// Regular-shape (正方形/正円) toggle
+function updateShapeRegBtn(){const b=$('#shapeReg');if(b)b.classList.toggle('on',regularShape||shiftHeld);}
+$('#shapeReg').onclick=()=>{regularShape=!regularShape;updateShapeRegBtn();
+  toast(regularShape?'正方形・正円で描く: ON':'OFF');};
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
   if(lastRange){selection=lastRange.base?{mask:lastRange.base.slice()}:null;
@@ -2308,6 +2399,7 @@ function updateSelModVisible(){
   $('#selDeselect').classList.toggle('show',!!selection);
   $('#selInvert').classList.toggle('show',!!selection);
   $('#rangeTolFloat').classList.toggle('show',tool==='range');
+  $('#shapeReg').classList.toggle('show',SHAPE.includes(tool));
   if(typeof positionSelControls==='function')positionSelControls();
 }
 // Delete (clear) the selected pixels on the active layer (undoable).
@@ -2421,12 +2513,13 @@ function positionSelControls(){
   const x=leftEdge+12;
   const tl=$('#pnlTl'),tlTop=tl?(parseFloat(tl.style.top)||H):H;
   const bottomGap=H-tlTop;
-  const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge'),dz=$('#selDeselect'),rt=$('#rangeTolFloat'),iv=$('#selInvert');
+  const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge'),dz=$('#selDeselect'),rt=$('#rangeTolFloat'),iv=$('#selInvert'),sr=$('#shapeReg');
   if(sm){sm.style.left=x+'px';sm.style.top=Math.max(70,(colTopVal()+tlTop)/2)+'px';}
   if(sd){sd.style.left=x+'px';sd.style.top='12px';}              // 🗑 delete
   if(iv){iv.style.left=(x+62)+'px';iv.style.top='12px';}         // 🔃 invert, right of delete
   if(rt){rt.style.left=(x+124)+'px';rt.style.top='12px';}        // 色域許容, right of invert
   if(dz){dz.style.left=x+'px';dz.style.top='74px';}              // ⬚ deselect, below delete
+  if(sr){sr.style.left=x+'px';sr.style.top='12px';}              // ⬜ regular-shape toggle (shape tools)
   if(nu){nu.style.left=x+'px';nu.style.bottom=(bottomGap+12)+'px';}
 }
 function colTopVal(){const M=8;let topH=0;for(const k in PANELS)if(dockState[k].dock==='top'){topH+= (k==='tl'?(dockState.tl.h||190):Math.min(measureH($(PANELS[k])),innerHeight*0.5))+8;}return M+(topH?topH+M:0);}
@@ -2539,6 +2632,8 @@ document.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if((e.ctrlKey||e.metaKey)&&k==='z'){e.preventDefault();e.shiftKey?redo():undo();return;}
   if((e.ctrlKey||e.metaKey)&&k==='y'){e.preventDefault();redo();return;}
+  if((e.ctrlKey||e.metaKey)&&k==='c'&&selection){e.preventDefault();copySelectionPixels();return;}
+  if((e.ctrlKey||e.metaKey)&&k==='v'&&pixClip){e.preventDefault();pasteSelectionPixels();return;}
   if(k==='escape'){deselect();return;}
   if(selection&&k.startsWith('arrow')){const d={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]}[k];
     if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
@@ -2547,9 +2642,11 @@ document.addEventListener('keydown',e=>{
   if(k==='['){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===']'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===' ')spaceHand=true;
+  if(e.key==='Shift'){shiftHeld=true;updateShapeRegBtn();}
   if(k==='delete'||k==='backspace'){clearCel();}
 });
-document.addEventListener('keyup',e=>{if(e.key===' ')spaceHand=false;});
+document.addEventListener('keyup',e=>{if(e.key===' ')spaceHand=false;
+  if(e.key==='Shift'){shiftHeld=false;updateShapeRegBtn();}});
 stage.addEventListener('wheel',e=>{
   e.preventDefault();const rect=stage.getBoundingClientRect();
   const ox=(e.clientX-rect.left-panX)/zoom,oy=(e.clientY-rect.top-panY)/zoom;
@@ -2580,6 +2677,9 @@ let sizeMode='new';
 function openSize(mode){sizeMode=mode;$('#sizeTitle').textContent=mode==='new'?'新規キャンバス':'キャンバスサイズ変更';
   $('#newW').value=W;$('#newH').value=H;$('#sizeModal').classList.add('show');}
 $('#sizeCancel').onclick=()=>$('#sizeModal').classList.remove('show');
+$('#tabSaveClose').onclick=()=>finishCloseTab(true);
+$('#tabDiscardClose').onclick=()=>finishCloseTab(false);
+$('#tabCancelClose').onclick=()=>{$('#tabCloseModal').classList.remove('show');pendingCloseTab=-1;};
 $$('#presets .hbtn').forEach(b=>b.onclick=()=>{$('#newW').value=b.dataset.w;$('#newH').value=b.dataset.h;});
 $('#sizeOk').onclick=()=>{const w=Math.max(1,Math.min(512,+$('#newW').value|0)),h=Math.max(1,Math.min(512,+$('#newH').value|0));
   $('#sizeModal').classList.remove('show');
