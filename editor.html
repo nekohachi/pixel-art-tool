@@ -102,6 +102,21 @@
   .colorpop .wheelwrap{position:relative;width:100%;display:flex;justify-content:center;}
   .colorpop .cp-val{width:100%;height:30px;}
   .colorpop .cp-row{display:flex;align-items:center;gap:10px;}
+  /* Figma-like shape editor */
+  .shapeedit{position:fixed;z-index:45;left:50%;bottom:96px;transform:translateX(-50%);
+    display:none;flex-direction:column;gap:8px;width:250px;padding:12px 14px;border-radius:14px;
+    background:var(--panel);border:1px solid var(--border);box-shadow:0 12px 34px #000b;}
+  .shapeedit.show{display:flex;}
+  .shapeedit .se-head{display:flex;align-items:center;justify-content:space-between;
+    font-size:13px;font-weight:600;color:var(--text);}
+  .shapeedit .se-x{width:34px;height:34px;border:1px solid var(--border);background:var(--accent);
+    color:#fff;border-radius:9px;font-size:18px;cursor:pointer;padding:0;}
+  .shapeedit .se-row{display:flex;align-items:center;gap:10px;font-size:12px;}
+  .shapeedit .se-row label{color:var(--muted);min-width:44px;}
+  .shapeedit .se-row input[type=range]{flex:1;min-width:0;height:28px;}
+  .shapeedit .se-val{min-width:26px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text);}
+  .shapeedit .minibtn{height:30px;padding:0 12px;}
+  .shapeedit .minibtn.on{background:var(--accent2);border-color:var(--accent2);}
   .gauge .gtool{width:40px;height:40px;border:1px solid var(--border);background:var(--panel2);
     border-radius:9px;font-size:20px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;padding:0;}
   .gauge .gtool.active{background:var(--accent);border-color:var(--accent);}
@@ -117,9 +132,12 @@
   /* Canvas */
   .stage{position:absolute;inset:0;overflow:hidden;background:#15161b;touch-action:none;z-index:0;}
   #view{position:absolute;left:0;top:0;image-rendering:pixelated;image-rendering:crisp-edges;}
-  .gauge .gshape{width:46px;height:38px;border:1px solid var(--border);background:var(--panel2);
-    border-radius:8px;font-size:20px;cursor:pointer;flex:none;padding:0;color:var(--text);touch-action:manipulation;}
-  .gauge .gshape:active{background:var(--panel3);}
+  /* finger-friendly undo / redo under the size gauge */
+  .g-hist{display:flex;flex-direction:column;gap:6px;flex:none;width:100%;align-items:center;}
+  .ghbtn{width:46px;height:40px;border:1px solid var(--border);background:var(--panel2);
+    border-radius:9px;font-size:22px;line-height:1;cursor:pointer;flex:none;padding:0;color:var(--text);
+    touch-action:manipulation;display:flex;align-items:center;justify-content:center;}
+  .ghbtn:active{background:var(--accent);border-color:var(--accent);}
   .brushcursor.round{border-radius:50%;}
   .brushcursor{position:absolute;pointer-events:none;border:1px solid #fff;
     box-shadow:0 0 0 1px #000;display:none;z-index:5;mix-blend-mode:difference;}
@@ -458,7 +476,10 @@
       <button class="colordot" id="colorDot" title="カラー（タップで開く）"></button>
       <div class="g-track" id="gtrack"><div class="g-fill" id="gfill"></div><div class="g-dot" id="gdot"></div></div>
       <span class="g-val" id="gval">1</span>
-      <button class="gshape" id="brushShapeBtn" title="ブラシ形状（四角／円）">◻</button>
+      <div class="g-hist">
+        <button class="ghbtn" id="gUndoBtn" title="一つ戻る">↶</button>
+        <button class="ghbtn" id="gRedoBtn" title="一つ進む">↷</button>
+      </div>
     </div>
     <div class="gauge gauge-opac" id="gaugeOpac" title="ブラシ不透明度">
       <span class="g-icon">◐</span>
@@ -470,19 +491,13 @@
   <!-- Tool rail panel -->
   <div class="panel" id="pnlTools">
     <div class="tools" id="tools">
-      <button class="tool active" data-tool="pencil" title="ペン (B)">✏️</button>
+      <button class="tool active" data-tool="pencil" id="grpPen" title="ペン（長押しでブラシ形状）">✏️</button>
       <button class="tool" data-tool="eraser" title="消しゴム (E)">🧽</button>
-      <button class="tool" data-tool="bucket" title="塗りつぶし (G)">🪣</button>
-      <button class="tool" data-tool="line" title="直線 (L)">📏</button>
-      <button class="tool" data-tool="rect" title="矩形 (U)">▭</button>
-      <button class="tool" data-tool="ellipse" title="楕円 (O)">⬭</button>
+      <button class="tool grp" data-tool="bucket" id="grpFill" title="塗り／グラデ（長押しで切替）">🪣</button>
+      <button class="tool grp" data-tool="rect" id="grpShape" title="図形（長押しで切替）">▭</button>
       <button class="tool" data-tool="dropper" title="スポイト (I)">💧</button>
       <div class="tsep"></div>
-      <button class="tool" data-tool="select" title="矩形選択 (M)">⬚</button>
-      <button class="tool" data-tool="lasso" title="投げ縄 (Q)">🪢</button>
-      <button class="tool" data-tool="wand" title="自動選択 (W)">🪄</button>
-      <button class="tool" data-tool="quick" title="クイック選択（なぞって似た色を選択・A）">🖌️</button>
-      <button class="tool" data-tool="range" title="色域選択（タップした色を全体から選択・K）">🎯</button>
+      <button class="tool grp" data-tool="select" id="grpSelect" title="選択（長押しで切替）">⬚</button>
       <div class="tsep"></div>
       <button class="tool" data-tool="move" title="移動 (V)">✥</button>
       <button class="tool" data-tool="hand" title="手のひら (H)">✋</button>
@@ -504,6 +519,36 @@
       <button class="minibtn" id="addSwatch" title="パレットに追加">＋ 保存</button>
     </div>
     <div class="palette" id="palette"></div>
+  </div>
+
+  <!-- Figma-like non-destructive shape editor (opens after drawing a shape) -->
+  <div class="shapeedit" id="shapeEdit">
+    <div class="se-head"><span id="seTitle">図形</span>
+      <button class="se-x" id="seDone" title="確定">✓</button></div>
+    <div class="se-row" id="seFillRow">
+      <label>塗り</label>
+      <button class="minibtn" id="seFill" title="塗り／線">線のみ</button>
+    </div>
+    <div class="se-row" id="seRadiusRow">
+      <label>角丸</label>
+      <input type="range" id="seRadius" min="0" max="40" value="0">
+      <span class="se-val" id="seRadiusV">0</span>
+    </div>
+    <div class="se-row" id="seSidesRow">
+      <label>辺の数</label>
+      <input type="range" id="seSides" min="3" max="12" value="6">
+      <span class="se-val" id="seSidesV">6</span>
+    </div>
+    <div class="se-row" id="sePointsRow">
+      <label>頂点</label>
+      <input type="range" id="sePoints" min="3" max="12" value="5">
+      <span class="se-val" id="sePointsV">5</span>
+    </div>
+    <div class="se-row" id="seInnerRow">
+      <label>くぼみ</label>
+      <input type="range" id="seInner" min="10" max="90" value="50">
+      <span class="se-val" id="seInnerV">50</span>
+    </div>
   </div>
 
   <!-- Timeline panel (dock-bottom; drag the controls row to change its height) -->
@@ -827,7 +872,9 @@ let lastClearedRedo=[];
 function pushUndo(){undoStack.push(snapshot());if(undoStack.length>HISTORY_MAX)undoStack.shift();lastClearedRedo=redoStack;redoStack=[];updateUndoUI();}
 function undo(){if(!undoStack.length)return;redoStack.push(snapshot());restore(undoStack.pop());updateUndoUI();toast('元に戻す');}
 function redo(){if(!redoStack.length)return;undoStack.push(snapshot());restore(redoStack.pop());updateUndoUI();toast('やり直し');}
-function updateUndoUI(){$('#undoBtn').style.opacity=undoStack.length?1:.4;$('#redoBtn').style.opacity=redoStack.length?1:.4;}
+function updateUndoUI(){const u=undoStack.length?1:.4,r=redoStack.length?1:.4;
+  $('#undoBtn').style.opacity=u;$('#redoBtn').style.opacity=r;
+  const gu=$('#gUndoBtn'),gr=$('#gRedoBtn');if(gu)gu.style.opacity=u;if(gr)gr.style.opacity=r;}
 
 /* ================= View ================= */
 const stage=$('#stage'), view=$('#view'), vctx=view.getContext('2d');
@@ -1075,22 +1122,51 @@ let tool='pencil', lastPaintTool='pencil';
 let color=packHex('#e6e8ee',255);
 let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false, brushShape='square';
 let previewCel=null;
-const SHAPE=['line','rect','ellipse'];
+const SHAPE=['line','rect','ellipse','arrow','polygon','star'];
 const SELTOOL=['select','lasso','wand','quick','range'];
+const GRADTOOL=['lgrad','rgrad'];
 const QUICKTOL=48; // color tolerance for quick-selection
 // Per-tool brush size (pen & eraser keep separate sizes, etc.)
-const SIZETOOLS=['pencil','eraser','line','rect','ellipse'];
-const brushSizes={pencil:1,eraser:1,line:1,rect:1,ellipse:1};
+const SIZETOOLS=['pencil','eraser','line','rect','ellipse','arrow','polygon','star'];
+const brushSizes={pencil:1,eraser:1,line:1,rect:1,ellipse:1,arrow:1,polygon:1,star:1};
+// Grouped tool buttons: tap = current sub-tool, long-press = radial to switch
+const TOOLGROUPS={
+  fill:{btn:'grpFill',cur:'bucket',tools:[
+    {tool:'bucket',icon:'🪣',label:'塗り'},
+    {tool:'lgrad', icon:'🌈',label:'線形グラデ'},
+    {tool:'rgrad', icon:'⊙',label:'円形グラデ'}]},
+  shape:{btn:'grpShape',cur:'rect',tools:[
+    {tool:'line',   icon:'📏',label:'直線'},
+    {tool:'rect',   icon:'▭',label:'矩形'},
+    {tool:'ellipse',icon:'⬭',label:'楕円'},
+    {tool:'arrow',  icon:'↗',label:'矢印'},
+    {tool:'polygon',icon:'⬡',label:'多角形'},
+    {tool:'star',   icon:'★',label:'星'}]},
+  select:{btn:'grpSelect',cur:'select',tools:[
+    {tool:'select',icon:'⬚',label:'矩形'},
+    {tool:'lasso', icon:'🪢',label:'投げ縄'},
+    {tool:'quick', icon:'🖌️',label:'クイック'},
+    {tool:'wand',  icon:'🪄',label:'自動選択'},
+    {tool:'range', icon:'🎯',label:'色域'}]},
+};
+function groupOf(t){for(const k in TOOLGROUPS)if(TOOLGROUPS[k].tools.some(x=>x.tool===t))return TOOLGROUPS[k];return null;}
 function setTool(t){
   if(t==='mirror'){mirrorX=!mirrorX;$$('.tool[data-tool="mirror"]').forEach(b=>b.classList.toggle('on',mirrorX));toast(mirrorX?'左右対称 ON':'左右対称 OFF');return;}
   lastRange=null;   // switching tools ends live color-range tolerance
   tool=t;
-  $$('.tool').forEach(b=>{if(b.dataset.tool!=='mirror')b.classList.toggle('active',b.dataset.tool===t);});
+  // remember + display this sub-tool on its group button
+  const g=groupOf(t);
+  if(g){g.cur=t;const meta=g.tools.find(x=>x.tool===t);const gb=$('#'+g.btn);
+    if(gb){gb.dataset.tool=t;gb.textContent=meta.icon;}}
+  $$('.tool').forEach(b=>{if(b.dataset.tool!=='mirror'){
+    const bg=groupOf(b.dataset.tool);
+    b.classList.toggle('active', bg?bg.tools.some(x=>x.tool===t):b.dataset.tool===t);}});
   $$('.gtool').forEach(b=>b.classList.toggle('active',b.dataset.tool===t)); // left pen/eraser icons
-  if(['pencil','eraser','bucket','line','rect','ellipse'].includes(t))lastPaintTool=t;
+  if(['pencil','eraser','bucket','line','rect','ellipse','arrow','polygon','star'].includes(t))lastPaintTool=t;
   if(SIZETOOLS.includes(t)){brushSize=brushSizes[t];updateGauge();} // load this tool's size
   updateSelModVisible();
   updateBrushCursor();
+  if(!SHAPE.includes(t))closeShapeEditor();   // leaving shape tools dismisses the editor
 }
 function inBounds(x,y){return x>=0&&y>=0&&x<W&&y<H;}
 function clampX(x){return Math.max(0,Math.min(W-1,x));}
@@ -1153,6 +1229,128 @@ function strokeEllipse(cel,x0,y0,x1,y1){
     if(px!==null)lineTo(cel,px,py,x,y,false);px=x;py=y;}
 }
 
+/* ============ Non-destructive vector-ish shapes (Figma-like) ============ */
+// A shape layer carries `layer.shape = {type,x0,y0,x1,y1,radius,sides,points,inner,filled,color,op,size}`.
+// It is rasterized into that layer's cel and can be re-rasterized when the shape params change.
+function shapeName(t){return {line:'直線',rect:'矩形',ellipse:'楕円',arrow:'矢印',polygon:'多角形',star:'星'}[t]||'図形';}
+function buildShape(type,x0,y0,x1,y1){
+  return {type,x0,y0,x1,y1,radius:0,sides:6,points:5,inner:.5,filled:false,color,op:opacity,size:Math.max(1,brushSize)};}
+function shapeGeom(sh){
+  const {type,x0,y0,x1,y1}=sh;
+  const xa=Math.min(x0,x1),xb=Math.max(x0,x1),ya=Math.min(y0,y1),yb=Math.max(y0,y1);
+  const cx=(x0+x1)/2, cy=(y0+y1)/2, rx=Math.abs(x1-x0)/2, ry=Math.abs(y1-y0)/2;
+  if(type==='line') return {closed:false,pts:[{x:x0,y:y0},{x:x1,y:y1}],noround:true};
+  if(type==='arrow')return {closed:false,pts:[{x:x0,y:y0},{x:x1,y:y1}],noround:true,arrow:true};
+  if(type==='ellipse'){const pts=[];const steps=Math.max(24,Math.ceil((rx+ry)*4));
+    for(let i=0;i<steps;i++){const t=i/steps*2*Math.PI;pts.push({x:cx+rx*Math.cos(t),y:cy+ry*Math.sin(t)});}
+    return {closed:true,pts,noround:true};}
+  if(type==='rect')return {closed:true,pts:[{x:xa,y:ya},{x:xb,y:ya},{x:xb,y:yb},{x:xa,y:yb}]};
+  if(type==='polygon'){const n=Math.max(3,sh.sides||6);const pts=[];
+    for(let i=0;i<n;i++){const a=-Math.PI/2+i*2*Math.PI/n;pts.push({x:cx+rx*Math.cos(a),y:cy+ry*Math.sin(a)});}
+    return {closed:true,pts};}
+  if(type==='star'){const n=Math.max(3,sh.points||5);const inner=sh.inner==null?.5:sh.inner;const pts=[];
+    for(let i=0;i<2*n;i++){const a=-Math.PI/2+i*Math.PI/n;const rr=(i%2)?inner:1;
+      pts.push({x:cx+rx*rr*Math.cos(a),y:cy+ry*rr*Math.sin(a)});}
+    return {closed:true,pts};}
+  return {closed:false,pts:[]};
+}
+// Replace each corner with a small quadratic-bezier arc (rounded corners).
+function roundPts(pts,r){
+  if(r<=0)return pts;const n=pts.length,out=[];
+  for(let i=0;i<n;i++){const p=pts[(i-1+n)%n],c=pts[i],q=pts[(i+1)%n];
+    let v1x=p.x-c.x,v1y=p.y-c.y,v2x=q.x-c.x,v2y=q.y-c.y;
+    const l1=Math.hypot(v1x,v1y)||1,l2=Math.hypot(v2x,v2y)||1;
+    const rr=Math.min(r,l1/2,l2/2);
+    const t1={x:c.x+v1x/l1*rr,y:c.y+v1y/l1*rr},t2={x:c.x+v2x/l2*rr,y:c.y+v2y/l2*rr};
+    const seg=8;for(let s=0;s<=seg;s++){const t=s/seg,mt=1-t;
+      out.push({x:mt*mt*t1.x+2*mt*t*c.x+t*t*t2.x,y:mt*mt*t1.y+2*mt*t*c.y+t*t*t2.y});}}
+  return out;
+}
+// Low-level plot for shapes: bounds only, no selection/mirror coupling.
+function shPlot(cel,x,y,px){if(x<0||y<0||x>=W||y>=H)return;const a=alphaOf(px);
+  if(a>=255)cel[y*W+x]=px;else if(a>0)cel[y*W+x]=blend(cel[y*W+x],px,a);}
+function stampPx(cel,x,y,px,size){const s=Math.max(1,size);
+  if(s<=1){shPlot(cel,x,y,px);return;}
+  const h1=Math.floor((s-1)/2),h2=s-1-h1,cx=(h2-h1)/2,r=s/2,r2=r*r;
+  for(let dy=-h1;dy<=h2;dy++)for(let dx=-h1;dx<=h2;dx++){
+    if(brushShape==='circle'&&(dx-cx)*(dx-cx)+(dy-cx)*(dy-cx)>r2)continue;shPlot(cel,x+dx,y+dy,px);}}
+function strokeSeg(cel,x0,y0,x1,y1,px,size){
+  let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy;
+  while(true){stampPx(cel,x0,y0,px,size);if(x0===x1&&y0===y1)break;const e2=2*err;
+    if(e2>-dy){err-=dy;x0+=sx;}if(e2<dx){err+=dx;y0+=sy;}}}
+function fillPolygon(cel,pts,px){
+  let ymin=Infinity,ymax=-Infinity;for(const p of pts){if(p.y<ymin)ymin=p.y;if(p.y>ymax)ymax=p.y;}
+  ymin=Math.max(0,Math.floor(ymin));ymax=Math.min(H-1,Math.ceil(ymax));
+  for(let y=ymin;y<=ymax;y++){const yc=y+0.5;const xs=[];
+    for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[(i+1)%pts.length];
+      if((a.y<=yc&&b.y>yc)||(b.y<=yc&&a.y>yc)){xs.push(a.x+(yc-a.y)/(b.y-a.y)*(b.x-a.x));}}
+    xs.sort((p,q)=>p-q);
+    for(let k=0;k+1<xs.length;k+=2){const xa=Math.max(0,Math.round(xs[k])),xb=Math.min(W-1,Math.round(xs[k+1]-1e-4));
+      for(let x=xa;x<=xb;x++)shPlot(cel,x,y,px);}}}
+function drawArrowHead(cel,x0,y0,x1,y1,px,size){
+  const ang=Math.atan2(y1-y0,x1-x0);const L=Math.hypot(x1-x0,y1-y0);
+  const hl=Math.max(4,Math.min(L*0.4,10+size*2)),ha=Math.PI/7;
+  const ax=x1-hl*Math.cos(ang-ha),ay=y1-hl*Math.sin(ang-ha);
+  const bx=x1-hl*Math.cos(ang+ha),by=y1-hl*Math.sin(ang+ha);
+  strokeSeg(cel,Math.round(x1),Math.round(y1),Math.round(ax),Math.round(ay),px,size);
+  strokeSeg(cel,Math.round(x1),Math.round(y1),Math.round(bx),Math.round(by),px,size);}
+function rasterizeShape(cel,sh){
+  const px=withOpacity(sh.color,sh.op==null?255:sh.op);const size=Math.max(1,sh.size||1);
+  const g=shapeGeom(sh);let pts=g.pts;if(!pts.length)return;
+  if(g.closed&&!g.noround&&sh.radius>0)pts=roundPts(pts,sh.radius);
+  if(sh.filled&&g.closed)fillPolygon(cel,pts,px);
+  const rp=pts.map(p=>({x:Math.round(p.x),y:Math.round(p.y)}));
+  const last=g.closed?rp.length:rp.length-1;
+  for(let i=0;i<last;i++){const a=rp[i],b=rp[(i+1)%rp.length];strokeSeg(cel,a.x,a.y,b.x,b.y,px,size);}
+  if(g.arrow)drawArrowHead(cel,sh.x0,sh.y0,sh.x1,sh.y1,px,size);
+}
+// Commit the just-drawn shape onto a NEW layer (non-destructive) and open the editor.
+function commitShapeLayer(sh){
+  const nl={id:uid(),name:shapeName(sh.type),visible:true,opacity:255,locked:false,shape:sh};
+  doc.layers.splice(activeLayer+1,0,nl);activeLayer++;selLayers=new Set([activeLayer]);
+  rerenderShapeLayer();refreshTimeline();render();openShapeEditor();
+}
+function rerenderShapeLayer(){const L=doc.layers[activeLayer];if(!L||!L.shape)return;
+  const cel=newCel();rasterizeShape(cel,L.shape);doc.cels.set(celKey(L.id,activeFrame),cel);
+  render();updateCelThumb(activeLayer,activeFrame);}
+
+/* ---- Gradient fill (linear / radial): current colour → transparent ---- */
+function rasterGradient(cel,type,x0,y0,x1,y1){
+  const mask=selection?selection.mask:null;
+  const dx=x1-x0,dy=y1-y0;const len2=dx*dx+dy*dy||1;const rad=Math.sqrt(len2)||1;
+  const base=color&0x00ffffff;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=y*W+x;if(mask&&!mask[i])continue;
+    let t;if(type==='rgrad')t=Math.hypot(x-x0,y-y0)/rad;
+    else t=((x-x0)*dx+(y-y0)*dy)/len2;
+    if(t<0)t=0;else if(t>1)t=1;
+    const a=Math.round(255*(1-t)*(opacity/255));if(a<=0)continue;
+    const px=(base|(a<<24))>>>0;cel[i]=blend(cel[i],px,a);}}
+function updateGradPreview(x,y){const ov=activeCel().slice();
+  rasterGradient(ov,tool,startPix.x,startPix.y,x,y);previewCel=ov;renderView();}
+
+/* ---- Shape editor panel (adjust the active shape layer non-destructively) ---- */
+function shapeLayer(){const L=doc.layers[activeLayer];return (L&&L.shape)?L:null;}
+function seShow(sel,on){const el=$(sel);if(el)el.style.display=on?'':'none';}
+function openShapeEditor(){
+  const L=shapeLayer();if(!L)return;const sh=L.shape,t=sh.type;
+  const closed=t!=='line'&&t!=='arrow';
+  $('#seTitle').textContent=shapeName(t)+'（非破壊編集）';
+  seShow('#seFillRow',closed);
+  seShow('#seRadiusRow',t==='rect'||t==='polygon'||t==='star');
+  seShow('#seSidesRow',t==='polygon');
+  seShow('#sePointsRow',t==='star');
+  seShow('#seInnerRow',t==='star');
+  const maxr=Math.round(Math.min(Math.abs(sh.x1-sh.x0),Math.abs(sh.y1-sh.y0))/2)||1;
+  const rr=$('#seRadius');rr.max=Math.max(1,maxr);rr.value=Math.min(sh.radius,rr.max);$('#seRadiusV').textContent=rr.value;
+  $('#seSides').value=sh.sides;$('#seSidesV').textContent=sh.sides;
+  $('#sePoints').value=sh.points;$('#sePointsV').textContent=sh.points;
+  $('#seInner').value=Math.round(sh.inner*100);$('#seInnerV').textContent=Math.round(sh.inner*100);
+  const fb=$('#seFill');fb.classList.toggle('on',sh.filled);fb.textContent=sh.filled?'塗り':'線のみ';
+  $('#shapeEdit').classList.add('show');
+}
+function closeShapeEditor(){$('#shapeEdit').classList.remove('show');}
+function shapeParam(k,v){const L=shapeLayer();if(!L)return;L.shape[k]=v;rerenderShapeLayer();}
+
 /* ================= Pointer handling ================= */
 let drawing=false, startPix=null, lastPix=null, dragCur=null;
 let panning=false, panStart=null;
@@ -1177,7 +1375,7 @@ function cancelMove(){
 }
 
 stage.addEventListener('pointerdown',e=>{
-  stage.setPointerCapture(e.pointerId);
+  try{stage.setPointerCapture(e.pointerId);}catch(_){}
   const now=performance.now();
   if(pointers.size===0)gesture={maxFingers:0,startT:now,cx:e.clientX,cy:e.clientY,zoom0:zoom,moved:0,zoomed:false};
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
@@ -1212,6 +1410,7 @@ stage.addEventListener('pointerdown',e=>{
   pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];
   const cel=activeCel();
   if(tool==='bucket'){floodFill(cel,x,y);drawing=false;render();updateCelThumb(activeLayer,activeFrame);return;}
+  if(GRADTOOL.includes(tool)){previewCel=cel.slice();updateGradPreview(x,y);return;}
   // Procreate-style long-press eyedropper (pencil/eraser/shape tools)
   startHoldPick(e.clientX,e.clientY,x,y);
   if(SHAPE.includes(tool)){previewCel=cel.slice();updateShapePreview(x,y);return;}
@@ -1311,6 +1510,7 @@ stage.addEventListener('pointermove',e=>{
   if(tool==='quick'){const cx=clampX(x),cy=clampY(y);
     if(!qLast||qLast.x!==cx||qLast.y!==cy){qLast={x:cx,y:cy};quickFlood(cx,cy,quickSubtract);render();}return;}
   if(SHAPE.includes(tool)){updateShapePreview(x,y);return;}
+  if(GRADTOOL.includes(tool)){updateGradPreview(x,y);return;}
   const cel=activeCel();const erase=tool==='eraser';
   lineTo(cel,lastPix.x,lastPix.y,x,y,erase);lastPix={x,y};render();updateCelThumbThrottled();
 });
@@ -1349,7 +1549,12 @@ function finishAll(){
     }else if(tool==='lasso'){
       applyShape(lassoShape(lassoPts),curSelMode);lassoPts=null;
     }else if(tool==='quick'){qLast=null;computeSelBounds();
-    }else if(SHAPE.includes(tool)&&previewCel){activeCel().set(previewCel);previewCel=null;}
+    }else if(SHAPE.includes(tool)){
+      previewCel=null;
+      if(curShape){const s=curShape;curShape=null;
+        // ignore an accidental zero-size tap
+        if(s.x0!==s.x1||s.y0!==s.y1){commitShapeLayer(s);dragCur=null;return;}}
+    }else if(GRADTOOL.includes(tool)&&previewCel){activeCel().set(previewCel);previewCel=null;}
     dragCur=null;render();updateCelThumb(activeLayer,activeFrame);
   }
 }
@@ -1357,12 +1562,12 @@ stage.addEventListener('pointerup',endPointer);
 stage.addEventListener('pointercancel',endPointer);
 stage.addEventListener('pointerleave',e=>{if(e.pointerType!=='touch')bc.style.display='none';});
 
+let curShape=null;   // the shape being drawn / edited
 function updateShapePreview(x,y){
+  const sh=buildShape(tool,startPix.x,startPix.y,x,y);
   const ov=activeCel().slice();
-  if(tool==='line')lineTo(ov,startPix.x,startPix.y,x,y,false);
-  else if(tool==='rect')strokeRectShape(ov,startPix.x,startPix.y,x,y);
-  else if(tool==='ellipse')strokeEllipse(ov,startPix.x,startPix.y,x,y);
-  previewCel=ov;renderView();
+  rasterizeShape(ov,sh);
+  curShape=sh;previewCel=ov;renderView();
 }
 
 /* Move tool with mask */
@@ -1916,11 +2121,37 @@ otrack.addEventListener('pointerdown',e=>{otrack.setPointerCapture(e.pointerId);
 otrack.addEventListener('pointermove',e=>{if(opacDrag)setOpacFromY(e.clientY);});
 otrack.addEventListener('pointerup',()=>{opacDrag=false;});
 otrack.addEventListener('pointercancel',()=>{opacDrag=false;});
-$('#brushShapeBtn').onclick=()=>{brushShape=brushShape==='square'?'circle':'square';
-  $('#brushShapeBtn').textContent=brushShape==='square'?'◻':'◯';updateBrushCursor();toast(brushShape==='square'?'ブラシ: 四角':'ブラシ: 円');};
+function setBrushShape(s){brushShape=s;updateBrushCursor();toast(s==='square'?'ブラシ: 四角':'ブラシ: 円');}
 
 /* ================= Controls ================= */
-$$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+// Generic long-press helper for a tool button: tap runs onTap, hold opens a radial.
+function bindLongPress(el,onTap,radialItems){
+  el.addEventListener('pointerdown',e=>{
+    const sx=e.clientX,sy=e.clientY;let phase='pending',lt;
+    lt=setTimeout(()=>{if(phase==='pending'){phase='radial';cleanup();
+      showRadial(sx,sy,(typeof radialItems==='function'?radialItems():radialItems));}},430);
+    const move=ev=>{if(phase==='pending'&&Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){phase='cancel';clearTimeout(lt);cleanup();}};
+    const up=()=>{clearTimeout(lt);const p=phase;cleanup();if(p==='pending')onTap();};
+    function cleanup(){document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+    document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+  });
+}
+$$('.tool').forEach(b=>{
+  const t=b.dataset.tool;
+  if(b.id==='grpPen'){
+    bindLongPress(b,()=>setTool('pencil'),[
+      {icon:'◻',label:'四角',fn:()=>setBrushShape('square')},
+      {icon:'◯',label:'円',  fn:()=>setBrushShape('circle')}]);
+    return;
+  }
+  if(b.classList.contains('grp')){
+    const g=groupOf(t);
+    bindLongPress(b,()=>setTool(g.cur),
+      ()=>g.tools.map(x=>({icon:x.icon,label:x.label,fn:()=>setTool(x.tool)})));
+    return;
+  }
+  b.onclick=()=>setTool(t);
+});
 // pixel-perfect & grid live in the header now
 $('#ppBtn').onclick=()=>{pixelPerfect=!pixelPerfect;$('#ppBtn').classList.toggle('on',pixelPerfect);
   toast(pixelPerfect?'ピクセルパーフェクト ON':'ピクセルパーフェクト OFF');};
@@ -1966,6 +2197,15 @@ document.addEventListener('pointerdown',e=>{const pop=$('#colorPop');
   if(pop.contains(e.target)||e.target.closest('#colorDot'))return;
   closeColorPop();},true);
 $('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#mUndo').onclick=undo;$('#mRedo').onclick=redo;
+$('#gUndoBtn').onclick=undo;$('#gRedoBtn').onclick=redo;
+// shape editor controls
+$('#seDone').onclick=closeShapeEditor;
+$('#seRadius').oninput=e=>{$('#seRadiusV').textContent=e.target.value;shapeParam('radius',+e.target.value);};
+$('#seSides').oninput=e=>{$('#seSidesV').textContent=e.target.value;shapeParam('sides',+e.target.value);};
+$('#sePoints').oninput=e=>{$('#sePointsV').textContent=e.target.value;shapeParam('points',+e.target.value);};
+$('#seInner').oninput=e=>{$('#seInnerV').textContent=e.target.value;shapeParam('inner',+e.target.value/100);};
+$('#seFill').onclick=()=>{const L=shapeLayer();if(!L)return;L.shape.filled=!L.shape.filled;
+  const fb=$('#seFill');fb.classList.toggle('on',L.shape.filled);fb.textContent=L.shape.filled?'塗り':'線のみ';rerenderShapeLayer();};
 $('#pasteBtn').onclick=pasteFromClipboard;$('#copyBtn').onclick=copyFramePNG;
 $('#selDeselect').onclick=()=>{deselect();toast('選択解除');};
 $('#selInvert').onclick=()=>{if(!selection)return;const m=selection.mask;for(let i=0;i<m.length;i++)m[i]=m[i]?0:1;
