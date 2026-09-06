@@ -1216,6 +1216,10 @@ let color=packHex('#e6e8ee',255);
 let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false, brushShape='square';
 let previewCel=null;
 let xf=null;   // active free-transform state (see Free transform section)
+// Pen-pressure (Apple Pencil / stylus): modulates brush size while drawing.
+let pressureOn=false, strokePressure=1, strokeIsPen=false;
+function penSize(){return (pressureOn&&strokeIsPen)?Math.max(1,Math.round(brushSize*(0.15+0.85*strokePressure))):brushSize;}
+function setPressure(on){pressureOn=on;toast(on?'筆圧: ON':'筆圧: OFF');}
 const SHAPE=['line','rect','ellipse','arrow','polygon','star'];
 const SELTOOL=['select','lasso','wand','quick','range'];
 const GRADTOOL=['lgrad','rgrad'];
@@ -1274,7 +1278,7 @@ function plot(cel,x,y,px,erase){
   else{blendPlot(cel,x,y,px);if(mirrorX)blendPlot(cel,W-1-x,y,px);}
 }
 function paintPix(cel,x,y,erase){
-  const px=erase?0:withOpacity(color,opacity);const s=Math.max(1,brushSize);
+  const px=erase?0:withOpacity(color,opacity);const s=Math.max(1,penSize());
   if(s<=1){plot(cel,x,y,px,erase);return;}
   const h1=Math.floor((s-1)/2), h2=s-1-h1;         // centered s×s block
   const cx=(h2-h1)/2, r=s/2, r2=r*r;
@@ -1528,6 +1532,7 @@ stage.addEventListener('pointerdown',e=>{
   }
   // paint tools
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
+  strokeIsPen=(e.pointerType==='pen');strokePressure=(strokeIsPen&&e.pressure>0)?e.pressure:1;
   pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];
   const cel=activeCel();
   if(tool==='bucket'){floodFill(cel,x,y);drawing=false;render();updateCelThumb(activeLayer,activeFrame);return;}
@@ -1632,6 +1637,7 @@ stage.addEventListener('pointermove',e=>{
     if(!qLast||qLast.x!==cx||qLast.y!==cy){qLast={x:cx,y:cy};quickFlood(cx,cy,quickSubtract);render();}return;}
   if(SHAPE.includes(tool)){updateShapePreview(x,y);return;}
   if(GRADTOOL.includes(tool)){updateGradPreview(x,y);return;}
+  if(strokeIsPen&&e.pressure>0)strokePressure=e.pressure;
   const cel=activeCel();const erase=tool==='eraser';
   lineTo(cel,lastPix.x,lastPix.y,x,y,erase);lastPix={x,y};render();updateCelThumbThrottled();
 });
@@ -2421,14 +2427,17 @@ function bindLongPress(el,onTap,radialItems){
     document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
   });
 }
+// brush radial: shape + pen-pressure toggles (shared by pen & eraser)
+function brushRadialItems(){return [
+  {icon:'◻',label:'四角',  fn:()=>setBrushShape('square')},
+  {icon:'◯',label:'円',    fn:()=>setBrushShape('circle')},
+  {icon:'✎',label:'筆圧ON', fn:()=>setPressure(true)},
+  {icon:'✐',label:'筆圧OFF',fn:()=>setPressure(false)},
+];}
 $$('.tool').forEach(b=>{
   const t=b.dataset.tool;
-  if(b.id==='grpPen'){
-    bindLongPress(b,()=>setTool('pencil'),[
-      {icon:'◻',label:'四角',fn:()=>setBrushShape('square')},
-      {icon:'◯',label:'円',  fn:()=>setBrushShape('circle')}]);
-    return;
-  }
+  if(b.id==='grpPen'){bindLongPress(b,()=>setTool('pencil'),brushRadialItems);return;}
+  if(t==='eraser'){bindLongPress(b,()=>setTool('eraser'),brushRadialItems);return;}
   if(b.classList.contains('grp')){
     const g=groupOf(t);
     bindLongPress(b,()=>setTool(g.cur),
