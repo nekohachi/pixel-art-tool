@@ -215,6 +215,8 @@
   .nudge .mid{grid-area:2/2;font-size:18px;}
   .nudge .mid.on{background:var(--accent2);border-color:#fff;color:#fff;box-shadow:0 0 0 2px var(--accent2),0 3px 10px #0008;}
   .nudge .right{grid-area:2/3}.nudge .down{grid-area:3/2}
+  .nudge .movemode{grid-area:3/1;font-size:18px;}
+  .nudge .movemode.on{background:var(--accent2);border-color:#fff;color:#fff;}
   /* Selection delete button: top-left, red, away from the +/- and D-pad */
   .seldel{position:absolute;left:132px;top:12px;z-index:15;display:none;
     width:50px;height:50px;border-radius:50%;border:2px solid var(--danger);
@@ -465,9 +467,10 @@
   <div class="nudge" id="nudge">
     <button class="nu up" data-dx="0" data-dy="-1" title="上へ1px">▲</button>
     <button class="nu left" data-dx="-1" data-dy="0" title="左へ1px">◀</button>
-    <button class="nu mid" id="fillGapBtn" title="移動時に隙間を埋める（端を引き伸ばし）">🩹</button>
+    <button class="nu mid" id="fillGapBtn" title="移動時に隙間を埋める（元の背景を伸ばす）">🩹</button>
     <button class="nu right" data-dx="1" data-dy="0" title="右へ1px">▶</button>
     <button class="nu down" data-dx="0" data-dy="1" title="下へ1px">▼</button>
+    <button class="nu movemode" id="moveModeBtn" title="移動対象：画像／選択範囲のみ">🖼</button>
   </div>
 
   <!-- Brush gauges panel (color dot + size + opacity, stacked) -->
@@ -1570,16 +1573,23 @@ function updateShapePreview(x,y){
   curShape=sh;previewCel=ov;renderView();
 }
 
-/* Move tool with mask */
+/* Move tool with mask. moveMode:
+   'image'  = cut & move the pixels inside the selection (leaves a gap; gap-fill optional)
+   'sel'    = move only the selection outline (marquee); pixels stay put            */
+let moveMode='image';
 function beginMove(x,y){
   pushUndo();moving=true;
   const cel=activeCel();const base=cel.slice();const mask=selection?selection.mask:null;
   const buf=new Uint32Array(W*H);
   for(let i=0;i<W*H;i++)if(!mask||mask[i]){buf[i]=cel[i];}
-  moveData={base,buf,mask,ox:x,oy:y,dx:0,dy:0};
+  moveData={base,buf,mask,baseMask:mask?mask.slice():null,ox:x,oy:y,dx:0,dy:0};
 }
+function shiftMaskLive(){const{dx,dy,baseMask}=moveData;const nm=selBuf();
+  for(let i=0;i<W*H;i++)if(baseMask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
+  selection.mask=nm;computeSelBounds();}
 function doMove(e){
   const{x,y}=screenToPix(e.clientX,e.clientY);moveData.dx=x-moveData.ox;moveData.dy=y-moveData.oy;
+  if(moveMode==='sel'&&selection&&moveData.baseMask){shiftMaskLive();render();return;}
   const cel=activeCel();cel.set(moveData.base);const{buf,mask,dx,dy}=moveData;
   for(let i=0;i<W*H;i++)if(!mask||mask[i])cel[i]=0;
   for(let i=0;i<W*H;i++){
@@ -1587,11 +1597,14 @@ function doMove(e){
     const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;
     if(inBounds(nx,ny)&&buf[i]!==0)cel[ny*W+nx]=buf[i];
   }
+  if(fillOnMove&&mask&&(dx||dy))edgeExtendFill(cel,moveData.base,mask,dx,dy);
   render();
 }
 function endMove(cancel){
   moving=false;
   if(cancel){if(undoStack.length)restore(undoStack.pop());updateUndoUI();moveData=null;render();return;}
+  if(moveMode==='sel'&&selection&&moveData){   // marquee-only: pixels untouched, mask already shifted
+    moveData=null;render();return;}
   if(selection&&moveData){
     if(fillOnMove&&moveData.mask&&(moveData.dx||moveData.dy))
       edgeExtendFill(activeCel(),moveData.base,moveData.mask,moveData.dx,moveData.dy);
@@ -2173,6 +2186,14 @@ document.addEventListener('fullscreenchange',()=>{const on=!!document.fullscreen
 // Fill-gap toggle lives in the center of the D-pad
 $('#fillGapBtn').onclick=()=>{fillOnMove=!fillOnMove;$('#fillGapBtn').classList.toggle('on',fillOnMove);
   toast(fillOnMove?'移動時に隙間を埋める: ON':'OFF');};
+// Move-target toggle (bottom-left of the D-pad): image pixels vs. selection outline
+function updateMoveModeBtn(){const b=$('#moveModeBtn');if(!b)return;
+  b.textContent=moveMode==='image'?'🖼':'⬚';
+  b.title=moveMode==='image'?'移動対象：画像（タップで選択範囲のみに）':'移動対象：選択範囲のみ（タップで画像に）';
+  b.classList.toggle('on',moveMode==='sel');}
+$('#moveModeBtn').onclick=()=>{moveMode=moveMode==='image'?'sel':'image';updateMoveModeBtn();
+  toast(moveMode==='image'?'移動：画像':'移動：選択範囲のみ');};
+updateMoveModeBtn();
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
   if(lastRange){selection=lastRange.base?{mask:lastRange.base.slice()}:null;
@@ -2248,6 +2269,10 @@ $('#selDel').onclick=deleteSelection;
 // one undo step (firstPush only on press).
 function nudgeStep(dx,dy,firstPush){
   if(!selection)return;
+  if(moveMode==='sel'){   // marquee-only nudge: shift the selection outline, leave pixels
+    if(firstPush)pushUndo();const mask=selection.mask,nm=selBuf();
+    for(let i=0;i<W*H;i++)if(mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
+    selection.mask=nm;computeSelBounds();render();return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');stopNudge();return;}
   if(firstPush)pushUndo();
   const cel=activeCel(),mask=selection.mask,origCel=cel.slice();
@@ -2258,17 +2283,21 @@ function nudgeStep(dx,dy,firstPush){
   for(let i=0;i<W*H;i++)if(mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
   selection.mask=nm;computeSelBounds();render();updateCelThumb(activeLayer,activeFrame);
 }
-// Fill the vacated gap by stretching the trailing edge of the moved content:
-// each gap pixel (was opaque, now empty) copies the nearest moved-content
-// pixel found by marching in the move direction.
+// Fill the vacated gap by CONTINUING the stationary background: when a selection
+// splits a connected image and is moved, each emptied gap pixel copies the nearest
+// stationary pixel found by marching OPPOSITE the move direction (into the part
+// that stayed put) — so the gap is filled with the colour that was originally there,
+// not with a copy of the moved content. Falls back to the moved side at edges.
 let fillOnMove=false;
 function edgeExtendFill(cel,origCel,mask,dx,dy){
   const sx=Math.sign(dx), sy=Math.sign(dy); if(!sx&&!sy)return;
   const maxS=Math.max(W,H);
   for(let i=0;i<W*H;i++){
     if(!mask[i]||!origCel[i]||cel[i])continue; // only gaps that used to have content
-    let x=i%W, y=(i/W)|0, c=0;
-    for(let s=0;s<maxS;s++){x+=sx;y+=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){c=v;break;}}
+    let c=0, x=i%W, y=(i/W)|0;
+    for(let s=0;s<maxS;s++){x-=sx;y-=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){c=v;break;}} // stationary side
+    if(!c){x=i%W;y=(i/W)|0;                     // edge fallback: stretch the moved side
+      for(let s=0;s<maxS;s++){x+=sx;y+=sy;if(x<0||y<0||x>=W||y>=H)break;const v=cel[y*W+x];if(v){c=v;break;}}}
     if(c)cel[i]=c;
   }
 }
