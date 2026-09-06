@@ -957,7 +957,7 @@ function restore(s){
   $('#docsize').textContent=W+'×'+H;ensureComp();refreshTimeline();render();
 }
 let lastClearedRedo=[];
-function pushUndo(){undoStack.push(snapshot());if(undoStack.length>HISTORY_MAX)undoStack.shift();lastClearedRedo=redoStack;redoStack=[];updateUndoUI();}
+function pushUndo(){undoStack.push(snapshot());if(undoStack.length>HISTORY_MAX)undoStack.shift();lastClearedRedo=redoStack;redoStack=[];updateUndoUI();if(typeof scheduleAutosave==='function')scheduleAutosave();}
 function undo(){if(!undoStack.length)return;redoStack.push(snapshot());restore(undoStack.pop());updateUndoUI();toast('元に戻す');}
 function redo(){if(!redoStack.length)return;undoStack.push(snapshot());restore(redoStack.pop());updateUndoUI();toast('やり直し');}
 function updateUndoUI(){const u=undoStack.length?1:.4,r=redoStack.length?1:.4;
@@ -3357,10 +3357,51 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
     if(dict.has(wc)){w=wc;}else{emit(dict.get(w));dict.set(wc,next++);if(next>(1<<codeSize)&&codeSize<12)codeSize++;if(next>=4096){emit(clearCode);resetDict();}w=c;}}
   emit(dict.get(w));emit(eoiCode);if(curBits>0)out.push(cur&255);return out;}
 
+/* ================= Autosave (IndexedDB) ================= */
+const IDB_NAME='pxeditor', IDB_STORE='session', IDB_KEY='autosave';
+let autosaveOn=true, autosaveTimer=null;
+function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open(IDB_NAME,1);
+  r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains(IDB_STORE))db.createObjectStore(IDB_STORE);};
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+function serializeDoc(d){const cels={};d.cels.forEach((v,k)=>{cels[k]=v.buffer.slice(0);});
+  return {layers:JSON.parse(JSON.stringify(d.layers)),frames:JSON.parse(JSON.stringify(d.frames)),
+    cels,convert:d.convert||null,tags:d.tags?JSON.parse(JSON.stringify(d.tags)):null};}
+function serializeTab(t){return {name:t.name,W:t.W,H:t.H,activeLayer:t.activeLayer,activeFrame:t.activeFrame,
+  palette:t.palette?t.palette.slice():DEFAULT_PAL.slice(),doc:serializeDoc(t.doc)};}
+function deserializeTab(s){const cels=new Map();for(const k in s.doc.cels)cels.set(k,new Uint32Array(s.doc.cels[k]));
+  const doc={layers:s.doc.layers,frames:s.doc.frames,cels,convert:s.doc.convert||null,tags:s.doc.tags||null};
+  return {doc,W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
+    selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};}
+function scheduleAutosave(){if(!autosaveOn)return;clearTimeout(autosaveTimer);autosaveTimer=setTimeout(autosaveNow,1200);}
+async function autosaveNow(){if(!autosaveOn||!docTabs.length)return;
+  try{saveCurrentTab();const tabs=docTabs.map(serializeTab);const db=await idbOpen();
+    await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readwrite');
+      tx.objectStore(IDB_STORE).put({tabs,curTab,savedAt:Date.now()},IDB_KEY);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
+    db.close();}catch(e){/* storage unavailable (private mode etc.) — ignore */}}
+async function autosaveLoad(){
+  try{const db=await idbOpen();
+    const data=await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readonly');
+      const rq=tx.objectStore(IDB_STORE).get(IDB_KEY);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});
+    db.close();if(!data||!data.tabs||!data.tabs.length)return false;
+    docTabs=data.tabs.map(deserializeTab);curTab=Math.min(data.curTab||0,docTabs.length-1);
+    // bump the id counter past every restored id so new layers/frames don't collide
+    let mx=0;docTabs.forEach(t=>{t.doc.layers.forEach(l=>{if(+l.id>mx)mx=+l.id;});t.doc.frames.forEach(f=>{if(+f.id>mx)mx=+f.id;});});
+    nextId=mx+1;
+    loadBundle(docTabs[curTab]);renderTabs();return true;}catch(e){return false;}}
+async function clearAutosave(){try{const db=await idbOpen();
+  await new Promise(res=>{const tx=db.transaction(IDB_STORE,'readwrite');tx.objectStore(IDB_STORE).delete(IDB_KEY);tx.oncomplete=res;tx.onerror=res;});db.close();}catch(e){}}
+
 /* ================= Boot ================= */
-function boot(){
+async function boot(){
   initLayout();initWheel();
-  newDocTab(32,32,'キャンバス 1');setTool('pencil');updateGauge();updateOpacGauge();updateSelBtns();
+  let restored=false;
+  try{restored=await autosaveLoad();}catch(_){}
+  if(!restored)newDocTab(32,32,'キャンバス 1');
+  else toast('前回のセッションを復元しました');
+  setTool('pencil');updateGauge();updateOpacGauge();updateSelBtns();
+  setInterval(autosaveNow,15000);   // periodic safety net
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')autosaveNow();});
+  window.addEventListener('pagehide',autosaveNow);
   window.addEventListener('resize',()=>{relayout();fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
   // Register the network-first worker so the app is installable (full-screen
