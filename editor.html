@@ -1039,12 +1039,26 @@ function blend(dst,src,srcA){
   const b=(sb*srcA+db*da*(255-srcA)/255)/outA;
   return rgba(r|0,g|0,b|0,Math.round(outA));
 }
+function layerById(id){for(const l of doc.layers)if(l.id===id)return l;return null;}
+function effHidden(L){let p=L.parent;while(p){const g=layerById(p);if(!g)break;if(!g.visible)return true;p=g.parent;}return false;}
+function groupOpacity(L){let m=1,p=L.parent;while(p){const g=layerById(p);if(!g)break;m*=g.opacity/255;p=g.parent;}return m;}
 function compositeFrame(frameIdx,ctxTarget){
   const out=new Uint32Array(W*H);
   for(let li=0;li<doc.layers.length;li++){
     const L=doc.layers[li];if(!L.visible)continue;
+    if(effHidden(L))continue;   // inside a collapsed/hidden group
+    if(L.adj){   // non-destructive adjustment layer: transform everything below it
+      const adjusted=out.slice();applyAdjustBuf(L.adj.type,L.adj.params,adjusted,null);
+      const a=L.opacity;
+      if(a>=255)out.set(adjusted);
+      else for(let i=0;i<out.length;i++){const o=out[i],n=adjusted[i];
+        const or=o&255,og=(o>>8)&255,ob=(o>>16)&255,oa=(o>>>24)&255;
+        const nr=n&255,ng=(n>>8)&255,nb=(n>>16)&255;
+        out[i]=(((oa)<<24)|((ob+(nb-ob)*a/255|0)<<16)|((og+(ng-og)*a/255|0)<<8)|(or+(nr-or)*a/255|0))>>>0;}
+      continue;
+    }
     const cel=doc.cels.get(celKey(L.id,frameIdx));if(!cel)continue;
-    const la=L.opacity;
+    const la=groupOpacity(L)*L.opacity;   // 0..255; groups multiply their children's opacity
     for(let i=0;i<out.length;i++){
       const s=cel[i];const sa=(s>>>24)&255;if(!sa)continue;
       const a=Math.round(sa*la/255);if(!a)continue;
@@ -1575,6 +1589,7 @@ stage.addEventListener('pointerdown',e=>{
     render();return;
   }
   // paint tools
+  if(doc.layers[activeLayer].adj){toast('調整レイヤーには描けません');return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
   strokeIsPen=(e.pointerType==='pen');strokePressure=(strokeIsPen&&e.pressure>0)?e.pressure:1;
   pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];
@@ -2170,6 +2185,10 @@ function refreshTimeline(){
     b.onclick=e=>{e.stopPropagation();fn();};return b;};
   corner.appendChild(mkc('＋','新規レイヤー',addLayer));
   corner.appendChild(mkc('🗑','レイヤー削除',deleteLayersSel));
+  const adjBtn=document.createElement('button');adjBtn.className='corner-btn';adjBtn.textContent='🎨';
+  adjBtn.title='調整レイヤー（長押しで種類）';
+  bindLongPress(adjBtn,()=>addAdjustLayer(adjLayerType),adjustLayerRadial);
+  corner.appendChild(adjBtn);
   const colgrip=document.createElement('div');colgrip.className='tl-colgrip';colgrip.title='レイヤー欄の幅を調整';
   colgrip.addEventListener('pointerdown',startLayerColResize);
   corner.appendChild(colgrip);
@@ -2232,6 +2251,7 @@ function refreshTimeline(){
     });
     grid.appendChild(row);
   }
+  if(typeof updateAdjustPanelForLayer==='function')updateAdjustPanelForLayer();
 }
 // Unified tap / long-press(radial) / swipe-select / 2-finger handler for layer heads & frame numbers
 let tlPtrs=new Set();
@@ -2372,6 +2392,7 @@ function blitClip(dst,src,sw,sh){if(sw===W&&sh===H){dst.set(src);return;}
   const cw=Math.min(sw,W),ch=Math.min(sh,H);for(let y=0;y<ch;y++)for(let x=0;x<cw;x++)dst[y*W+x]=src[y*sw+x];}
 function dupLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);pushUndo();
   idxs.forEach(li=>{const src=doc.layers[li];const nl={id:uid(),name:src.name+' コピー',visible:true,opacity:src.opacity,locked:false};
+    if(src.adj)nl.adj=JSON.parse(JSON.stringify(src.adj));if(src.parent)nl.parent=src.parent;
     doc.layers.splice(li+1,0,nl);doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});});
   activeLayer=Math.min(activeLayer+1,doc.layers.length-1);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを複製');}
 function deleteLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);
@@ -2748,6 +2769,22 @@ function openDestructiveAdjust(type){
   const commit=()=>{cel.set(base);pushUndo();applyAdjustBuf(type,params,cel,mask);render();updateCelThumb(activeLayer,activeFrame);toast('色調補正を適用');};
   const cancel=()=>{cel.set(base);render();updateCelThumb(activeLayer,activeFrame);};
   apply(params);openAdjustEditor({type,params,apply,commit,cancel,layerMode:false});
+}
+// non-destructive adjustment LAYER (affects all layers below it)
+let adjLayerType='hue';
+function addAdjustLayer(type){adjLayerType=type;pushUndo();
+  doc.layers.splice(activeLayer+1,0,{id:uid(),name:'調整: '+ADJUSTS[type],visible:true,opacity:255,locked:false,
+    adj:{type,params:adjDefaults(type)}});
+  activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();toast('調整レイヤーを追加');}
+function adjustLayerRadial(){return Object.keys(ADJUSTS).map(t=>({icon:adjIcon(t),label:ADJUSTS[t],fn:()=>addAdjustLayer(t)}));}
+// show the cut-in bound to the active adjustment layer (single selection only)
+function updateAdjustPanelForLayer(){
+  const L=doc.layers[activeLayer];
+  if(selLayers.size===1&&L&&L.adj){
+    if(adjCtx&&adjCtx.layer===L)return;   // already editing this layer
+    openAdjustEditor({type:L.adj.type,params:L.adj.params,layer:L,layerMode:true,
+      apply:()=>render(),cancel:()=>{}});
+  }else if(adjCtx&&adjCtx.layerMode){closeAdjustEditor();}
 }
 // colour-replace tool: tap a colour on the active layer to swap it for the current colour
 function replaceColorAt(x,y){if(!inBounds(x,y))return;
