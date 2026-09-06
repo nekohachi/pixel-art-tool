@@ -369,6 +369,16 @@
   .tl-cell.active{box-shadow:inset 0 0 0 2px var(--accent);}
   .tl-cell.sel{background:#161b22;box-shadow:inset 0 0 0 2px var(--accent2);}
   .tl-cell.active.sel{box-shadow:inset 0 0 0 2px var(--accent);}
+  /* Animation tag row */
+  .tl-tags{height:18px;}
+  .tl-tagspacer{width:var(--lcolw,118px);flex:none;position:sticky;left:0;z-index:4;background:var(--panel);
+    font-size:10px;color:var(--muted);display:flex;align-items:center;padding-left:6px;}
+  .tl-tagspacer::before{content:"🏷";opacity:.7;}
+  .tl-tagcell{width:44px;flex:none;position:relative;border-right:1px solid transparent;touch-action:pan-x;}
+  .tl-tagcell.on{opacity:.9;border-radius:3px;}
+  .tl-tagcell.active{opacity:1;box-shadow:inset 0 0 0 2px #fff;}
+  .tl-tagname{position:absolute;left:3px;top:0;font-size:10px;line-height:18px;color:#141414;
+    white-space:nowrap;font-weight:700;pointer-events:none;z-index:6;text-shadow:0 1px 1px #fff8;}
   /* Apex-style radial menu */
   .radial-guard{position:fixed;inset:0;z-index:89;background:#0006;touch-action:none;}
   .radial{position:fixed;inset:0;z-index:90;pointer-events:none;}
@@ -880,6 +890,7 @@ let docTabs=[], curTab=0, tabSeq=2;
 function bundleFromGlobals(name){return {doc,W,H,activeLayer,activeFrame,undoStack,redoStack,
   selection,palette,activeSwatch,zoom,panX,panY,name};}
 function loadBundle(s){
+  if(playing)stopPlay();activeTag=null;
   doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
   undoStack=s.undoStack;redoStack=s.redoStack;selection=s.selection;
   palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;
@@ -2052,6 +2063,24 @@ function refreshTimeline(){
     hrow.appendChild(c);
   });
   grid.appendChild(hrow);
+  // Tag row: colored spans under the frame numbers (only when tags exist)
+  if(!doc.tags)doc.tags=[];
+  doc.tags=doc.tags.filter(t=>t.from<doc.frames.length).map(t=>({...t,
+    from:Math.max(0,Math.min(t.from,doc.frames.length-1)),to:Math.max(0,Math.min(t.to,doc.frames.length-1))}));
+  if(doc.tags.length){
+    const trow=document.createElement('div');trow.className='tl-row tl-tags';
+    const sp=document.createElement('div');sp.className='tl-corner tl-tagspacer';trow.appendChild(sp);
+    doc.frames.forEach((f,fi)=>{
+      const cell=document.createElement('div');cell.className='tl-tagcell';cell.dataset.fi=fi;
+      const ti=doc.tags.findIndex(t=>fi>=t.from&&fi<=t.to);
+      if(ti>=0){const t=doc.tags[ti];cell.classList.add('on');if(ti===activeTag)cell.classList.add('active');
+        cell.style.background=t.color;
+        if(fi===t.from)cell.innerHTML=`<span class="tl-tagname">${t.name}</span>`;
+        bindTagLong(cell,ti);}
+      trow.appendChild(cell);
+    });
+    grid.appendChild(trow);
+  }
   for(let li=doc.layers.length-1;li>=0;li--){
     const L=doc.layers[li];const row=document.createElement('div');row.className='tl-row';
     const head=document.createElement('div');
@@ -2116,6 +2145,15 @@ function bindCellLong(cell,li,fi){cell.addEventListener('pointerdown',e=>{
   function cleanup(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
   document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
 });}
+// Long-press a tag span -> tag radial (play loop / ping-pong / rename / delete)
+function bindTagLong(cell,ti){cell.addEventListener('pointerdown',e=>{
+  const sx=e.clientX,sy=e.clientY;
+  const t=setTimeout(()=>{justDragged=true;setTimeout(()=>justDragged=false,140);openTagRadial(ti,sx,sy);cleanup();},430);
+  const mv=ev=>{if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){clearTimeout(t);cleanup();}};
+  const up=()=>{clearTimeout(t);cleanup();};
+  function cleanup(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+  document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
+});}
 function itemAt(kind,x,y){const sel=kind==='layer'?'.tl-lhead':'.tl-fnum';
   for(const el of $$('#tlGrid '+sel)){const r=el.getBoundingClientRect();
     if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom)return +(kind==='layer'?el.dataset.li:el.dataset.fi);}
@@ -2152,9 +2190,30 @@ function openRadial(kind,idx,cx,cy){
     {icon:'⧉',label:'複製',fn:dupFramesSel},
     {icon:'📋',label:'コピー',fn:copyFramesSel},
     {icon:'📥',label:'貼付',fn:pasteFrames},
+    {icon:'🏷',label:'タグ',fn:createTagFromSel},
   ];
   showRadial(cx,cy,items);
 }
+/* ---- Animation tags (named frame ranges, loop / ping-pong playback) ---- */
+const TAG_COLORS=['#e0596b','#ffcd75','#41c98a','#5b8cff','#b13e53','#38b764','#41a6f6','#a7f070'];
+function createTagFromSel(){const fs=[...selFrames].sort((a,b)=>a-b);if(!fs.length)return;
+  const from=fs[0],to=fs[fs.length-1];if(!doc.tags)doc.tags=[];
+  const name='Tag'+(doc.tags.length+1);
+  doc.tags.push({name,from,to,dir:'forward',color:TAG_COLORS[doc.tags.length%TAG_COLORS.length]});
+  refreshTimeline();render();toast('タグ「'+name+'」を作成');}
+function openTagRadial(ti,cx,cy){if(!doc.tags||!doc.tags[ti])return;
+  showRadial(cx,cy,[
+    {icon:'▶',label:'ループ',fn:()=>playTag(ti,'forward')},
+    {icon:'🔁',label:'往復',fn:()=>playTag(ti,'pingpong')},
+    {icon:'✏',label:'名前',fn:()=>renameTag(ti)},
+    {icon:'🗑',label:'削除',fn:()=>deleteTag(ti)},
+  ]);}
+function renameTag(ti){const t=doc.tags[ti];if(!t)return;const n=prompt('タグ名',t.name);
+  if(n!==null){t.name=n.trim()||t.name;refreshTimeline();}}
+function deleteTag(ti){if(!doc.tags[ti])return;doc.tags.splice(ti,1);
+  if(activeTag===ti)activeTag=null;else if(activeTag>ti)activeTag--;refreshTimeline();render();toast('タグを削除');}
+function playTag(ti,dir){if(!doc.tags[ti])return;doc.tags[ti].dir=dir;activeTag=ti;
+  if(playing)stopPlay();startPlayback();refreshTimeline();}
 function showRadial(px,py,items){
   const n=items.length, R=94, pad=R+46;
   // clamp the menu centre so every item stays on-screen (even near an edge)
@@ -2372,14 +2431,25 @@ $('#frLast').onclick=()=>gotoFrame(doc.frames.length-1);
 function addFrame(){pushUndo();doc.frames.push({id:uid(),duration:Math.round(1000/(+$('#fps').value||8))});activeFrame=doc.frames.length-1;selFrames=new Set([activeFrame]);refreshTimeline();render();}
 
 /* Playback */
-let playing=false, playT=null;
+let playing=false, playT=null, activeTag=null;
 $('#playBtn').onclick=()=>{
   if(playing){stopPlay();return;}
-  if(doc.frames.length<2){toast('フレームが1枚です');return;}
-  playing=true;$('#playBtn').textContent='⏸';$('#playBtn').classList.add('playing');let fi=activeFrame;
-  const step=()=>{fi=(fi+1)%doc.frames.length;activeFrame=fi;highlightTimeline();render();playT=setTimeout(step,1000/(+$('#fps').value||8));};
-  playT=setTimeout(step,1000/(+$('#fps').value||8));
+  activeTag=null;   // the play button plays the whole timeline; tags play from their radial
+  startPlayback();
 };
+function startPlayback(){
+  let from=0,to=doc.frames.length-1,dir='forward';
+  if(activeTag!=null&&doc.tags&&doc.tags[activeTag]){const t=doc.tags[activeTag];
+    from=Math.max(0,Math.min(t.from,doc.frames.length-1));to=Math.max(from,Math.min(t.to,doc.frames.length-1));dir=t.dir;}
+  if(to<=from){toast('フレームが1枚です');return;}
+  playing=true;$('#playBtn').textContent='⏸';$('#playBtn').classList.add('playing');
+  let fi=(activeFrame<from||activeFrame>to)?from:activeFrame, d=1;
+  const step=()=>{
+    if(dir==='pingpong'){fi+=d;if(fi>=to){fi=to;d=-1;}else if(fi<=from){fi=from;d=1;}}
+    else fi=(fi>=to)?from:fi+1;
+    activeFrame=fi;highlightTimeline();render();playT=setTimeout(step,1000/(+$('#fps').value||8));};
+  playT=setTimeout(step,1000/(+$('#fps').value||8));
+}
 function stopPlay(){playing=false;$('#playBtn').textContent='▶';$('#playBtn').classList.remove('playing');clearTimeout(playT);refreshTimeline();}
 $('#fps').oninput=e=>{$('#fpsV').innerHTML=e.target.value+'&nbsp;fps';};
 $('#onionBtn').onclick=()=>{onion=!onion;$('#onionBtn').classList.toggle('on',onion);render();};
