@@ -732,6 +732,12 @@
       <div class="conv-hint">キャンバスに直接プレビューしています。スライダーを動かすと即反映されます（非破壊）。</div>
     </div>
       <div class="conv-ctrl" id="convCtrl">
+        <!-- GIF sequence: pick which frame is previewed (apply converts ALL frames) -->
+        <div class="cf" id="cvSeqRow" style="display:none">
+          <div class="cfrow"><label>🎞 プレビューするフレーム</label><span class="cv" id="cvSeqV">1 / 1</span></div>
+          <input type="range" id="cvSeqFrame" min="1" max="1" step="1" value="1">
+          <div class="conv-hint" style="margin-top:4px">適用すると全フレームを同じ設定・共通パレットでまとめて変換します。</div>
+        </div>
         <div class="csec">出力サイズ</div>
         <div class="cf">
           <div class="cfrow"><label>キャンバス長辺（ドット数）</label><span class="cv" id="cvCapV">200 px</span></div>
@@ -3193,21 +3199,13 @@ $('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;
     rd.onload=()=>{loadAse(rd.result).catch(err=>{console.error(err);toast('Aseprite読み込み失敗: '+err.message);});};
     rd.readAsArrayBuffer(f);e.target.value='';return;
   }
+  // GIF: 全フレームを連番で読み込み、まとめてドット絵変換にかけられるよう変換器（連番モード）へ
+  if(isGifFile(f)){loadGifFile(f,()=>loadImageFileRaw(f));e.target.value='';return;}
   // PNG/その他画像: 元の画像サイズのまま新規キャンバスに読み込む
-  const img=new Image();
-  img.onload=()=>{
-    let iw=img.width, ih=img.height; const CAP=2048; let scaled=false;
-    if(iw>CAP||ih>CAP){const s=Math.min(CAP/iw,CAP/ih);iw=Math.max(1,Math.round(iw*s));ih=Math.max(1,Math.round(ih*s));scaled=true;}
-    newDoc(iw,ih);
-    const tmp=document.createElement('canvas');tmp.width=iw;tmp.height=ih;
-    const tc=tmp.getContext('2d');tc.imageSmoothingEnabled=false;tc.drawImage(img,0,0,iw,ih);
-    const d=tc.getImageData(0,0,iw,ih).data;const cel=getCel(0,0);
-    for(let i=0;i<iw*ih;i++)cel[i]=rgba(d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]);
-    refreshTimeline();render();updateCelThumb(0,0);
-    toast('画像を読み込みました '+iw+'×'+ih+(scaled?'（縮小）':''));
-  };
-  img.onerror=()=>toast('画像の読み込みに失敗');
-  img.src=URL.createObjectURL(f);e.target.value='';};
+  loadImageFileRaw(f);e.target.value='';};
+function loadImageFileRaw(f){const img=new Image();
+  img.onload=()=>{importImageRaw(img);URL.revokeObjectURL(img.src);};
+  img.onerror=()=>toast('画像の読み込みに失敗');img.src=URL.createObjectURL(f);}
 
 /* ================= Illustration -> pixel-art converter (non-destructive) =================
    Ported from index.html. All helpers are private to avoid clashing with the editor's
@@ -3305,13 +3303,11 @@ const Converter=(function(){
     else{const br=parseInt(bgHex.slice(1,3),16),bg=parseInt(bgHex.slice(3,5),16),bb=parseInt(bgHex.slice(5,7),16);
       for(let i=0;i<data.length;i+=4){const a=data[i+3]/255;data[i]=Math.round(data[i]*a+br*(1-a));
         data[i+1]=Math.round(data[i+1]*a+bg*(1-a));data[i+2]=Math.round(data[i+2]*a+bb*(1-a));data[i+3]=255;}}}
-  function paletteFor(p,data){if(p.palSource!=='auto'&&PRESETS[p.palSource])return PRESETS[p.palSource];
+  function paletteFor(p,data){if(p.fixedPalette)return p.fixedPalette;   // shared palette (GIF sequences)
+    if(p.palSource!=='auto'&&PRESETS[p.palSource])return PRESETS[p.palSource];
     const entries=getEntries(data);return p.quantAlgo==='median'?medianCut(entries,p.colors):kmeans(entries,p.colors);}
-  // Compute grid dimensions for an image at given dot size + long-edge cap.
-  function gridDims(img,p){const dot=Math.max(1,p.dot);let gw=Math.max(1,Math.floor(img.width/dot)),gh=Math.max(1,Math.floor(img.height/dot));
-    const cap=Math.max(1,p.cap||128);if(Math.max(gw,gh)>cap){const s=cap/Math.max(gw,gh);gw=Math.max(1,Math.round(gw*s));gh=Math.max(1,Math.round(gh*s));}return{gw,gh};}
-  // Main: returns {gw, gh, data:Uint8ClampedArray(RGBA), palette:[[r,g,b],...]}
-  function convert(img,p){
+  // Scale + filter the source into the fit canvas (shared by convert() and the sequence palette sampler).
+  function fitImage(img,p){
     const dot=Math.max(1,p.dot);const{gw,gh}=gridDims(img,p);
     const fitW=Math.max(1,gw*dot), fitH=Math.max(1,gh*dot);
     let filter=`brightness(${p.bri}%) saturate(${p.sat}%) contrast(${p.con}%) hue-rotate(${p.hue}deg)`;
@@ -3319,8 +3315,25 @@ const Converter=(function(){
     fitCv.width=fitW;fitCv.height=fitH;fitCtx.clearRect(0,0,fitW,fitH);
     fitCtx.imageSmoothingEnabled=true;fitCtx.imageSmoothingQuality='high';fitCtx.filter=filter;
     fitCtx.drawImage(img,0,0,fitW,fitH);fitCtx.filter='none';
-    const fitImg=fitCtx.getImageData(0,0,fitW,fitH);const fd=fitImg.data;
-    if(p.dilate>0)erodeImage(fd,fitW,fitH,p.dilate);
+    const fitImg=fitCtx.getImageData(0,0,fitW,fitH);
+    if(p.dilate>0)erodeImage(fitImg.data,fitW,fitH,p.dilate);
+    return{fitImg,fd:fitImg.data,fitW,fitH,gw,gh,dot};}
+  // One palette for a whole frame sequence: pool grid-resolution samples of several frames.
+  function paletteForImages(imgs,p){
+    if(p.palSource!=='auto'&&PRESETS[p.palSource])return PRESETS[p.palSource];
+    const parts=imgs.map(im=>{const f=fitImage(im,p);fitCtx.putImageData(f.fitImg,0,0);
+      work.width=f.gw;work.height=f.gh;workCtx.clearRect(0,0,f.gw,f.gh);
+      workCtx.imageSmoothingEnabled=true;workCtx.imageSmoothingQuality='high';workCtx.drawImage(fitCv,0,0,f.gw,f.gh);
+      return workCtx.getImageData(0,0,f.gw,f.gh).data;});
+    let total=0;parts.forEach(d=>total+=d.length);const all=new Uint8ClampedArray(total);let o=0;
+    for(const d of parts){all.set(d,o);o+=d.length;}
+    return paletteFor(p,all);}
+  // Compute grid dimensions for an image at given dot size + long-edge cap.
+  function gridDims(img,p){const dot=Math.max(1,p.dot);let gw=Math.max(1,Math.floor(img.width/dot)),gh=Math.max(1,Math.floor(img.height/dot));
+    const cap=Math.max(1,p.cap||128);if(Math.max(gw,gh)>cap){const s=cap/Math.max(gw,gh);gw=Math.max(1,Math.round(gw*s));gh=Math.max(1,Math.round(gh*s));}return{gw,gh};}
+  // Main: returns {gw, gh, data:Uint8ClampedArray(RGBA), palette:[[r,g,b],...]}
+  function convert(img,p){
+    const{fitImg,fd,fitW,fitH,gw,gh}=fitImage(img,p);
     work.width=gw;work.height=gh;const imgData=workCtx.createImageData(gw,gh);const data=imgData.data;let palette;
     if(p.sample==='majority'){
       palette=paletteFor(p,fd);majorityDownsample(fd,fitW,fitH,data,gw,gh,palette);
@@ -3343,11 +3356,89 @@ const Converter=(function(){
     applyAlpha(data,p.keepAlpha,p.bg,p.alphaTh);
     return{gw,gh,data,palette};
   }
-  return{convert,gridDims};
+  return{convert,gridDims,paletteForImages};
 })();
 
+/* ---- GIF decoder (GIF87a/89a): every frame composited onto the full logical screen (RGBA) ---- */
+function decodeGIF(buf,maxFrames=300){
+  const b=new Uint8Array(buf);let p=0;
+  const sig=String.fromCharCode(...b.subarray(0,6));
+  if(!/^GIF8[79]a$/.test(sig))throw new Error('GIFではありません');p=6;
+  const w=b[p]|(b[p+1]<<8),h=b[p+2]|(b[p+3]<<8);p+=4;
+  const flags=b[p++];p+=2;   // background index + aspect ratio (unused)
+  let gct=null;if(flags&0x80){const n=1<<((flags&7)+1);gct=b.subarray(p,p+n*3);p+=n*3;}
+  const frames=[];let canvas=new Uint8ClampedArray(w*h*4),prev=null;
+  let gce={delay:100,transp:-1,disposal:0};
+  const skipSub=()=>{while(p<b.length&&b[p]!==0)p+=b[p]+1;p++;};
+  while(p<b.length&&frames.length<maxFrames){
+    const sep=b[p++];
+    if(sep===0x21){const label=b[p++];
+      if(label===0xF9){const sz=b[p++];const f=b[p];const delay=(b[p+1]|(b[p+2]<<8))*10;const ti=b[p+3];p+=sz;
+        gce={delay:delay>=20?delay:100,transp:(f&1)?ti:-1,disposal:(f>>2)&7};skipSub();}
+      else skipSub();
+    }else if(sep===0x2C){
+      const ix=b[p]|(b[p+1]<<8),iy=b[p+2]|(b[p+3]<<8),iw=b[p+4]|(b[p+5]<<8),ih=b[p+6]|(b[p+7]<<8);p+=8;
+      const iflags=b[p++];let ct=gct;if(iflags&0x80){const n=1<<((iflags&7)+1);ct=b.subarray(p,p+n*3);p+=n*3;}
+      const interlaced=!!(iflags&0x40);const minCode=b[p++];
+      let total=0,q=p;while(q<b.length&&b[q]!==0){total+=b[q];q+=b[q]+1;}
+      const data=new Uint8Array(total);let o=0;q=p;while(q<b.length&&b[q]!==0){const n=b[q];data.set(b.subarray(q+1,q+1+n),o);o+=n;q+=n+1;}p=q+1;
+      const idx=lzwDecode(data,minCode,iw*ih);
+      if(gce.disposal===3)prev=canvas.slice();
+      const rows=interlaced?interlaceRows(ih):null;
+      if(ct)for(let y=0;y<ih;y++){const cy=iy+(rows?rows[y]:y);if(cy>=h)continue;
+        for(let x=0;x<iw;x++){const cx=ix+x;if(cx>=w)continue;const ci=idx[y*iw+x];if(ci===gce.transp)continue;
+          const c=ci*3,di=(cy*w+cx)*4;canvas[di]=ct[c];canvas[di+1]=ct[c+1];canvas[di+2]=ct[c+2];canvas[di+3]=255;}}
+      frames.push({data:canvas.slice(),delay:gce.delay});
+      if(gce.disposal===2){for(let y=iy;y<Math.min(h,iy+ih);y++)for(let x=ix;x<Math.min(w,ix+iw);x++){const di=(y*w+x)*4;canvas[di]=canvas[di+1]=canvas[di+2]=canvas[di+3]=0;}}
+      else if(gce.disposal===3&&prev){canvas=prev;prev=null;}
+      gce={delay:100,transp:-1,disposal:0};
+    }else break;   // 0x3B trailer (or junk)
+  }
+  return{w,h,frames,truncated:p<b.length&&frames.length>=maxFrames};
+}
+function interlaceRows(ih){const r=[];for(let y=0;y<ih;y+=8)r.push(y);for(let y=4;y<ih;y+=8)r.push(y);for(let y=2;y<ih;y+=4)r.push(y);for(let y=1;y<ih;y+=2)r.push(y);return r;}
+function lzwDecode(data,minCode,count){
+  const out=new Uint8Array(count);const clear=1<<minCode,eoi=clear+1;
+  const prefix=new Int32Array(4096),suffix=new Uint8Array(4096),len=new Int32Array(4096),stack=new Uint8Array(4097);
+  for(let i=0;i<clear;i++){prefix[i]=-1;suffix[i]=i;len[i]=1;}
+  let codeSize=minCode+1,dict=eoi+1,prevCode=-1,bits=0,nbits=0,pos=0,op=0;
+  while(op<count){
+    while(nbits<codeSize){if(pos>=data.length)return out;bits|=data[pos++]<<nbits;nbits+=8;}
+    const code=bits&((1<<codeSize)-1);bits>>>=codeSize;nbits-=codeSize;
+    if(code===clear){codeSize=minCode+1;dict=eoi+1;prevCode=-1;continue;}
+    if(code===eoi)break;
+    let n,c,first;
+    if(code<dict){n=len[code];c=code;for(let i=n-1;i>=0;i--){stack[i]=suffix[c];c=prefix[c];}first=stack[0];
+      for(let i=0;i<n&&op<count;i++)out[op++]=stack[i];
+      if(prevCode>=0&&dict<4096){prefix[dict]=prevCode;suffix[dict]=first;len[dict]=len[prevCode]+1;dict++;}}
+    else{if(prevCode<0)break;n=len[prevCode];c=prevCode;for(let i=n-1;i>=0;i--){stack[i]=suffix[c];c=prefix[c];}
+      first=stack[0];stack[n]=first;for(let i=0;i<=n&&op<count;i++)out[op++]=stack[i];
+      if(dict<4096){prefix[dict]=prevCode;suffix[dict]=first;len[dict]=n+1;dict++;}}
+    prevCode=code;
+    if(dict===(1<<codeSize)&&codeSize<12)codeSize++;
+  }
+  return out;
+}
+
 /* ---- Converter modal controller ---- */
-let convImg=null;                 // the source <img> currently being converted
+let convImg=null;                 // the source <img> (or frame canvas) currently being previewed
+let convSeq=null;                 // GIF sequence being converted: {w,h,frames:[{data,delay}],src:dataURL}
+const seqCv=document.createElement('canvas');
+function seqFrameCanvas(seq,i,cv){cv=cv||seqCv;cv.width=seq.w;cv.height=seq.h;
+  cv.getContext('2d').putImageData(new ImageData(seq.frames[i].data,seq.w,seq.h),0,0);return cv;}
+function isGifFile(f){return f.type==='image/gif'||/\.gif$/i.test(f.name||'');}
+// GIF: decode every frame and open the converter in sequence mode; a 1-frame GIF is a plain image
+function loadGifFile(f,onSingle){const rd=new FileReader();
+  rd.onload=()=>{let g;try{g=decodeGIF(rd.result);}catch(err){toast('GIFの読み込みに失敗');return;}
+    if(g.frames.length<=1){onSingle();return;}
+    if(g.truncated)toast('フレーム数が多いため先頭300フレームのみ読み込みます');
+    const rd2=new FileReader();   // keep the source as a data URL so 再調整 survives reloads
+    rd2.onload=()=>{g.src=rd2.result;openConverter(seqFrameCanvas(g,0),null,g);};
+    rd2.readAsDataURL(f);};
+  rd.readAsArrayBuffer(f);}
+// which frame the live preview shows (apply converts all of them)
+$('#cvSeqFrame').oninput=e=>{if(!convSeq)return;const i=Math.max(0,Math.min(convSeq.frames.length-1,+e.target.value-1));
+  $('#cvSeqV').textContent=(i+1)+' / '+convSeq.frames.length;convImg=seqFrameCanvas(convSeq,i);};
 function convParams(){return {
   palSource:$('#cvPalSource').value, quantAlgo:$('#cvQuant').value, colors:+$('#cvColors').value,
   dot:+$('#cvDot').value, cap:+$('#cvCap').value, smooth:+$('#cvSmooth').value,
@@ -3381,19 +3472,30 @@ function convRender(){convLabels();if(!convImg)return;
   const p=convParams();const r=Converter.convert(convImg,p);convLastResult=r;
   renderConvertedDoc(r);
   const iw=convImg.naturalWidth||convImg.width, ih=convImg.naturalHeight||convImg.height;
-  $('#convInfo').textContent=`元画像 ${iw}×${ih} → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色`;}
+  $('#convInfo').textContent=convSeq
+    ?`GIF ${convSeq.w}×${convSeq.h} × ${convSeq.frames.length}フレーム → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色（プレビューは1フレーム）`
+    :`元画像 ${iw}×${ih} → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色`;}
 function scheduleConvPreview(){clearTimeout(convPrevTimer);convPrevTimer=setTimeout(()=>{convPrevTimer=null;convRender();},80);}
-function openConverter(img,params){convImg=img;convBackup={snap:snapshot(),undo:undoStack,redo:redoStack};
-  $('#convTitle').textContent=params?'🎛 変換を再調整':'🎨 ドット絵に変換';
+function openConverter(img,params,seq){convImg=img;convSeq=seq||null;convBackup={snap:snapshot(),undo:undoStack,redo:redoStack};
+  const row=$('#cvSeqRow');
+  if(convSeq){row.style.display='';const sl=$('#cvSeqFrame');sl.max=convSeq.frames.length;sl.value=1;
+    $('#cvSeqV').textContent='1 / '+convSeq.frames.length;}
+  else row.style.display='none';
+  $('#convTitle').textContent=params?'🎛 変換を再調整':(convSeq?'🎞 GIFをドット絵に変換':'🎨 ドット絵に変換');
   if(params){setConvParams(params);}
   else{ // fresh image: default the canvas long-edge to native dot resolution (capped so huge images stay manageable)
     const dot=+$('#cvDot').value;let cap=Math.min(256,Math.max(16,Math.round(srcLongEdge(img)/dot)));
     cap=Math.min(256,Math.ceil(cap/8)*8);$('#cvCap').value=cap;}
   $('#convModal').classList.add('show');convRender();}
-function reopenConverter(){if(!doc.convert||!doc.convert.src){toast('再調整できる変換元がありません');return;}
+function reopenConverter(){const c=doc.convert;if(!c||(!c.src&&!c.gif)){toast('再調整できる変換元がありません');return;}
+  if(c.gif){   // GIF sequence: re-decode the stored source and reopen in sequence mode
+    fetch(c.gif).then(r=>r.arrayBuffer()).then(buf=>{const g=decodeGIF(buf);g.src=c.gif;
+      openConverter(seqFrameCanvas(g,0),c.params,g);}).catch(()=>toast('変換元GIFを読み込めませんでした'));
+    return;}
   const img=new Image();img.onload=()=>openConverter(img,doc.convert.params);
   img.onerror=()=>toast('変換元画像を読み込めませんでした');img.src=doc.convert.src;}
-function closeConverter(){clearTimeout(convPrevTimer);convPrevTimer=null;$('#convModal').classList.remove('show');}
+function closeConverter(){clearTimeout(convPrevTimer);convPrevTimer=null;convSeq=null;
+  $('#cvSeqRow').style.display='none';$('#convModal').classList.remove('show');}
 $('#convModal').querySelectorAll('input,select').forEach(el=>{
   el.addEventListener('input',scheduleConvPreview);el.addEventListener('change',scheduleConvPreview);});
 // canvas long-edge quick presets
@@ -3402,7 +3504,30 @@ $('#cvFitMax').onclick=()=>{if(!convImg)return;const dot=+$('#cvDot').value;
 $('#cvFit64').onclick=()=>{$('#cvCap').value=64;convRender();};
 $('#cvFit128').onclick=()=>{$('#cvCap').value=128;convRender();};
 $('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
+// GIF sequence: convert EVERY frame with the same params + one shared palette into a multi-frame doc
+async function applyConvertSeq(p){
+  const seq=convSeq,back=convBackup,N=seq.frames.length;
+  closeConverter();toast('GIFを変換中… 0/'+N);
+  const k=Math.min(8,N),samples=[];   // pool a few evenly spaced frames for the shared palette
+  for(let s=0;s<k;s++){const i=Math.floor(s*(N-1)/Math.max(1,k-1));samples.push(seqFrameCanvas(seq,i,document.createElement('canvas')));}
+  const pal=Converter.paletteForImages(samples,p);const fp=Object.assign({},p,{fixedPalette:pal});
+  const results=[];
+  for(let i=0;i<N;i++){results.push(Converter.convert(seqFrameCanvas(seq,i),fp));
+    if(i%4===3){toast('GIFを変換中… '+(i+1)+'/'+N);await new Promise(r=>setTimeout(r,0));}}
+  const r0=results[0];newDoc(r0.gw,r0.gh);const L=doc.layers[0];
+  doc.frames=results.map((r,i)=>({id:uid(),duration:seq.frames[i].delay}));
+  results.forEach((r,i)=>{const cel=newCel();const d=r.data;
+    for(let j=0;j<r.gw*r.gh;j++)cel[j]=rgba(d[j*4],d[j*4+1],d[j*4+2],d[j*4+3]);doc.cels.set(celKey(L.id,i),cel);});
+  palette=['#00000000'].concat(pal.map(c=>'#'+[c[0],c[1],c[2]].map(v=>v.toString(16).padStart(2,'0')).join('')));
+  activeSwatch=1;activeFrame=0;selFrames=new Set([0]);
+  doc.convert={gif:seq.src,params:p};$('#mReconvert').style.display='';
+  renderPalette();refreshTimeline();render();
+  if(back){undoStack=back.undo.slice();undoStack.push(back.snap);if(undoStack.length>HISTORY_MAX)undoStack.shift();redoStack=[];updateUndoUI();}
+  convBackup=null;scheduleAutosave();
+  toast(`GIFを変換しました ${r0.gw}×${r0.gh} × ${N}フレーム`);
+}
 $('#convApply').onclick=()=>{if(!convImg)return;
+  if(convSeq){applyConvertSeq(convParams());return;}
   const p=convParams();const r=(convLastResult&&!convPrevTimer)?convLastResult:Converter.convert(convImg,p);
   const back=convBackup;   // pre-conversion doc + history (captured on open)
   applyConvertResult(r,convImg,p);   // renders via newDoc, which clears undo
@@ -3410,7 +3535,16 @@ $('#convApply').onclick=()=>{if(!convImg)return;
   if(back){undoStack=back.undo.slice();undoStack.push(back.snap);
     if(undoStack.length>HISTORY_MAX)undoStack.shift();redoStack=[];updateUndoUI();}
   convBackup=null;closeConverter();toast('変換しました '+r.gw+'×'+r.gh);};
-$('#convRaw').onclick=()=>{if(!convImg)return;convBackup=null;importImageRaw(convImg);closeConverter();};
+$('#convRaw').onclick=()=>{if(!convImg)return;convBackup=null;
+  if(convSeq){importGifRaw(convSeq);closeConverter();return;}
+  importImageRaw(convImg);closeConverter();};
+// 元サイズ for a GIF: every frame as-is into a multi-frame doc (連番読み込み)
+function importGifRaw(seq){const N=seq.frames.length;newDoc(seq.w,seq.h);const L=doc.layers[0];
+  doc.frames=seq.frames.map(f=>({id:uid(),duration:f.delay}));
+  seq.frames.forEach((f,i)=>{const cel=newCel();const d=f.data;
+    for(let j=0;j<seq.w*seq.h;j++)cel[j]=rgba(d[j*4],d[j*4+1],d[j*4+2],d[j*4+3]);doc.cels.set(celKey(L.id,i),cel);});
+  activeFrame=0;selFrames=new Set([0]);refreshTimeline();render();scheduleAutosave();
+  toast(`GIFを連番で読み込みました ${seq.w}×${seq.h} × ${N}フレーム`);}
 // finalize: paint result + record the non-destructive source/params
 function applyConvertResult(r,img,p){
   renderConvertedDoc(r);
@@ -3427,8 +3561,10 @@ function importImageRaw(img){
   toast('画像を読み込みました '+iw+'×'+ih+(scaled?'（縮小）':''));}
 // Menu: convert a chosen image file
 $('#fileConv').onchange=e=>{const f=e.target.files[0];if(!f)return;
-  const img=new Image();img.onload=()=>openConverter(img);
-  img.onerror=()=>toast('画像の読み込みに失敗');img.src=URL.createObjectURL(f);e.target.value='';};
+  const single=()=>{const img=new Image();img.onload=()=>openConverter(img);
+    img.onerror=()=>toast('画像の読み込みに失敗');img.src=URL.createObjectURL(f);};
+  if(isGifFile(f))loadGifFile(f,single);else single();   // GIF → 連番モードで変換器を開く
+  e.target.value='';};
 
 /* ---- Clipboard copy / paste ---- */
 async function copyFramePNG(){
