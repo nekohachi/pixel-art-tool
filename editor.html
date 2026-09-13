@@ -372,9 +372,11 @@
   .tl-lhead.active.sel{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent),inset -3px 0 0 var(--accent2);}
   .tl-lhead.group{background:var(--panel3);}
   .tl-lhead.group .lname{font-weight:700;}
-  .tl-lhead.child{box-shadow:inset 8px 0 0 var(--panel3);}
-  .tl-lhead.child .grip{margin-left:8px;}
-  .tl-lhead .collapse{width:20px;}
+  /* Photoshop-like hierarchy: one vertical guide per nesting level */
+  .tl-lhead .tree{flex:none;align-self:stretch;
+    background-image:repeating-linear-gradient(90deg,transparent 0 6px,var(--muted) 6px 7px,transparent 7px 14px);opacity:.5;}
+  .tl-lhead.group{background:linear-gradient(90deg,var(--panel3),var(--panel2));}
+  .tl-lhead .collapse{width:20px;font-size:11px;color:var(--text);}
   .tl-lhead .grip{width:22px;flex:none;text-align:center;cursor:grab;touch-action:none;
     color:var(--muted);font-size:16px;line-height:1;align-self:stretch;display:flex;align-items:center;justify-content:center;}
   /* buttonized eye / opacity / lock icons with dividers */
@@ -1058,6 +1060,10 @@ function blend(dst,src,srcA){
   return rgba(r|0,g|0,b|0,Math.round(outA));
 }
 function layerById(id){for(const l of doc.layers)if(l.id===id)return l;return null;}
+function layerDepth(L){let d=0,p=L.parent;while(p){const g=layerById(p);if(!g)break;d++;p=g.parent;}return d;}
+function ancestorCollapsed(L){let p=L.parent;while(p){const g=layerById(p);if(!g)break;if(g.collapsed)return true;p=g.parent;}return false;}
+function descendantIds(gid){const out=new Set();let grew=true;
+  while(grew){grew=false;doc.layers.forEach(l=>{if(l.parent&&(l.parent===gid||out.has(l.parent))&&!out.has(l.id)){out.add(l.id);grew=true;}});}return out;}
 function effHidden(L){let p=L.parent;while(p){const g=layerById(p);if(!g)break;if(!g.visible)return true;p=g.parent;}return false;}
 function groupOpacity(L){let m=1,p=L.parent;while(p){const g=layerById(p);if(!g)break;m*=g.opacity/255;p=g.parent;}return m;}
 function compositeFrame(frameIdx,ctxTarget){
@@ -2254,17 +2260,17 @@ function refreshTimeline(){
   }
   for(let li=doc.layers.length-1;li>=0;li--){
     const L=doc.layers[li];
-    if(L.parent){const g=layerById(L.parent);if(g&&g.collapsed)continue;}   // hide collapsed group's children
-    const isGroup=!!L.group,isChild=!!L.parent,isAdj=!!L.adj;
+    if(L.parent&&ancestorCollapsed(L))continue;   // inside a collapsed group (any level)
+    const isGroup=!!L.group,depth=layerDepth(L),isChild=depth>0,isAdj=!!L.adj;
     const row=document.createElement('div');row.className='tl-row';
     const head=document.createElement('div');
     head.className='tl-lhead'+(li===activeLayer?' active':'')+(selLayers.has(li)?' sel':'')+(isChild?' child':'')+(isGroup?' group':'');head.dataset.li=li;
-    head.innerHTML=`<span class="grip" title="ドラッグで並べ替え">⠿</span>`+
+    head.innerHTML=`<span class="tree" style="width:${depth*14}px"></span><span class="grip" title="ドラッグで並べ替え">⠿</span>`+
       (isGroup?`<button class="lbtn collapse" title="開閉">${L.collapsed?'▸':'▾'}</button>`:'')+
       `<button class="lbtn eye" title="表示/非表示">${L.visible?'👁':'🚫'}</button>`+
       `<button class="lbtn opac" title="不透明度（押しながら左右）">◐</button>`+
       `<button class="lbtn lock" title="ロック">${L.locked?'🔒':'🔓'}</button>`+
-      `<span class="lname" title="ダブルタップで名前変更">${isGroup?'📁 ':isAdj?'🎨 ':''}${L.name}</span>`;
+      `<span class="lname" title="ダブルタップで名前変更">${isGroup?(L.collapsed?'📁 ':'📂 '):isAdj?'🎨 ':''}${L.name}</span>`;
     head.querySelector('.grip').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();beginReorder('layer',head,e);});
     head.querySelector('.eye').onclick=e=>{e.stopPropagation();L.visible=!L.visible;refreshTimeline();render();};
     head.querySelector('.lock').onclick=e=>{e.stopPropagation();L.locked=!L.locked;refreshTimeline();};
@@ -2283,7 +2289,11 @@ function refreshTimeline(){
       cell.dataset.l=li;cell.dataset.f=fi;
       const cv=document.createElement('canvas');cv.width=W;cv.height=H;cell.appendChild(cv);
       drawCelThumb(cv.getContext('2d'),L.id,fi);
-      cell.onclick=()=>{if(justDragged)return;activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);refreshTimeline();render();};
+      cell.onclick=ev=>{if(justDragged)return;
+        const hold=selModeNow();   // tablet: ＋/− held or tap-locked
+        const mode=(ev.ctrlKey||ev.metaKey)?(ev.altKey?'subtract':ev.shiftKey?'add':'replace'):(hold!=='replace'?hold:null);
+        if(mode){loadCelSelection(li,fi,mode);return;}
+        activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);refreshTimeline();render();};
       bindCellLong(cell,li,fi);
       row.appendChild(cell);
     });
@@ -2317,6 +2327,13 @@ function bindTimelineItem(el,kind,idx){
     document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
   });
 }
+// Photoshop-style "load selection from transparency": Ctrl-click a cel (tablet: hold/lock ＋ or − and tap)
+function loadCelSelection(li,fi,mode){const L=doc.layers[li];if(!L||L.group||L.adj){toast('画像のあるレイヤーで使えます');return;}
+  const c=doc.cels.get(celKey(L.id,fi));const shp=selBuf();let n=0;
+  if(c)for(let i=0;i<W*H;i++)if(c[i]>>>24){shp[i]=1;n++;}
+  if(!n&&mode!=='subtract'){toast('このセルに画像がありません');return;}
+  pushUndo();applyShape(shp,mode);if(selection)computeSelBounds();
+  render();updateSelModVisible();toast(mode==='add'?'画像の範囲を追加':mode==='subtract'?'画像の範囲を除外':'画像の範囲を選択');}
 /* ---- Cel (layer×frame) clipboard: copy / paste / clear exactly ONE cel ---- */
 let celClip=null;   // {W,H,data} — shared across tabs
 function copyCel(li,fi){const L=doc.layers[li];if(!L)return;const c=doc.cels.get(celKey(L.id,fi));
@@ -2466,7 +2483,7 @@ function dupLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);pushUndo();
 function deleteLayersSel(){
   const ids=new Set();
   [...selLayers].forEach(i=>{const L=doc.layers[i];if(!L)return;ids.add(L.id);
-    if(L.group)doc.layers.forEach(c=>{if(c.parent===L.id)ids.add(c.id);});});   // a group takes its children
+    if(L.group)descendantIds(L.id).forEach(id=>ids.add(id));});   // a group takes its whole subtree
   const remaining=doc.layers.filter(l=>!ids.has(l.id));
   if(!remaining.some(l=>!l.group&&!l.adj)){toast('全レイヤーは削除できません');return;}
   pushUndo();
@@ -2478,17 +2495,21 @@ function addGroup(){pushUndo();
   const g={id:uid(),name:'グループ',visible:true,opacity:255,locked:false,group:true,collapsed:false};
   doc.layers.splice(activeLayer+1,0,g);activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();toast('グループを追加');}
 function groupLayersSel(){
-  const idxs=[...selLayers].sort((a,b)=>a-b);if(!idxs.length)return;
-  if(idxs.some(i=>doc.layers[i].group)){toast('グループ同士はまとめられません');return;}
-  pushUndo();
-  const gid=uid();const children=idxs.map(i=>doc.layers[i]);children.forEach(c=>c.parent=gid);
-  idxs.slice().sort((a,b)=>b-a).forEach(i=>doc.layers.splice(i,1));   // remove (high→low)
-  const at=Math.min(...idxs,doc.layers.length);
+  const sel=new Set([...selLayers].map(i=>doc.layers[i]).filter(Boolean).map(l=>l.id));if(!sel.size)return;
+  // a selected group brings its whole subtree; only the top-most selected items get the new parent
+  const take=new Set(sel);sel.forEach(id=>{const l=layerById(id);if(l&&l.group)descendantIds(id).forEach(d=>take.add(d));});
+  pushUndo();const gid=uid();
+  const block=doc.layers.filter(l=>take.has(l.id));            // array order (bottom→top) preserved
+  let outer;for(const l of block){if(!l.parent||!take.has(l.parent)){outer=l.parent;break;}}   // new group nests where the selection lived
+  block.forEach(l=>{if(!l.parent||!take.has(l.parent))l.parent=gid;});
+  const at=doc.layers.findIndex(l=>take.has(l.id));
+  doc.layers=doc.layers.filter(l=>!take.has(l.id));
   const group={id:gid,name:'グループ',visible:true,opacity:255,locked:false,group:true,collapsed:false};
-  doc.layers.splice(at,0,...children,group);   // children (bottom→top) then header on top
+  if(outer)group.parent=outer;
+  doc.layers.splice(Math.min(at,doc.layers.length),0,...block,group);   // subtree (bottom→top) then header on top
   activeLayer=doc.layers.indexOf(group);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('グループ化');}
 function ungroupLayer(idx){const g=doc.layers[idx];if(!g||!g.group)return;pushUndo();
-  doc.layers.forEach(l=>{if(l.parent===g.id)delete l.parent;});
+  doc.layers.forEach(l=>{if(l.parent===g.id){if(g.parent)l.parent=g.parent;else delete l.parent;}});   // children move up one level
   doc.layers.splice(idx,1);activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('グループ解除');}
 function copyLayersSel(){const idxs=[...selLayers].sort((a,b)=>a-b);
   layerClip=idxs.map(li=>{const L=doc.layers[li];return {name:L.name,opacity:L.opacity,visible:L.visible,locked:L.locked,W,H,
@@ -2594,15 +2615,16 @@ function finishDrag(e){
 // from the drop neighbours (Photoshop-style).
 function dropLayer(row,items,slot){
   const L=doc.layers[+row.dataset.li];if(!L)return;
-  const seq=items.map(el=>doc.layers[+el.dataset.li]).filter(l=>l&&l!==L);   // visible top→bottom, without L
-  let toVis=slot==null?seq.length:slot;const fromVis=items.map(el=>+el.dataset.li).indexOf(+row.dataset.li);
-  if(slot!=null&&slot>fromVis)toVis--;toVis=Math.max(0,Math.min(seq.length,toVis));
-  seq.splice(toVis,0,L);
-  const pos=seq.indexOf(L),aboveL=seq[pos-1],belowL=seq[pos+1];
+  const desc=L.group?descendantIds(L.id):new Set();const inBlock=l=>l===L||desc.has(l.id);
+  const vis=items.map(el=>doc.layers[+el.dataset.li]).filter(Boolean);   // visible top→bottom
+  const block=vis.filter(inBlock), seq=vis.filter(l=>!inBlock(l));      // dragged layer + its visible subtree
+  let toVis=slot==null?vis.length:slot;toVis-=vis.slice(0,toVis).filter(inBlock).length;
+  toVis=Math.max(0,Math.min(seq.length,toVis));seq.splice(toVis,0,...block);
+  const aboveL=seq[toVis-1],belowL=seq[toVis+block.length];
   let parent;
-  if(L.group)parent=undefined;                                   // groups stay top-level (single nesting)
-  else if(aboveL){parent=(aboveL.group&&!aboveL.collapsed)?aboveL.id:aboveL.parent;}
+  if(aboveL)parent=(aboveL.group&&!aboveL.collapsed)?aboveL.id:aboveL.parent;
   else if(belowL)parent=belowL.parent;
+  if(parent&&(parent===L.id||desc.has(parent)))parent=undefined;   // never nest a group into itself
   if(parent)L.parent=parent;else delete L.parent;
   pushUndo();rebuildLayerOrder(seq);
   activeLayer=doc.layers.indexOf(L);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを移動');
@@ -2611,7 +2633,9 @@ function dropLayer(row,items,slot){
 // any hidden children right under their (collapsed) group header.
 function rebuildLayerOrder(seqTB){
   const hidden={};doc.layers.forEach(l=>{if(l.parent&&!seqTB.includes(l))(hidden[l.parent]=hidden[l.parent]||[]).push(l);});
-  const outTB=[];seqTB.forEach(l=>{outTB.push(l);if(l.group&&hidden[l.id]){outTB.push(...hidden[l.id]);delete hidden[l.id];}});
+  // emit each visible row, then (recursively) its hidden subtree top→bottom so array order stays bottom→top
+  const outTB=[];const emit=l=>{outTB.push(l);const kids=hidden[l.id];if(kids){delete hidden[l.id];kids.slice().reverse().forEach(emit);}};
+  seqTB.forEach(emit);
   doc.layers.forEach(l=>{if(!outTB.includes(l))outTB.push(l);});   // safety: keep any stragglers
   doc.layers=outTB.reverse();
 }
