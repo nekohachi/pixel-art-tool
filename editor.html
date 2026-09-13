@@ -528,7 +528,7 @@
       <div class="cap">除外</div>
     </div>
   </div>
-  <button class="seldel" id="selDel" title="選択範囲を削除（元に戻す/2本指タップで復帰）">🗑</button>
+  <button class="seldel" id="selDel" title="削除：選択範囲があればその部分、なければセル全体（Delete）">🗑</button>
   <button class="selinvert" id="selInvert" title="選択範囲を反転">🔃</button>
   <button class="xfbtn" id="xfBtn" title="変形（選択画像を拡大縮小・回転・変形）">🔲</button>
   <!-- Transform toolbar: replaces the +/- modifiers while transforming -->
@@ -2706,8 +2706,10 @@ function gotoFrame(fi){activeFrame=Math.max(0,Math.min(doc.frames.length-1,fi));
 function gotoLayer(li){activeLayer=Math.max(0,Math.min(doc.layers.length-1,li));
   selLayers=new Set([activeLayer]);refreshTimeline();render();}
 $('#frFirst').onclick=()=>gotoFrame(0);
-$('#frPrev').onclick=()=>gotoFrame(activeFrame-1);
-$('#frNext').onclick=()=>gotoFrame(activeFrame+1);
+function prevFrameWrap(){const n=doc.frames.length;gotoFrame((activeFrame-1+n)%n);}   // wraps like Aseprite
+function nextFrameWrap(){gotoFrame((activeFrame+1)%doc.frames.length);}
+$('#frPrev').onclick=prevFrameWrap;
+$('#frNext').onclick=nextFrameWrap;
 $('#frLast').onclick=()=>gotoFrame(doc.frames.length-1);
 function addFrame(){pushUndo();doc.frames.push({id:uid(),duration:Math.round(1000/(+$('#fps').value||8))});activeFrame=doc.frames.length-1;selFrames=new Set([activeFrame]);refreshTimeline();render();}
 
@@ -2963,7 +2965,7 @@ function updateSelModVisible(){
   const t=!!xf;   // transforming: the transform toolbar replaces the selection controls
   $('#selMod').classList.toggle('show',!t&&(SELTOOL.includes(tool)||!!selection));
   $('#nudge').classList.toggle('show',!t&&!!selection);
-  $('#selDel').classList.toggle('show',!t&&!!selection);
+  $('#selDel').classList.toggle('show',!t);
   $('#selDeselect').classList.toggle('show',!t&&!!selection);
   $('#selInvert').classList.toggle('show',!t&&!!selection);
   $('#rangeTolFloat').classList.toggle('show',!t&&tool==='range');
@@ -2979,7 +2981,8 @@ function deleteSelection(){
   for(let i=0;i<W*H;i++)if(selection.mask[i])cel[i]=0;
   render();updateCelThumb(activeLayer,activeFrame);toast('選択範囲を削除');
 }
-$('#selDel').onclick=deleteSelection;
+function deleteOrClear(){if(selection)deleteSelection();else clearCel();}   // 🗑 / Delete: selection only, or the whole cel
+$('#selDel').onclick=deleteOrClear;
 // Nudge the selected content (and marquee) by 1px. A hold coalesces into
 // one undo step (firstPush only on press).
 function nudgeStep(dx,dy,firstPush){
@@ -3206,7 +3209,7 @@ document.addEventListener('keydown',e=>{
   if(selection&&k.startsWith('arrow')){const d={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]}[k];
     if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
   if(!selection&&k.startsWith('arrow')){e.preventDefault();   // no selection: ←→ frames, ↑↓ layers
-    if(k==='arrowleft')gotoFrame(activeFrame-1);else if(k==='arrowright')gotoFrame(activeFrame+1);
+    if(k==='arrowleft')prevFrameWrap();else if(k==='arrowright')nextFrameWrap();
     else if(k==='arrowup')gotoLayer(activeLayer+1);else if(k==='arrowdown')gotoLayer(activeLayer-1);return;}
   if(k===' '){e.preventDefault();if(!e.repeat)$('#playBtn').click();return;}   // Space = 再生/停止
   const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',a:'quick',k:'range',v:'move',h:'hand'};
@@ -3216,7 +3219,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Shift'){shiftHeld=true;updateShapeRegBtn();updateSelBtns();}
   if(e.key==='Control'||e.key==='Meta'){ctrlHeld=true;updateSelBtns();}
   if(e.key==='Alt'){altHeld=true;updateSelBtns();if(SELTOOL.includes(tool)||selection)e.preventDefault();}
-  if(k==='delete'||k==='backspace'){clearCel();}
+  if(k==='delete'||k==='backspace'){e.preventDefault();deleteOrClear();}
 });
 document.addEventListener('keyup',e=>{if(e.key===' ')spaceHand=false;
   if(e.key==='Shift'){shiftHeld=false;updateShapeRegBtn();updateSelBtns();}
