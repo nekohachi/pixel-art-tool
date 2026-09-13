@@ -354,9 +354,13 @@
     touch-action:none;display:flex;align-items:center;justify-content:center;}
   .tl-colgrip::after{content:"";width:3px;height:60%;border-radius:2px;background:var(--muted);opacity:.6;}
   .tl-colgrip:active::after{background:var(--accent);opacity:1;}
-  .tl-fnum{width:44px;flex:none;text-align:center;font-size:11px;color:var(--muted);
-    padding:9px 0;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
-    cursor:grab;touch-action:none;}
+  .tl-fnum{width:44px;flex:none;font-size:11px;color:var(--muted);
+    padding:2px 0 6px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
+    touch-action:none;display:flex;flex-direction:column;align-items:center;gap:1px;}
+  .tl-fnum .fgrip{width:100%;height:13px;font-size:10px;line-height:13px;text-align:center;
+    color:var(--muted);opacity:.6;cursor:grab;touch-action:none;}
+  .tl-fnum .fno{line-height:1.2;}
+  .tl-fnum.active .fgrip,.tl-fnum.sel .fgrip{color:#fff;opacity:.85;}
   .tl-fnum.active{background:var(--accent);color:#fff;}
   .tl-fnum.sel{background:var(--accent2);color:#fff;}
   .tl-fnum.active.sel{background:var(--accent);box-shadow:inset 0 -3px 0 var(--accent2);}
@@ -703,7 +707,8 @@
     <div class="mpane active" data-pane="file">
       <button class="hbtn" data-act="new">🆕 新規キャンバス</button>
       <button class="hbtn" data-act="resize">📐 キャンバスサイズ変更</button>
-      <button class="hbtn" data-act="save">💾 プロジェクト保存 (.pxproj)</button>
+      <button class="hbtn" data-act="save">💾 上書き保存 (Ctrl+S)</button>
+      <button class="hbtn" data-act="saveas">📄 別名で保存 (.pxproj)</button>
       <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
     </div>
     <div class="mpane" data-pane="import">
@@ -930,13 +935,14 @@ function newDoc(w,h){
 /* ================= Canvas tabs (multiple documents) ================= */
 let docTabs=[], curTab=0, tabSeq=2;
 // bundle up / restore the per-document mutable globals
+let projHandle=null;   // File System Access handle of the current tab's .pxproj (overwrite target)
 function bundleFromGlobals(name){return {doc,W,H,activeLayer,activeFrame,undoStack,redoStack,
-  selection,palette,activeSwatch,zoom,panX,panY,name};}
+  selection,palette,activeSwatch,zoom,panX,panY,projHandle,name};}
 function loadBundle(s){
   if(playing)stopPlay();activeTag=null;
   doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
   undoStack=s.undoStack;redoStack=s.redoStack;selection=s.selection;
-  palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;
+  palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;projHandle=s.projHandle||null;
   selLayers=new Set([activeLayer]);selFrames=new Set([activeFrame]);
   $('#docsize').textContent=W+'×'+H;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display=(doc&&doc.convert)?'':'none';
@@ -963,9 +969,9 @@ function promptCloseTab(i){if(docTabs.length<=1){toast('最後のキャンバス
   pendingCloseTab=i;
   $('#tabCloseMsg').textContent='「'+(docTabs[i]?docTabs[i].name:'')+'」を閉じますか？未保存の内容は失われます。';
   $('#tabCloseModal').classList.add('show');}
-function finishCloseTab(save){const i=pendingCloseTab;$('#tabCloseModal').classList.remove('show');
+async function finishCloseTab(save){const i=pendingCloseTab;$('#tabCloseModal').classList.remove('show');
   if(i<0)return;pendingCloseTab=-1;
-  if(save){if(i!==curTab)switchTab(i);saveProject();}
+  if(save){if(i!==curTab)switchTab(i);await saveProjectOverwrite();}
   closeTab(i);}
 // create a fresh blank document in a NEW tab and switch to it
 function newDocTab(w,h,name){
@@ -975,7 +981,7 @@ function newDocTab(w,h,name){
        frames:[{id:uid(),duration:125}], cels:new Map()};
   activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;
   selLayers=new Set([0]);selFrames=new Set([0]);
-  palette=DEFAULT_PAL.slice();activeSwatch=18;
+  palette=DEFAULT_PAL.slice();activeSwatch=18;projHandle=null;
   const nm=name||('キャンバス '+(tabSeq++));
   docTabs.push(bundleFromGlobals(nm));curTab=docTabs.length-1;
   $('#docsize').textContent=W+'×'+H;
@@ -2206,8 +2212,10 @@ function refreshTimeline(){
   hrow.appendChild(corner);
   doc.frames.forEach((f,fi)=>{
     const c=document.createElement('div');
-    c.className='tl-fnum'+(fi===activeFrame?' active':'')+(selFrames.has(fi)?' sel':'');c.textContent=fi+1;
+    c.className='tl-fnum'+(fi===activeFrame?' active':'')+(selFrames.has(fi)?' sel':'');
     c.dataset.fi=fi;
+    c.innerHTML='<span class="grip fgrip" title="ドラッグで並べ替え">⠿</span><span class="fno">'+(fi+1)+'</span>';
+    c.querySelector('.grip').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();beginReorder('frame',c,e);});
     bindTimelineItem(c,'frame',fi);
     hrow.appendChild(c);
   });
@@ -3134,13 +3142,14 @@ document.addEventListener('keydown',e=>{
     if(k==='escape'){e.preventDefault();cancelTransform();return;}}
   if((e.ctrlKey||e.metaKey)&&k==='c'&&selection){e.preventDefault();copySelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='v'&&pixClip){e.preventDefault();pasteSelectionPixels();return;}
+  if((e.ctrlKey||e.metaKey)&&k==='s'){e.preventDefault();saveProjectOverwrite();return;}
   if(k==='escape'){deselect();return;}
   if(selection&&k.startsWith('arrow')){const d={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]}[k];
     if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
-  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',q:'lasso',w:'wand',a:'quick',k:'range',v:'move',h:'hand'};
+  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',a:'quick',k:'range',v:'move',h:'hand'};
   if(map[k])setTool(map[k]);
-  if(k==='['){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
-  if(k===']'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
+  if(k==='['||k==='q'){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
+  if(k===']'||k==='w'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===' ')spaceHand=true;
   if(e.key==='Shift'){shiftHeld=true;updateShapeRegBtn();}
   if(e.key==='Control'||e.key==='Meta')ctrlHeld=true;
@@ -3168,7 +3177,7 @@ $$('#menuModal .mtab').forEach(t=>t.onclick=()=>{const tab=t.dataset.tab;
   $$('#menuModal .mpane').forEach(p=>p.classList.toggle('active',p.dataset.pane===tab));});
 function menuAction(a){$('#menuModal').classList.remove('show');
   switch(a){case 'new':openSize('new');break;case 'resize':openSize('resize');break;
-    case 'import':$('#fileImg').click();break;case 'save':saveProject();break;case 'load':$('#fileProj').click();break;
+    case 'import':$('#fileImg').click();break;case 'save':saveProjectOverwrite();break;case 'saveas':saveProjectAs();break;case 'load':openProject();break;
     case 'convert':$('#fileConv').click();break;case 'reconvert':reopenConverter();break;
     case 'paste':pasteFromClipboard();break;case 'copyPng':copyFramePNG();break;
     case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
@@ -3185,7 +3194,7 @@ $('#tabCancelClose').onclick=()=>{$('#tabCloseModal').classList.remove('show');p
 $$('#presets .hbtn').forEach(b=>b.onclick=()=>{$('#newW').value=b.dataset.w;$('#newH').value=b.dataset.h;});
 $('#sizeOk').onclick=()=>{const w=Math.max(1,Math.min(512,+$('#newW').value|0)),h=Math.max(1,Math.min(512,+$('#newH').value|0));
   $('#sizeModal').classList.remove('show');
-  if(sizeMode==='new'){newDoc(w,h);toast(w+'×'+h+' 新規作成');}else resizeCanvas(w,h);};
+  if(sizeMode==='new'){newDoc(w,h);projHandle=null;toast(w+'×'+h+' 新規作成');}else resizeCanvas(w,h);};
 function resizeCanvas(nw,nh){pushUndo();const ow=W,oh=H,nm=new Map();
   doc.cels.forEach((v,k)=>{const nc=new Uint32Array(nw*nh);const cw=Math.min(ow,nw),ch=Math.min(oh,nh);
     for(let y=0;y<ch;y++)for(let x=0;x<cw;x++)nc[y*nw+x]=v[y*ow+x];nm.set(k,nc);});
@@ -3730,20 +3739,42 @@ window.addEventListener('load',()=>{try{const bridge=sessionStorage.getItem('pxb
 /* ================= Save / Load ================= */
 function b64FromU32(u32){const u8=new Uint8Array(u32.buffer);let s='';for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
 function u32FromB64(b64){const s=atob(b64);const u8=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u8[i]=s.charCodeAt(i);return new Uint32Array(u8.buffer);}
-function saveProject(){const cels={};doc.cels.forEach((v,k)=>cels[k]=b64FromU32(v));
-  const data={ver:1,W,H,palette,layers:doc.layers,frames:doc.frames,cels,activeLayer,activeFrame,convert:doc.convert||null};
-  downloadBlob(new Blob([JSON.stringify(data)],{type:'application/json'}),'pixel-'+Date.now()+'.pxproj');toast('保存しました');}
-$('#fileProj').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-  rd.onload=()=>{try{const d=JSON.parse(rd.result);W=d.W;H=d.H;doc={layers:d.layers,frames:d.frames,cels:new Map()};
+function projData(){const cels={};doc.cels.forEach((v,k)=>cels[k]=b64FromU32(v));
+  return {ver:1,W,H,palette,layers:doc.layers,frames:doc.frames,tags:doc.tags||null,cels,activeLayer,activeFrame,convert:doc.convert||null};}
+function projFileName(){return (((docTabs[curTab]&&docTabs[curTab].name)||'pixel').replace(/[^\w\-\u3040-\u30ff\u4e00-\u9faf]+/g,'_')||'pixel')+'.pxproj';}
+async function writeProjTo(handle){const w=await handle.createWritable();
+  await w.write(new Blob([JSON.stringify(projData())],{type:'application/json'}));await w.close();}
+// 別名で保存: pick a location (File System Access) or download; remember the handle to overwrite later
+async function saveProjectAs(){const name=projFileName();
+  if(window.showSaveFilePicker){try{
+    const h=await window.showSaveFilePicker({suggestedName:name,types:[{description:'Pixel project',accept:{'application/json':['.pxproj']}}]});
+    await writeProjTo(h);projHandle=h;if(h.name)setTabName(h.name.replace(/\.pxproj$/i,''));toast('保存しました');return;
+  }catch(e){if(e&&e.name==='AbortError')return;}}
+  downloadBlob(new Blob([JSON.stringify(projData())],{type:'application/json'}),name);toast('保存しました（ダウンロード）');}
+// 上書き保存: write straight back to the remembered file; if none yet, fall back to 別名で保存
+async function saveProjectOverwrite(){
+  if(projHandle){try{await writeProjTo(projHandle);toast('上書き保存しました');return;}
+    catch(e){toast('上書き保存できないため別名で保存します');}}
+  return saveProjectAs();}
+const saveProject=saveProjectAs;   // legacy alias
+function loadProjectText(text,name,handle){try{const d=JSON.parse(text);W=d.W;H=d.H;
+    doc={layers:d.layers,frames:d.frames,cels:new Map(),tags:d.tags||null};
     for(const k in d.cels)doc.cels.set(k,u32FromB64(d.cels[k]));palette=d.palette||DEFAULT_PAL.slice();
     doc.convert=d.convert||null;$('#mReconvert').style.display=doc.convert?'':'none';
     activeLayer=d.activeLayer||0;activeFrame=d.activeFrame||0;
-    nextId=Math.max(...doc.layers.map(l=>l.id),...doc.frames.map(f=>f.id),0)+1;
-    undoStack=[];redoStack=[];selection=null;ensureComp();$('#docsize').textContent=W+'×'+H;
+    nextId=Math.max(...doc.layers.map(l=>+l.id),...doc.frames.map(f=>+f.id),0)+1;
+    undoStack=[];redoStack=[];selection=null;projHandle=handle||null;ensureComp();$('#docsize').textContent=W+'×'+H;
     fitView();renderPalette();refreshTimeline();render();updateUndoUI();
-    setTabName((f.name||'プロジェクト').replace(/\.pxproj$/i,''));toast('読み込みました');}
-    catch(err){toast('読み込み失敗');console.error(err);}};
-  rd.readAsText(f);e.target.value='';};
+    setTabName((name||'プロジェクト').replace(/\.pxproj$/i,''));if(typeof scheduleAutosave==='function')scheduleAutosave();toast('読み込みました');}
+    catch(err){toast('読み込み失敗');console.error(err);}}
+$('#fileProj').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>loadProjectText(rd.result,f.name,null);rd.readAsText(f);e.target.value='';};
+async function openProject(){
+  if(window.showOpenFilePicker){try{
+    const [h]=await window.showOpenFilePicker({types:[{description:'Pixel project',accept:{'application/json':['.pxproj']}}]});
+    const f=await h.getFile();loadProjectText(await f.text(),f.name,h);return;
+  }catch(e){if(e&&e.name==='AbortError')return;}}
+  $('#fileProj').click();}
 
 /* ================= Export ================= */
 function frameToCanvas(fi,scale=1){const c=document.createElement('canvas');c.width=W*scale;c.height=H*scale;
