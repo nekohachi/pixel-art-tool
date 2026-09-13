@@ -939,7 +939,7 @@ let projHandle=null;   // File System Access handle of the current tab's .pxproj
 function bundleFromGlobals(name){return {doc,W,H,activeLayer,activeFrame,undoStack,redoStack,
   selection,palette,activeSwatch,zoom,panX,panY,projHandle,name};}
 function loadBundle(s){
-  if(playing)stopPlay();activeTag=null;
+  if(playing)stopPlay();activeTag=null;floating=null;
   doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
   undoStack=s.undoStack;redoStack=s.redoStack;selection=s.selection;
   palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;projHandle=s.projHandle||null;
@@ -981,7 +981,7 @@ function newDocTab(w,h,name){
        frames:[{id:uid(),duration:125}], cels:new Map()};
   activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;
   selLayers=new Set([0]);selFrames=new Set([0]);
-  palette=DEFAULT_PAL.slice();activeSwatch=18;projHandle=null;
+  palette=DEFAULT_PAL.slice();activeSwatch=18;projHandle=null;floating=null;
   const nm=name||('キャンバス '+(tabSeq++));
   docTabs.push(bundleFromGlobals(nm));curTab=docTabs.length-1;
   $('#docsize').textContent=W+'×'+H;
@@ -1000,7 +1000,8 @@ function snapshot(){
   const cels={};doc.cels.forEach((v,k)=>{cels[k]=v.slice();});
   return {W,H,layers:JSON.parse(JSON.stringify(doc.layers)),
     frames:JSON.parse(JSON.stringify(doc.frames)),cels,activeLayer,activeFrame,
-    sel:selection?selection.mask.slice():null, convert:doc.convert||null};
+    sel:selection?selection.mask.slice():null, convert:doc.convert||null,
+    floating:floating?cloneFloating(floating):null};
 }
 function restore(s){
   W=s.W;H=s.H;
@@ -1012,12 +1013,12 @@ function restore(s){
   // selection is part of history: restore it (guarded to current size)
   if(s.sel&&s.sel.length===W*H){selection={mask:s.sel.slice()};computeSelBounds();}
   else selection=null;
-  doc.convert=s.convert||null;
+  doc.convert=s.convert||null;floating=s.floating?cloneFloating(s.floating):null;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display=doc.convert?'':'none';
   $('#docsize').textContent=W+'×'+H;ensureComp();refreshTimeline();render();
 }
 let lastClearedRedo=[];
-function pushUndo(){undoStack.push(snapshot());if(undoStack.length>HISTORY_MAX)undoStack.shift();lastClearedRedo=redoStack;redoStack=[];updateUndoUI();if(typeof scheduleAutosave==='function')scheduleAutosave();}
+function pushUndo(){undoStack.push(snapshot());if(!liftingMove)floating=null;/* snapshot first so undo restores the floating patch */if(undoStack.length>HISTORY_MAX)undoStack.shift();lastClearedRedo=redoStack;redoStack=[];updateUndoUI();if(typeof scheduleAutosave==='function')scheduleAutosave();}
 function undo(){if(!undoStack.length)return;redoStack.push(snapshot());restore(undoStack.pop());updateUndoUI();toast('元に戻す');}
 function redo(){if(!redoStack.length)return;undoStack.push(snapshot());restore(redoStack.pop());updateUndoUI();toast('やり直し');}
 function updateUndoUI(){const u=undoStack.length?1:.4,r=redoStack.length?1:.4;
@@ -1144,7 +1145,7 @@ function selBuf(){return new Uint8Array(W*H);}
 function hasSel(){return !!selection;}
 function inSelection(x,y){if(!selection)return true;return !!selection.mask[y*W+x];}
 function selModeFrom(e){
-  if(e&&(e.ctrlKey||e.metaKey))return 'add';
+  if(e&&e.shiftKey)return 'add';   // Shift = 追加 (Photoshop)
   if(e&&e.altKey)return 'subtract';
   if(selHold)return selHold;      // finger held on +/- button
   return stickySel;               // tap-locked mode
@@ -1243,7 +1244,7 @@ function quickFlood(x,y,subtract){
   let any=false;for(let i=0;i<selection.mask.length;i++)if(selection.mask[i]){any=true;break;}
   if(!any)selection=null;else computeSelBounds();
 }
-function deselect(){selection=null;lastRange=null;render();}
+function deselect(){selection=null;lastRange=null;floating=null;render();}
 let antsPhase=0;
 function drawSelectionOverlay(){
   // live previews
@@ -1780,42 +1781,51 @@ function updateShapePreview(x,y){
 /* Move tool with mask. moveMode:
    'image'  = cut & move the pixels inside the selection (leaves a gap; gap-fill optional)
    'sel'    = move only the selection outline (marquee); pixels stay put            */
+/* ---- Floating selection: the moved image lives in its own patch, so pixels that leave the
+   canvas are kept and come back when moved in again (until the selection is dropped/edited) ---- */
+let floating=null, liftingMove=false;
+function cloneFloating(F){return Object.assign({},F,{buf:F.buf.slice(),fmask:F.fmask.slice(),base:F.base.slice(),orig:F.orig.slice(),origMask:F.origMask.slice()});}
+function liftSelection(){
+  const L=doc.layers[activeLayer];if(!L||!selection)return null;
+  if(floating&&floating.lid===L.id&&floating.fi===activeFrame&&floating.W===W&&floating.H===H)return floating;   // keep the patch (off-canvas pixels intact)
+  floating=null;computeSelBounds();const b=selection.bounds;if(b.x1<0)return null;
+  const cel=activeCel();const fw=b.x1-b.x0+1,fh=b.y1-b.y0+1;
+  const buf=new Uint32Array(fw*fh),fmask=new Uint8Array(fw*fh);
+  for(let y=0;y<fh;y++)for(let x=0;x<fw;x++){const si=(b.y0+y)*W+(b.x0+x);if(selection.mask[si]){fmask[y*fw+x]=1;buf[y*fw+x]=cel[si];}}
+  const orig=cel.slice(),base=cel.slice();for(let i=0;i<W*H;i++)if(selection.mask[i])base[i]=0;
+  floating={lid:L.id,fi:activeFrame,W,H,x:b.x0,y:b.y0,x0:b.x0,y0:b.y0,fw,fh,buf,fmask,base,orig,origMask:selection.mask.slice()};
+  return floating;}
+// cel = base + patch stamped at its current (possibly off-canvas) position; selection = visible part of the patch
+function composeFloating(){const F=floating;if(!F)return;const cel=activeCel();cel.set(F.base);const nm=selBuf();
+  for(let y=0;y<F.fh;y++){const cy=F.y+y;if(cy<0||cy>=H)continue;
+    for(let x=0;x<F.fw;x++){const cx=F.x+x;if(cx<0||cx>=W)continue;const k=y*F.fw+x;if(!F.fmask[k])continue;
+      const di=cy*W+cx;nm[di]=1;const px=F.buf[k];if(px)cel[di]=px;}}
+  const dx=F.x-F.x0,dy=F.y-F.y0;if(fillOnMove&&(dx||dy))edgeExtendFill(cel,F.orig,F.origMask,dx,dy);
+  selection.mask=nm;computeSelBounds();}
 let moveMode='image';
 function beginMove(x,y){
-  pushUndo();moving=true;
-  const cel=activeCel();const base=cel.slice();const mask=selection?selection.mask:null;
-  const buf=new Uint32Array(W*H);
-  for(let i=0;i<W*H;i++)if(!mask||mask[i]){buf[i]=cel[i];}
-  moveData={base,buf,mask,baseMask:mask?mask.slice():null,ox:x,oy:y,dx:0,dy:0};
+  if(selection&&moveMode==='sel'){   // marquee-only: pixels stay, any floating image is dropped
+    floating=null;pushUndo();moving=true;moveData={baseMask:selection.mask.slice(),ox:x,oy:y,dx:0,dy:0};return;}
+  if(selection){   // move the selected image as a floating patch (survives leaving the canvas)
+    liftingMove=true;pushUndo();liftingMove=false;const F=liftSelection();if(!F)return;
+    moving=true;moveData={float:true,fx:F.x,fy:F.y,ox:x,oy:y,dx:0,dy:0};return;}
+  pushUndo();moving=true;   // no selection: move the whole layer
+  const cel=activeCel();moveData={base:cel.slice(),buf:cel.slice(),ox:x,oy:y,dx:0,dy:0};
 }
 function shiftMaskLive(){const{dx,dy,baseMask}=moveData;const nm=selBuf();
   for(let i=0;i<W*H;i++)if(baseMask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
   selection.mask=nm;computeSelBounds();}
 function doMove(e){
   const{x,y}=screenToPix(e.clientX,e.clientY);moveData.dx=x-moveData.ox;moveData.dy=y-moveData.oy;
-  if(moveMode==='sel'&&selection&&moveData.baseMask){shiftMaskLive();render();return;}
-  const cel=activeCel();cel.set(moveData.base);const{buf,mask,dx,dy}=moveData;
-  for(let i=0;i<W*H;i++)if(!mask||mask[i])cel[i]=0;
-  for(let i=0;i<W*H;i++){
-    if(mask&&!mask[i])continue;if(!mask&&buf[i]===0)continue;
-    const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;
-    if(inBounds(nx,ny)&&buf[i]!==0)cel[ny*W+nx]=buf[i];
-  }
-  if(fillOnMove&&mask&&(dx||dy))edgeExtendFill(cel,moveData.base,mask,dx,dy);
+  if(moveData.float){floating.x=moveData.fx+moveData.dx;floating.y=moveData.fy+moveData.dy;composeFloating();render();return;}
+  if(moveData.baseMask){shiftMaskLive();render();return;}
+  const cel=activeCel();const{buf,dx,dy}=moveData;cel.fill(0);
+  for(let i=0;i<W*H;i++){if(buf[i]===0)continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=buf[i];}
   render();
 }
 function endMove(cancel){
   moving=false;
   if(cancel){if(undoStack.length)restore(undoStack.pop());updateUndoUI();moveData=null;render();return;}
-  if(moveMode==='sel'&&selection&&moveData){   // marquee-only: pixels untouched, mask already shifted
-    moveData=null;render();return;}
-  if(selection&&moveData){
-    if(fillOnMove&&moveData.mask&&(moveData.dx||moveData.dy))
-      edgeExtendFill(activeCel(),moveData.base,moveData.mask,moveData.dx,moveData.dy);
-    const nm=selBuf();const{dx,dy}=moveData;
-    for(let i=0;i<W*H;i++)if(selection.mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
-    selection.mask=nm;computeSelBounds();
-  }
   moveData=null;render();updateCelThumb(activeLayer,activeFrame);
 }
 
@@ -2281,6 +2291,9 @@ function refreshTimeline(){
   }
   if(typeof updateAdjustPanelForLayer==='function')updateAdjustPanelForLayer();
 }
+let lastTap={kind:null,idx:-1,t:0};
+function startRenameLayer(li){const ln=$('#tlGrid .tl-lhead[data-li="'+li+'"] .lname');if(!ln)return;
+  ln.contentEditable=true;ln.focus();const r=document.createRange();r.selectNodeContents(ln);const sl=getSelection();sl.removeAllRanges();sl.addRange(r);}
 // Unified tap / long-press(radial) / swipe-select / 2-finger handler for layer heads & frame numbers
 let tlPtrs=new Set();
 function bindTimelineItem(el,kind,idx){
@@ -2296,7 +2309,9 @@ function bindTimelineItem(el,kind,idx){
       if(phase==='pending'&&Math.hypot(ev.clientX-sx,ev.clientY-sy)>10)phase='swipe';
       if(phase==='swipe')selectRange(kind,idx,itemAt(kind,ev.clientX,ev.clientY));};
     const up=ev=>{clearTimeout(lt);const p=phase;cleanup();
-      if(p==='pending')tapSelect(kind,idx);};
+      if(p!=='pending')return;const now=performance.now();
+      if(kind==='layer'&&lastTap.kind==='layer'&&lastTap.idx===idx&&now-lastTap.t<420){lastTap={kind:null,idx:-1,t:0};startRenameLayer(idx);return;}
+      lastTap={kind,idx,t:now};tapSelect(kind,idx);};
     function cleanup(){document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
       document.removeEventListener('pointercancel',up);tlPtrs.delete(e.pointerId);}
     document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
@@ -2915,8 +2930,8 @@ function bindSelMod(btn,mode){
 }
 bindSelMod($('#selPlus'),'add');bindSelMod($('#selMinus'),'subtract');
 function updateSelBtns(){
-  const keyOK=SELTOOL.includes(tool);   // PC: Ctrl = 追加, Alt = 除外 (same as the +/- buttons)
-  const add=selHold==='add'||stickySel==='add'||(keyOK&&ctrlHeld&&!altHeld);
+  const keyOK=SELTOOL.includes(tool);   // PC: Shift = 追加, Alt = 除外 (same as the +/- buttons)
+  const add=selHold==='add'||stickySel==='add'||(keyOK&&shiftHeld&&!altHeld);
   const sub=selHold==='subtract'||stickySel==='subtract'||(keyOK&&altHeld);
   $('#selPlus').classList.toggle('on',add);$('#selMinus').classList.toggle('on',sub);
 }
@@ -2946,18 +2961,13 @@ $('#selDel').onclick=deleteSelection;
 function nudgeStep(dx,dy,firstPush){
   if(!selection)return;
   if(moveMode==='sel'){   // marquee-only nudge: shift the selection outline, leave pixels
-    if(firstPush)pushUndo();const mask=selection.mask,nm=selBuf();
+    floating=null;if(firstPush)pushUndo();const mask=selection.mask,nm=selBuf();
     for(let i=0;i<W*H;i++)if(mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
     selection.mask=nm;computeSelBounds();render();return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');stopNudge();return;}
-  if(firstPush)pushUndo();
-  const cel=activeCel(),mask=selection.mask,origCel=cel.slice();
-  for(let i=0;i<W*H;i++)if(mask[i])cel[i]=0;
-  for(let i=0;i<W*H;i++){if(!mask[i])continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=origCel[i];}
-  if(fillOnMove)edgeExtendFill(cel,origCel,mask,dx,dy);
-  const nm=selBuf();
-  for(let i=0;i<W*H;i++)if(mask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
-  selection.mask=nm;computeSelBounds();render();updateCelThumb(activeLayer,activeFrame);
+  if(firstPush){liftingMove=true;pushUndo();liftingMove=false;}
+  const F=liftSelection();if(!F)return;
+  F.x+=dx;F.y+=dy;composeFloating();render();updateCelThumb(activeLayer,activeFrame);
 }
 // Fill the vacated gap by CONTINUING the stationary background: when a selection
 // splits a connected image and is moved, each emptied gap pixel copies the nearest
@@ -3179,13 +3189,13 @@ document.addEventListener('keydown',e=>{
   if(map[k])setTool(map[k]);
   if(k==='['||k==='q'){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===']'||k==='w'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
-  if(e.key==='Shift'){shiftHeld=true;updateShapeRegBtn();}
+  if(e.key==='Shift'){shiftHeld=true;updateShapeRegBtn();updateSelBtns();}
   if(e.key==='Control'||e.key==='Meta'){ctrlHeld=true;updateSelBtns();}
   if(e.key==='Alt'){altHeld=true;updateSelBtns();if(SELTOOL.includes(tool)||selection)e.preventDefault();}
   if(k==='delete'||k==='backspace'){clearCel();}
 });
 document.addEventListener('keyup',e=>{if(e.key===' ')spaceHand=false;
-  if(e.key==='Shift'){shiftHeld=false;updateShapeRegBtn();}
+  if(e.key==='Shift'){shiftHeld=false;updateShapeRegBtn();updateSelBtns();}
   if(e.key==='Control'||e.key==='Meta'){ctrlHeld=false;updateSelBtns();}
   if(e.key==='Alt'){altHeld=false;updateSelBtns();if(SELTOOL.includes(tool)||selection)e.preventDefault();}});
 // keys released while the window is unfocused would otherwise stay 'held'
