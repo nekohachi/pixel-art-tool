@@ -1569,6 +1569,7 @@ function cancelMove(){
 
 stage.addEventListener('pointerdown',e=>{
   try{stage.setPointerCapture(e.pointerId);}catch(_){}
+  if(e.button===1){e.preventDefault();panning=true;panStart={x:e.clientX,y:e.clientY,panX,panY};return;}   // middle button: pan
   const now=performance.now();
   if(pointers.size===0)gesture={maxFingers:0,startT:now,cx:e.clientX,cy:e.clientY,zoom0:zoom,moved:0,zoomed:false};
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
@@ -1763,6 +1764,9 @@ function finishAll(){
 }
 stage.addEventListener('pointerup',endPointer);
 stage.addEventListener('pointercancel',endPointer);
+stage.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault();});   // no autoscroll on middle press
+stage.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault();});
+stage.addEventListener('contextmenu',e=>e.preventDefault());                 // Ctrl/right-click never opens a menu
 stage.addEventListener('pointerleave',e=>{if(e.pointerType!=='touch')bc.style.display='none';});
 
 let curShape=null;   // the shape being drawn / edited
@@ -1858,7 +1862,7 @@ function maybeStartOutsideMenu(e,x,y){
 
 /* ================= Free transform (Photoshop-style) ================= */
 // xf = {srcW,srcH,srcBuf,base,corners:[TL,TR,BR,BL]} (corners in image coords).
-let xfShift=false, xfCtrl=false, ctrlHeld=false;
+let xfShift=false, xfCtrl=false, ctrlHeld=false, altHeld=false;
 const XF_HIT=22;   // handle hit radius (screen px)
 function xfProp(){return xfShift||shiftHeld;}       // keep aspect ratio
 function xfDistort(){return xfCtrl||ctrlHeld;}      // free-distort a single corner
@@ -2911,7 +2915,9 @@ function bindSelMod(btn,mode){
 }
 bindSelMod($('#selPlus'),'add');bindSelMod($('#selMinus'),'subtract');
 function updateSelBtns(){
-  const add=selHold==='add'||stickySel==='add', sub=selHold==='subtract'||stickySel==='subtract';
+  const keyOK=SELTOOL.includes(tool);   // PC: Ctrl = 追加, Alt = 除外 (same as the +/- buttons)
+  const add=selHold==='add'||stickySel==='add'||(keyOK&&ctrlHeld&&!altHeld);
+  const sub=selHold==='subtract'||stickySel==='subtract'||(keyOK&&altHeld);
   $('#selPlus').classList.toggle('on',add);$('#selMinus').classList.toggle('on',sub);
 }
 function updateSelModVisible(){
@@ -3174,12 +3180,16 @@ document.addEventListener('keydown',e=>{
   if(k==='['||k==='q'){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===']'||k==='w'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(e.key==='Shift'){shiftHeld=true;updateShapeRegBtn();}
-  if(e.key==='Control'||e.key==='Meta')ctrlHeld=true;
+  if(e.key==='Control'||e.key==='Meta'){ctrlHeld=true;updateSelBtns();}
+  if(e.key==='Alt'){altHeld=true;updateSelBtns();if(SELTOOL.includes(tool)||selection)e.preventDefault();}
   if(k==='delete'||k==='backspace'){clearCel();}
 });
 document.addEventListener('keyup',e=>{if(e.key===' ')spaceHand=false;
   if(e.key==='Shift'){shiftHeld=false;updateShapeRegBtn();}
-  if(e.key==='Control'||e.key==='Meta')ctrlHeld=false;});
+  if(e.key==='Control'||e.key==='Meta'){ctrlHeld=false;updateSelBtns();}
+  if(e.key==='Alt'){altHeld=false;updateSelBtns();if(SELTOOL.includes(tool)||selection)e.preventDefault();}});
+// keys released while the window is unfocused would otherwise stay 'held'
+window.addEventListener('blur',()=>{ctrlHeld=false;altHeld=false;shiftHeld=false;spaceHand=false;updateSelBtns();updateShapeRegBtn();});
 stage.addEventListener('wheel',e=>{
   e.preventDefault();const rect=stage.getBoundingClientRect();
   const ox=(e.clientX-rect.left-panX)/zoom,oy=(e.clientY-rect.top-panY)/zoom;
