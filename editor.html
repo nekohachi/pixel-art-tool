@@ -156,6 +156,8 @@
     border-radius:9px;font-size:22px;line-height:1;cursor:pointer;flex:none;padding:0;color:var(--text);
     touch-action:manipulation;display:flex;align-items:center;justify-content:center;}
   .ghbtn:active{background:var(--accent);border-color:var(--accent);}
+  /* off-screen (not display:none) so iOS reliably opens the picker */
+  .hiddenfile{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;}
   .brushcursor.round{border-radius:50%;}
   .brushcursor{position:absolute;pointer-events:none;border:1px solid #fff;
     box-shadow:0 0 0 1px #000;display:none;z-index:5;mix-blend-mode:difference;}
@@ -885,9 +887,9 @@
   </div>
 </div>
 
-<input type="file" id="fileImg" accept="image/*,.ase,.aseprite" style="display:none">
-<input type="file" id="fileConv" accept="image/*" style="display:none">
-<input type="file" id="fileProj" accept=".pxproj,application/json" style="display:none">
+<input type="file" id="fileImg" class="hiddenfile">
+<input type="file" id="fileConv" accept="image/*" class="hiddenfile">
+<input type="file" id="fileProj" class="hiddenfile">
 <div class="toast" id="toast"></div>
 
 <!-- Eyedropper loupe (Procreate-style magnified cut-in) -->
@@ -3826,7 +3828,10 @@ async function saveProjectOverwrite(){
     catch(e){toast('上書き保存できないため別名で保存します');}}
   return saveProjectAs();}
 const saveProject=saveProjectAs;   // legacy alias
-function loadProjectText(text,name,handle){try{const d=JSON.parse(text);W=d.W;H=d.H;
+function loadProjectText(text,name,handle){try{
+    const d=JSON.parse(String(text).replace(/^\uFEFF/,'').trim());
+    if(!d||!Array.isArray(d.layers)||!Array.isArray(d.frames)||!d.cels)throw new Error('プロジェクト形式ではありません');
+    W=d.W;H=d.H;
     doc={layers:d.layers,frames:d.frames,cels:new Map(),tags:d.tags||null};
     for(const k in d.cels)doc.cels.set(k,u32FromB64(d.cels[k]));palette=d.palette||DEFAULT_PAL.slice();
     doc.convert=d.convert||null;$('#mReconvert').style.display=doc.convert?'':'none';
@@ -3834,8 +3839,9 @@ function loadProjectText(text,name,handle){try{const d=JSON.parse(text);W=d.W;H=
     nextId=Math.max(...doc.layers.map(l=>+l.id),...doc.frames.map(f=>+f.id),0)+1;
     undoStack=[];redoStack=[];selection=null;projHandle=handle||null;ensureComp();$('#docsize').textContent=W+'×'+H;
     fitView();renderPalette();refreshTimeline();render();updateUndoUI();
-    setTabName((name||'プロジェクト').replace(/\.pxproj$/i,''));if(typeof scheduleAutosave==='function')scheduleAutosave();toast('読み込みました');}
-    catch(err){toast('読み込み失敗');console.error(err);}}
+    setTabName((name||'プロジェクト').replace(/\.(pxproj|json|txt)$/i,''));if(typeof scheduleAutosave==='function')scheduleAutosave();toast('読み込みました');}
+    catch(err){console.error(err);
+      toast(/JSON|形式/.test(err.message||'')?'プロジェクトファイル (.pxproj) ではないようです':'読み込み失敗: '+(err.message||err));}}
 $('#fileProj').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>loadProjectText(rd.result,f.name,null);rd.readAsText(f);e.target.value='';};
 async function openProject(){
@@ -3843,7 +3849,7 @@ async function openProject(){
     const [h]=await window.showOpenFilePicker({types:[{description:'Pixel project',accept:{'application/json':['.pxproj']}}]});
     const f=await h.getFile();loadProjectText(await f.text(),f.name,h);return;
   }catch(e){if(e&&e.name==='AbortError')return;}}
-  $('#fileProj').click();}
+  const inp=$('#fileProj');inp.value='';inp.click();}
 
 /* ================= Export ================= */
 function frameToCanvas(fi,scale=1){const c=document.createElement('canvas');c.width=W*scale;c.height=H*scale;
