@@ -133,6 +133,10 @@
   .adjpanel .adj-foot{display:flex;align-items:center;gap:8px;}
   .adjpanel .minibtn{height:30px;padding:0 12px;}
   .adjpanel #adjCommit{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .modal .field input[type=text]{flex:1;min-width:0;background:var(--panel2);color:var(--text);
+    border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;}
+  .sync-status{margin:2px 0 10px;font-size:12px;color:var(--accent-ink,var(--text));font-weight:600;}
+  .sync-hint{margin:10px 0 0;font-size:11px;color:var(--muted);line-height:1.6;}
   .adjcurve{width:100%;height:150px;background:var(--panel3);border:1px solid var(--border);
     border-radius:8px;touch-action:none;}
   .gauge .gtool{width:40px;height:40px;border:1px solid var(--border);background:var(--panel2);
@@ -714,6 +718,7 @@
       <button class="hbtn" data-act="save">💾 上書き保存 (Ctrl+S)</button>
       <button class="hbtn" data-act="saveas">📄 別名で保存 (.pxproj)</button>
       <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
+      <button class="hbtn" data-act="sync">☁ クラウド同期…</button>
     </div>
     <div class="mpane" data-pane="import">
       <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
@@ -871,6 +876,27 @@
       <button class="hbtn" id="sizeCancel">キャンセル</button>
       <button class="hbtn primary" id="sizeOk">OK</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="syncModal">
+  <div class="modal">
+    <h2>☁ クラウド同期</h2>
+    <p class="sync-status" id="syncStatus">未設定</p>
+    <div class="field"><label>APIキー</label><input type="text" id="syncApiKey" placeholder="AIza…" autocomplete="off" spellcheck="false"></div>
+    <div class="field"><label>DB URL</label><input type="text" id="syncDbUrl" placeholder="https://…firebasedatabase.app" autocomplete="off" spellcheck="false"></div>
+    <div class="field"><label>同期キー</label><input type="text" id="syncKeyIn" placeholder="両方の端末で同じ文字列" autocomplete="off" spellcheck="false"></div>
+    <div class="row">
+      <button class="hbtn" id="syncGen">🔑 キーを発行</button>
+      <button class="hbtn" id="syncCopy">📋 コピー</button>
+    </div>
+    <div class="row" style="flex-direction:column;gap:8px;margin-top:10px">
+      <button class="hbtn primary" id="syncToggle">同期を開始</button>
+      <button class="hbtn" id="syncNow">↻ 今すぐ同期</button>
+      <button class="hbtn" id="syncUndo" style="display:none;color:var(--danger);border-color:var(--danger)">↩ 上書き前の状態に戻す</button>
+      <button class="hbtn" id="syncClose">閉じる</button>
+    </div>
+    <p class="sync-hint">Firebase で <b>Realtime Database</b> と <b>匿名ログイン</b> を有効にし、上の2つを入力します。もう片方の端末には<b>同じ同期キー</b>を入れてください。数秒ごとに自動保存され、新しい方が優先されます。</p>
   </div>
 </div>
 
@@ -3249,6 +3275,7 @@ $$('#menuModal .mtab').forEach(t=>t.onclick=()=>{const tab=t.dataset.tab;
 function menuAction(a){$('#menuModal').classList.remove('show');
   switch(a){case 'new':openSize('new');break;case 'resize':openSize('resize');break;
     case 'import':$('#fileImg').click();break;case 'save':saveProjectOverwrite();break;case 'saveas':saveProjectAs();break;case 'load':openProject();break;
+    case 'sync':openSyncModal();break;
     case 'convert':$('#fileConv').click();break;case 'reconvert':reopenConverter();break;
     case 'paste':pasteFromClipboard();break;case 'copyPng':copyFramePNG();break;
     case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
@@ -3944,7 +3971,8 @@ function deserializeTab(s){const cels=new Map();for(const k in s.doc.cels)cels.s
   const doc={layers:s.doc.layers,frames:s.doc.frames,cels,convert:s.doc.convert||null,tags:s.doc.tags||null};
   return {doc,W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
     selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};}
-function scheduleAutosave(){if(!autosaveOn)return;clearTimeout(autosaveTimer);autosaveTimer=setTimeout(autosaveNow,1200);}
+function scheduleAutosave(){if(typeof cloudTouch==='function')cloudTouch();
+  if(!autosaveOn)return;clearTimeout(autosaveTimer);autosaveTimer=setTimeout(autosaveNow,1200);}
 async function autosaveNow(){if(!autosaveOn||!docTabs.length)return;
   try{saveCurrentTab();const tabs=docTabs.map(serializeTab);const db=await idbOpen();
     await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readwrite');
@@ -3963,6 +3991,144 @@ async function autosaveLoad(){
 async function clearAutosave(){try{const db=await idbOpen();
   await new Promise(res=>{const tx=db.transaction(IDB_STORE,'readwrite');tx.objectStore(IDB_STORE).delete(IDB_KEY);tx.oncomplete=res;tx.onerror=res;});db.close();}catch(e){}}
 
+/* ================= Cloud sync (Firebase Realtime Database over REST + SSE) =================
+   Local IndexedDB stays the fast path; the cloud is only a channel. The whole
+   workspace (every tab) is gzipped and stored under sync/<key>/doc with a small
+   meta node {rev,updatedAt,deviceId} that both devices watch. Newest wins; when
+   an incoming version overwrites unsynced local edits the old state is stashed
+   so it can be restored. */
+const CLOUD_CFG='pxeditor-cloud', CLOUD_RT='pxeditor-cloud-rt';
+let cloud={apiKey:'',dbUrl:'',syncKey:'',on:false};
+let cloudTok=null, cloudRev=0, cloudLastSync=0, cloudStash=null;
+let cloudQ=Promise.resolve();   // pushes/pulls run one at a time, never dropped
+function cloudSerial(fn){const run=()=>fn();const p=cloudQ.then(run,run);cloudQ=p.then(()=>{},()=>{});return p;}
+let cloudPushT=null, cloudES=null, cloudPollT=null, cloudDirty=false;
+const deviceId=(()=>{try{let d=localStorage.getItem('pxeditor-device');
+  if(!d){d=Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('pxeditor-device',d);}return d;}
+  catch(_){return 'dev'+Math.random().toString(36).slice(2);}})();
+function cloudReady(){return !!(cloud.apiKey&&cloud.dbUrl&&cloud.syncKey);}
+function cloudLoadCfg(){try{const s=localStorage.getItem(CLOUD_CFG);if(s)cloud=Object.assign(cloud,JSON.parse(s));
+  const rt=localStorage.getItem(CLOUD_RT);if(rt)cloudTok={idToken:'',refresh:rt,exp:0};}catch(_){}}
+function cloudSaveCfg(){try{localStorage.setItem(CLOUD_CFG,JSON.stringify(cloud));}catch(_){}}
+function cloudSanitizeKey(k){return String(k||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,64);}
+// --- binary <-> base64 + gzip ---
+function b64FromBytes(u8){let s='';const C=0x8000;for(let i=0;i<u8.length;i+=C)s+=String.fromCharCode.apply(null,u8.subarray(i,i+C));return btoa(s);}
+function bytesFromB64(b){const t=atob(b);const u8=new Uint8Array(t.length);for(let i=0;i<t.length;i++)u8[i]=t.charCodeAt(i);return u8;}
+async function gzPack(obj){const json=JSON.stringify(obj);
+  if(typeof CompressionStream==='undefined')return 'raw:'+b64FromBytes(new TextEncoder().encode(json));
+  const buf=await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+  return 'gz:'+b64FromBytes(new Uint8Array(buf));}
+async function gzUnpack(str){
+  if(str.startsWith('raw:'))return JSON.parse(new TextDecoder().decode(bytesFromB64(str.slice(4))));
+  const u8=bytesFromB64(str.slice(3));
+  return JSON.parse(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text());}
+// --- anonymous auth (REST); the refresh token is kept so we stay the same user ---
+async function cloudToken(){
+  if(cloudTok&&cloudTok.idToken&&Date.now()<cloudTok.exp-60000)return cloudTok.idToken;
+  const key=encodeURIComponent(cloud.apiKey);
+  if(cloudTok&&cloudTok.refresh){
+    const r=await fetch('https://securetoken.googleapis.com/v1/token?key='+key,{method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(cloudTok.refresh)});
+    if(r.ok){const d=await r.json();
+      cloudTok={idToken:d.id_token,refresh:d.refresh_token||cloudTok.refresh,exp:Date.now()+(+d.expires_in||3600)*1000};
+      try{localStorage.setItem(CLOUD_RT,cloudTok.refresh);}catch(_){}return cloudTok.idToken;}}
+  const r=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+key,
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({returnSecureToken:true})});
+  if(!r.ok)throw new Error('認証に失敗（APIキー／匿名ログインの有効化を確認）');
+  const d=await r.json();
+  cloudTok={idToken:d.idToken,refresh:d.refreshToken,exp:Date.now()+(+d.expiresIn||3600)*1000};
+  try{localStorage.setItem(CLOUD_RT,cloudTok.refresh);}catch(_){}return cloudTok.idToken;}
+function cloudUrl(path,tok){return cloud.dbUrl.replace(/\/+$/,'')+'/sync/'+cloudSanitizeKey(cloud.syncKey)+path+'.json?auth='+encodeURIComponent(tok);}
+// --- whole-workspace snapshot (JSON-safe, every tab) ---
+function cloudSnapshot(){saveCurrentTab();
+  return {v:1,curTab,tabs:docTabs.map(t=>{const cels={};t.doc.cels.forEach((v,k)=>{cels[k]=b64FromU32(v);});
+    return {name:t.name,W:t.W,H:t.H,activeLayer:t.activeLayer,activeFrame:t.activeFrame,
+      palette:t.palette?t.palette.slice():DEFAULT_PAL.slice(),layers:t.doc.layers,frames:t.doc.frames,
+      tags:t.doc.tags||null,convert:t.doc.convert||null,cels};})};}
+function cloudApply(snap){
+  docTabs=snap.tabs.map(s=>{const cels=new Map();for(const k in s.cels)cels.set(k,u32FromB64(s.cels[k]));
+    return {doc:{layers:s.layers,frames:s.frames,cels,convert:s.convert||null,tags:s.tags||null},
+      W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
+      selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};});
+  curTab=Math.max(0,Math.min(snap.curTab||0,docTabs.length-1));
+  let mx=0;docTabs.forEach(t=>{t.doc.layers.forEach(l=>{if(+l.id>mx)mx=+l.id;});t.doc.frames.forEach(fr=>{if(+fr.id>mx)mx=+fr.id;});});
+  nextId=Math.max(nextId,mx+1);
+  loadBundle(docTabs[curTab]);renderTabs();fitView();render();}
+// --- push / pull ---
+function cloudPush(force){return cloudSerial(()=>cloudPushNow(force));}
+async function cloudPushNow(force){
+  if(!cloudReady()||!cloud.on)return false;
+  if(!force&&!cloudDirty)return false;
+  try{const tok=await cloudToken();const blob=await gzPack(cloudSnapshot());
+    const rev=cloudRev+1, updatedAt=Date.now();
+    const r=await fetch(cloudUrl('/doc',tok),{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({meta:{rev,updatedAt,deviceId},blob})});
+    if(!r.ok)throw new Error('保存に失敗 (HTTP '+r.status+')');
+    cloudRev=rev;cloudDirty=false;cloudLastSync=updatedAt;cloudStatus();return true;
+  }catch(e){cloudStatus('エラー: '+(e.message||e));return false;}}
+function cloudPull(meta){return cloudSerial(()=>cloudPullNow(meta));}
+async function cloudPullNow(meta){
+  if(!cloudReady())return false;
+  try{const tok=await cloudToken();
+    if(!meta){const r=await fetch(cloudUrl('/doc/meta',tok));if(!r.ok)throw new Error('取得に失敗 (HTTP '+r.status+')');meta=await r.json();}
+    if(!meta||typeof meta!=='object')return false;
+    if(meta.deviceId===deviceId){if(meta.rev>cloudRev)cloudRev=meta.rev;return false;}
+    if(!(meta.rev>cloudRev))return false;
+    const stashed=cloudDirty;if(stashed)cloudStash=cloudSnapshot();   // keep the version we are about to lose
+    const r2=await fetch(cloudUrl('/doc/blob',tok));if(!r2.ok)throw new Error('取得に失敗 (HTTP '+r2.status+')');
+    const snap=await gzUnpack(await r2.json());
+    cloudApply(snap);cloudRev=meta.rev;cloudDirty=false;cloudLastSync=meta.updatedAt||Date.now();
+    autosaveNow();cloudStatus();
+    toast(stashed?'別の端末の変更を反映（上書き前に戻せます）':'別の端末の変更を反映しました');
+    return true;
+  }catch(e){cloudStatus('エラー: '+(e.message||e));return false;}}
+function cloudRestoreStash(){if(!cloudStash)return;const snap=cloudStash;cloudStash=null;
+  cloudApply(snap);cloudDirty=true;autosaveNow();cloudPush(true);cloudStatus();toast('上書き前の状態に戻しました');}
+// --- watch: server-sent events, falling back to polling ---
+function cloudUnwatch(){if(cloudES){try{cloudES.close();}catch(_){}cloudES=null;}
+  if(cloudPollT){clearInterval(cloudPollT);cloudPollT=null;}}
+function cloudPollStart(){if(cloudPollT)return;cloudPollT=setInterval(()=>{if(cloud.on)cloudPull();},8000);}
+async function cloudWatch(){
+  cloudUnwatch();if(!cloudReady()||!cloud.on)return;
+  try{const tok=await cloudToken();
+    if(typeof EventSource==='undefined'){cloudPollStart();return;}
+    const es=new EventSource(cloudUrl('/doc/meta',tok));cloudES=es;
+    const onMsg=ev=>{try{const d=JSON.parse(ev.data);cloudPull(d&&typeof d.data==='object'?d.data:undefined);}catch(_){cloudPull();}};
+    es.addEventListener('put',onMsg);es.addEventListener('patch',onMsg);
+    es.onerror=()=>{cloudUnwatch();cloudPollStart();setTimeout(()=>{if(cloud.on&&!cloudES)cloudWatch();},30000);};
+  }catch(_){cloudPollStart();}}
+async function cloudStart(){
+  if(!cloudReady()){cloudStatus('未設定');return;}
+  cloud.on=true;cloudSaveCfg();cloudStatus('接続中…');
+  await cloudPull();                                   // adopt the other device's newer state on open
+  if(!cloudRev&&docTabs.length)await cloudPush(true);   // first device seeds the cloud
+  cloudWatch();cloudStatus();}
+function cloudStop(){cloud.on=false;cloudSaveCfg();cloudUnwatch();cloudStatus();}
+function cloudTouch(){if(!cloud.on)return;cloudDirty=true;
+  clearTimeout(cloudPushT);cloudPushT=setTimeout(()=>cloudPush(),4000);}
+// --- settings modal ---
+function cloudStatus(msg){const el=$('#syncStatus');if(!el)return;
+  const u=$('#syncUndo');if(u)u.style.display=cloudStash?'':'none';
+  const t=$('#syncToggle');if(t)t.textContent=cloud.on?'同期を停止':'同期を開始';
+  if(msg){el.textContent=msg;return;}
+  el.textContent=!cloudReady()?'未設定':cloud.on
+    ?('同期中'+(cloudLastSync?'（最終 '+new Date(cloudLastSync).toLocaleTimeString()+'）':''))
+    :'停止中';}
+function openSyncModal(){$('#syncApiKey').value=cloud.apiKey;$('#syncDbUrl').value=cloud.dbUrl;
+  $('#syncKeyIn').value=cloud.syncKey;cloudStatus();$('#syncModal').classList.add('show');}
+function cloudReadForm(){cloud.apiKey=$('#syncApiKey').value.trim();cloud.dbUrl=$('#syncDbUrl').value.trim();
+  cloud.syncKey=cloudSanitizeKey($('#syncKeyIn').value);$('#syncKeyIn').value=cloud.syncKey;cloudSaveCfg();}
+$('#syncClose').onclick=()=>{cloudReadForm();$('#syncModal').classList.remove('show');};
+$('#syncGen').onclick=()=>{const a=new Uint8Array(16);(crypto.getRandomValues?crypto.getRandomValues(a):a.forEach((_,i)=>a[i]=Math.random()*256));
+  $('#syncKeyIn').value=[...a].map(v=>('0'+v.toString(16)).slice(-2)).join('');cloudReadForm();cloudStatus();};
+$('#syncCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('#syncKeyIn').value);toast('同期キーをコピーしました');}
+  catch(_){$('#syncKeyIn').select();toast('コピーできません（手動で選択してください）');}};
+$('#syncToggle').onclick=async()=>{cloudReadForm();if(cloud.on)cloudStop();else await cloudStart();};
+$('#syncNow').onclick=async()=>{cloudReadForm();if(!cloudReady()){toast('APIキー・DB URL・同期キーを入力してください');return;}
+  if(!cloud.on){await cloudStart();return;}await cloudPull();await cloudPush(true);toast('同期しました');};
+$('#syncUndo').onclick=cloudRestoreStash;
+
 /* ================= Boot ================= */
 async function boot(){
   initLayout();initWheel();
@@ -3972,8 +4138,12 @@ async function boot(){
   else toast('前回のセッションを復元しました');
   setTool('pencil');updateGauge();updateOpacGauge();updateSelBtns();
   setInterval(autosaveNow,15000);   // periodic safety net
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')autosaveNow();});
-  window.addEventListener('pagehide',autosaveNow);
+  cloudLoadCfg();if(cloud.on)cloudStart();
+  setInterval(()=>{if(cloud.on&&cloudDirty)cloudPush();},20000);
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='hidden'){autosaveNow();cloudPush();}
+    else if(cloud.on){cloudPull();if(!cloudES)cloudWatch();}});
+  window.addEventListener('pagehide',()=>{autosaveNow();cloudPush();});
   window.addEventListener('resize',()=>{relayout();fitView();render();});
   setInterval(()=>{if(selection||(drawing&&(tool==='select'||tool==='lasso'))){antsPhase=(antsPhase+1)%8;renderView();}},120);
   // Register the network-first worker so the app is installable (full-screen
