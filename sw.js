@@ -18,6 +18,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
+  if (new URL(req.url).origin !== self.location.origin) return;   // let Firebase REST/SSE go straight to the network
   e.respondWith((async () => {
     try {
       const res = await fetch(req);                 // always try the network first (fresh)
