@@ -726,6 +726,7 @@
       <button class="hbtn" data-act="saveas">📄 別名で保存 (.pxproj)</button>
       <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
       <button class="hbtn" data-act="sync">☁ クラウド同期…</button>
+      <button class="hbtn" data-act="resetUi">🧹 UIレイアウトをリセット</button>
     </div>
     <div class="mpane" data-pane="import">
       <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
@@ -3076,7 +3077,8 @@ function measureH(el){const p=el.style.height;el.style.height='';const h=el.offs
 
 function setPrz(el,side){let p=el.querySelector('.prz');if(!p)return;
   if(side){p.style.display='block';p.className='prz '+side;}else p.style.display='none';}
-function pw(k){return dockState[k].w||PW[k]||200;}
+function pw(k){const maxW=Math.max(80,(workspace.clientWidth||320)*0.6);
+  return Math.max(44,Math.min(dockState[k].w||PW[k]||200,maxW));}
 function relayout(){
   const W=workspace.clientWidth,H=workspace.clientHeight,G=2;   // tight seams
   dockState.tl.dock='bottom';   // timeline is pinned to the bottom edge
@@ -3104,8 +3106,12 @@ function relayout(){
   let by=H; sides.bottom.forEach(k=>{const el=$(PANELS[k]),h=(k==='tl'?(dockState.tl.h||190):Math.min(measureH(el),H*0.5));
     el.style.left=bx+'px';el.style.width=bw+'px';el.style.top=(by-h)+'px';el.style.height=h+'px';setPrz(el,null);by-=h;});
   sides.float.forEach(k=>{const el=$(PANELS[k]),c=dockState[k];
-    el.style.left=(c.x||40)+'px';el.style.top=(c.y||40)+'px';
-    el.style.width=(c.w||PW[k]||200)+'px';el.style.height=(c.h||300)+'px';setPrz(el,'br');});
+    const w=Math.max(60,Math.min(c.w||PW[k]||200,W)), h=Math.max(80,Math.min(c.h||300,H));
+    const x=Math.max(0,Math.min(c.x==null?40:c.x,Math.max(0,W-80)));   // keep ≥80px reachable
+    const y=Math.max(0,Math.min(c.y==null?40:c.y,Math.max(0,H-44)));
+    c.x=x;c.y=y;c.w=w;c.h=h;
+    el.style.left=x+'px';el.style.top=y+'px';
+    el.style.width=w+'px';el.style.height=h+'px';setPrz(el,'br');});
   positionSelControls();
 }
 // Keep the selection tool controls clear of the left docks and above the timeline.
@@ -3152,7 +3158,12 @@ function hidePrev(){$('#dockPrev').classList.remove('show');}
 
 function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(dockState));}catch(_){}}
 function loadLayout(){try{const s=localStorage.getItem(LAYOUT_KEY);if(s)return JSON.parse(s);}catch(_){}return null;}
-function resetLayout(){dockState=defaultDock();relayout();saveLayout();render();toast('レイアウトをリセット');}
+function resetLayout(){
+  dockState=defaultDock();
+  layerColW=118;try{localStorage.setItem('pxeditor-lcolw',layerColW);}catch(_){}
+  const g=$('#tlGrid');if(g)g.style.setProperty('--lcolw',layerColW+'px');
+  relayout();saveLayout();refreshTimeline();fitView();render();
+  toast('UIレイアウトをリセットしました');}
 
 function startPanelDrag(panel,handle,e){
   const key=panelKey(panel);if(!key)return;
@@ -3285,6 +3296,7 @@ function menuAction(a){$('#menuModal').classList.remove('show');
   switch(a){case 'new':openSize('new');break;case 'resize':openSize('resize');break;
     case 'import':$('#fileImg').click();break;case 'save':saveProjectOverwrite();break;case 'saveas':saveProjectAs();break;case 'load':openProject();break;
     case 'sync':openSyncModal();break;
+    case 'resetUi':resetLayout();break;
     case 'convert':$('#fileConv').click();break;case 'reconvert':reopenConverter();break;
     case 'paste':pasteFromClipboard();break;case 'copyPng':copyFramePNG();break;
     case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
