@@ -546,8 +546,8 @@
   <button class="xfbtn" id="xfBtn" title="変形（選択画像を拡大縮小・回転・変形）">🔲</button>
   <!-- Transform toolbar: replaces the +/- modifiers while transforming -->
   <div class="xfbar" id="xfBar">
-    <button class="xfmod" id="xfShiftBtn" title="縦横比を保持（Shift）">⇧ 比率</button>
-    <button class="xfmod" id="xfCtrlBtn" title="自由変形／ゆがみ（Ctrl）">⌃ 自由</button>
+    <button class="xfmod" id="xfShiftBtn" title="縦横比を保持／回転は15°刻み（Shift）">⇧ 比率</button>
+    <button class="xfmod" id="xfCtrlBtn" title="角を単独で動かす自由変形（Ctrl）">⌃ 自由</button>
     <button class="xfok" id="xfOk" title="確定">✓</button>
     <button class="xfcancel" id="xfCancel" title="取消">✕</button>
   </div>
@@ -1935,7 +1935,7 @@ function beginTransform(){
   xf={srcW:w,srcH:h,srcBuf,base,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}]};
   applyTransformRender();
   $('#xfBar').classList.add('show');$('#xfOverlay').classList.add('show');$('#xfBtn').classList.add('on');
-  updateSelModVisible();drawXfOverlay();toast('変形：ハンドルをドラッグ / ✓で確定');
+  updateSelModVisible();drawXfOverlay();toast('変形：外側ドラッグで回転 / 長押しで反転・90°');
 }
 // unit-square (0,0)(1,0)(1,1)(0,1) → quad homography [a,b,c,d,e,f,g,h,1]
 function xfHomography(q){const p0=q[0],p1=q[1],p2=q[2],p3=q[3];
@@ -1965,61 +1965,100 @@ function xfStamp(cel,fillMask){
 function applyTransformRender(){const cel=activeCel();cel.set(xf.base);xfStamp(cel,null);render();}
 function xfLocal(p){return {x:panX+p.x*zoom,y:panY+p.y*zoom};}
 function xfHandlePts(){const c=xf.corners.map(xfLocal);
-  const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
-  const edges=[mid(c[0],c[1]),mid(c[1],c[2]),mid(c[2],c[3]),mid(c[3],c[0])];
-  const tm=mid(c[0],c[1]);let nx=c[0].y-c[1].y,ny=c[1].x-c[0].x;const nl=Math.hypot(nx,ny)||1;
-  const rot={x:tm.x+nx/nl*34,y:tm.y+ny/nl*34};
-  return {c,edges,rot,tm};}
+  const mid=(p,q)=>({x:(p.x+q.x)/2,y:(p.y+q.y)/2});
+  return {c,edges:[mid(c[0],c[1]),mid(c[1],c[2]),mid(c[2],c[3]),mid(c[3],c[0])]};}
 function drawXfOverlay(){const cv=$('#xfOverlay');const r=stage.getBoundingClientRect();
   if(cv.width!==Math.round(r.width)||cv.height!==Math.round(r.height)){cv.width=Math.round(r.width);cv.height=Math.round(r.height);}
   const g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);if(!xf)return;
-  const{c,edges,rot,tm}=xfHandlePts();
+  const{c,edges}=xfHandlePts();
   g.lineWidth=1.5;g.strokeStyle='#5ab0ff';g.setLineDash([5,4]);
   g.beginPath();g.moveTo(c[0].x,c[0].y);for(let i=1;i<4;i++)g.lineTo(c[i].x,c[i].y);g.closePath();g.stroke();
-  g.setLineDash([]);g.beginPath();g.moveTo(tm.x,tm.y);g.lineTo(rot.x,rot.y);g.stroke();
+  g.setLineDash([]);
   const sq=(p,fill)=>{g.fillStyle=fill;g.strokeStyle='#fff';g.lineWidth=2;g.beginPath();g.rect(p.x-7,p.y-7,14,14);g.fill();g.stroke();};
-  edges.forEach(p=>sq(p,'#5ab0ff'));c.forEach(p=>sq(p,'#ffffff'));
-  g.beginPath();g.fillStyle='#5ab0ff';g.strokeStyle='#fff';g.lineWidth=2;g.arc(rot.x,rot.y,8,0,Math.PI*2);g.fill();g.stroke();}
+  edges.forEach(p=>sq(p,'#5ab0ff'));c.forEach(p=>sq(p,'#ffffff'));}
 function pointInQuad(px,py,c){let inside=false;for(let i=0,j=3;i<4;j=i++){
   const xi=c[i].x,yi=c[i].y,xj=c[j].x,yj=c[j].y;
   if(((yi>py)!==(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))inside=!inside;}return inside;}
-function xfHitTest(lx,ly){const{c,edges,rot}=xfHandlePts();
+// Photoshop: handles scale, inside moves, ANYWHERE OUTSIDE the box rotates.
+function xfHitTest(lx,ly){const{c,edges}=xfHandlePts();
   for(let i=0;i<4;i++)if(Math.hypot(lx-c[i].x,ly-c[i].y)<XF_HIT)return{mode:'corner',idx:i};
-  if(Math.hypot(lx-rot.x,ly-rot.y)<XF_HIT)return{mode:'rotate'};
   for(let i=0;i<4;i++)if(Math.hypot(lx-edges[i].x,ly-edges[i].y)<XF_HIT)return{mode:'edge',idx:i};
-  if(pointInQuad(lx,ly,c))return{mode:'move'};return null;}
+  if(pointInQuad(lx,ly,c))return{mode:'move'};
+  return{mode:'rotate'};}
 function xfUV(start){const O=start[0],U={x:start[1].x-start[0].x,y:start[1].y-start[0].y},V={x:start[3].x-start[0].x,y:start[3].y-start[0].y};
   const uh=Math.hypot(U.x,U.y)||1,vh=Math.hypot(V.x,V.y)||1;
   return{O,U,V,uh,vh,Uh:{x:U.x/uh,y:U.y/uh},Vh:{x:V.x/vh,y:V.y/vh}};}
 function xfFromOUV(O,U,V){return[{x:O.x,y:O.y},{x:O.x+U.x,y:O.y+U.y},{x:O.x+U.x+V.x,y:O.y+U.y+V.y},{x:O.x+V.x,y:O.y+V.y}];}
+function xfAlt(){return altHeld;}                       // Alt = scale from the centre
+function xfLen(v){const m=0.6;return Math.abs(v)<m?(v<0?-m:m):v;}   // may go negative (flip), never collapses
 function xfScaleCorner(start,k,P){
-  if(xfDistort()){const nc=start.map(q=>({x:q.x,y:q.y}));nc[k]={x:P.x,y:P.y};xf.corners=nc;return;}
-  const{uh,vh,Uh,Vh}=xfUV(start);const sgn=[[-1,-1],[1,-1],[1,1],[-1,1]][k];const A=start[(k+2)%4];
-  const sol=solve2(Uh.x,Uh.y,Vh.x,Vh.y,P.x-A.x,P.y-A.y);if(!sol)return;
-  let lu=Math.max(1,sol.a*sgn[0]),lv=Math.max(1,sol.b*sgn[1]);
-  if(xfProp()){const s=Math.max(lu/uh,lv/vh);lu=uh*s;lv=vh*s;}
+  if(xfDistort()){const nc=start.map(q=>({x:q.x,y:q.y}));nc[k]={x:P.x,y:P.y};xf.corners=nc;return;}   // Ctrl = free distort
+  const{O,U,V,uh,vh,Uh,Vh}=xfUV(start);const sgn=[[-1,-1],[1,-1],[1,1],[-1,1]][k];
+  const fromC=xfAlt(),C={x:O.x+(U.x+V.x)/2,y:O.y+(U.y+V.y)/2},A=start[(k+2)%4];
+  const ref=fromC?C:A;const sol=solve2(Uh.x,Uh.y,Vh.x,Vh.y,P.x-ref.x,P.y-ref.y);if(!sol)return;
+  const f=fromC?2:1;let lu=sol.a*sgn[0]*f, lv=sol.b*sgn[1]*f;
+  if(xfProp()){const sc=Math.max(Math.abs(lu)/uh,Math.abs(lv)/vh);   // Shift = keep the aspect ratio
+    lu=(lu<0?-1:1)*uh*sc;lv=(lv<0?-1:1)*vh*sc;}
+  lu=xfLen(lu);lv=xfLen(lv);
   const nU={x:Uh.x*lu,y:Uh.y*lu},nV={x:Vh.x*lv,y:Vh.y*lv};
-  let nO;if(k===0)nO={x:A.x-nU.x-nV.x,y:A.y-nU.y-nV.y};
+  let nO;
+  if(fromC)nO={x:C.x-(nU.x+nV.x)/2,y:C.y-(nU.y+nV.y)/2};
+  else if(k===0)nO={x:A.x-nU.x-nV.x,y:A.y-nU.y-nV.y};
   else if(k===1)nO={x:A.x-nV.x,y:A.y-nV.y};
-  else if(k===2)nO={x:A.x,y:A.y};else nO={x:A.x-nU.x,y:A.y-nU.y};
+  else if(k===2)nO={x:A.x,y:A.y};
+  else nO={x:A.x-nU.x,y:A.y-nU.y};
   xf.corners=xfFromOUV(nO,nU,nV);}
-function xfScaleEdge(start,e,P){const{O,U,V,Uh,Vh}=xfUV(start);let nO={x:O.x,y:O.y},nU={x:U.x,y:U.y},nV={x:V.x,y:V.y};
-  if(e===1){const lu=Math.max(1,(P.x-O.x)*Uh.x+(P.y-O.y)*Uh.y);nU={x:Uh.x*lu,y:Uh.y*lu};}
-  else if(e===3){const R={x:O.x+U.x,y:O.y+U.y};const lu=Math.max(1,(R.x-P.x)*Uh.x+(R.y-P.y)*Uh.y);nU={x:Uh.x*lu,y:Uh.y*lu};nO={x:R.x-nU.x,y:R.y-nU.y};}
-  else if(e===2){const lv=Math.max(1,(P.x-O.x)*Vh.x+(P.y-O.y)*Vh.y);nV={x:Vh.x*lv,y:Vh.y*lv};}
-  else{const B={x:O.x+V.x,y:O.y+V.y};const lv=Math.max(1,(B.x-P.x)*Vh.x+(B.y-P.y)*Vh.y);nV={x:Vh.x*lv,y:Vh.y*lv};nO={x:B.x-nV.x,y:B.y-nV.y};}
+function xfScaleEdge(start,e,P){
+  const{O,U,V,Uh,Vh}=xfUV(start);const fromC=xfAlt();
+  const C={x:O.x+(U.x+V.x)/2,y:O.y+(U.y+V.y)/2};
+  const dot=(p,h)=>p.x*h.x+p.y*h.y, sub=(p,q)=>({x:p.x-q.x,y:p.y-q.y});
+  let nU={x:U.x,y:U.y},nV={x:V.x,y:V.y},nO=null;
+  if(e===1||e===3){
+    const far=e===1?sub(P,fromC?C:O):sub(fromC?C:{x:O.x+U.x,y:O.y+U.y},P);
+    const lu=xfLen(dot(far,Uh)*(fromC?2:1));nU={x:Uh.x*lu,y:Uh.y*lu};
+    if(!fromC)nO=e===1?{x:O.x,y:O.y}:{x:O.x+U.x-nU.x,y:O.y+U.y-nU.y};
+  }else{
+    const far=e===2?sub(P,fromC?C:O):sub(fromC?C:{x:O.x+V.x,y:O.y+V.y},P);
+    const lv=xfLen(dot(far,Vh)*(fromC?2:1));nV={x:Vh.x*lv,y:Vh.y*lv};
+    if(!fromC)nO=e===2?{x:O.x,y:O.y}:{x:O.x+V.x-nV.x,y:O.y+V.y-nV.y};
+  }
+  if(fromC)nO={x:C.x-(nU.x+nV.x)/2,y:C.y-(nU.y+nV.y)/2};
   xf.corners=xfFromOUV(nO,nU,nV);}
+// --- flip / quarter-turns from the long-press radial ---
+function xfFlip(horiz){if(!xf)return;const c=xf.corners;
+  xf.corners=horiz?[c[1],c[0],c[3],c[2]]:[c[3],c[2],c[1],c[0]];
+  applyTransformRender();drawXfOverlay();toast(horiz?'左右反転':'上下反転');}
+function xfRotateQuarter(q){if(!xf)return;const c=xfCentroid(xf.corners),a=q*Math.PI/2,co=Math.cos(a),si=Math.sin(a);
+  xf.corners=xf.corners.map(p=>{const dx=p.x-c.x,dy=p.y-c.y;return{x:c.x+dx*co-dy*si,y:c.y+dx*si+dy*co};});
+  applyTransformRender();drawXfOverlay();toast(q===2?'180°回転':(q===1?'90°回転（時計）':'90°回転（反時計）'));}
+function openXfRadial(cx,cy){showRadial(cx,cy,[
+  {icon:'↔',label:'左右反転',fn:()=>xfFlip(true)},
+  {icon:'↕',label:'上下反転',fn:()=>xfFlip(false)},
+  {icon:'↻',label:'90°時計',fn:()=>xfRotateQuarter(1)},
+  {icon:'⤾',label:'180°',fn:()=>xfRotateQuarter(2)},
+  {icon:'↺',label:'90°反時計',fn:()=>xfRotateQuarter(-1)},
+]);}
 function startXfDrag(hit,cx,cy){
   const start=xf.corners.map(p=>({x:p.x,y:p.y}));const p0=screenToPixF(cx,cy);
   const cen=xfCentroid(start);const ang0=Math.atan2(p0.y-cen.y,p0.x-cen.x);
-  const move=ev=>{const p=screenToPixF(ev.clientX,ev.clientY);
+  let moved=false;
+  // hold still on the canvas -> flip / quarter-turn menu (the drag is rolled back)
+  const lt=setTimeout(()=>{if(moved)return;
+    xf.corners=start.map(q=>({x:q.x,y:q.y}));applyTransformRender();drawXfOverlay();
+    up();openXfRadial(cx,cy);},430);
+  const move=ev=>{
+    if(!moved&&Math.hypot(ev.clientX-cx,ev.clientY-cy)>10){moved=true;clearTimeout(lt);}
+    const p=screenToPixF(ev.clientX,ev.clientY);
     if(hit.mode==='move'){const dx=p.x-p0.x,dy=p.y-p0.y;xf.corners=start.map(q=>({x:q.x+dx,y:q.y+dy}));}
-    else if(hit.mode==='rotate'){const a=Math.atan2(p.y-cen.y,p.x-cen.x)-ang0,co=Math.cos(a),si=Math.sin(a);
+    else if(hit.mode==='rotate'){let a=Math.atan2(p.y-cen.y,p.x-cen.x)-ang0;
+      if(xfProp())a=Math.round(a/(Math.PI/12))*(Math.PI/12);        // Shift = 15° steps
+      const co=Math.cos(a),si=Math.sin(a);
       xf.corners=start.map(q=>{const ux=q.x-cen.x,uy=q.y-cen.y;return{x:cen.x+ux*co-uy*si,y:cen.y+ux*si+uy*co};});}
     else if(hit.mode==='corner')xfScaleCorner(start,hit.idx,p);
     else if(hit.mode==='edge')xfScaleEdge(start,hit.idx,p);
     applyTransformRender();drawXfOverlay();};
-  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);};
+  function up(){clearTimeout(lt);document.removeEventListener('pointermove',move);
+    document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);}
 function commitTransform(){if(!xf)return;const cel=activeCel();cel.set(xf.base);const nm=selBuf();xfStamp(cel,nm);
   selection={mask:nm};computeSelBounds();endTransformUI();render();updateCelThumb(activeLayer,activeFrame);toast('変形を適用');}
