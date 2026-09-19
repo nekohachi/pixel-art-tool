@@ -90,11 +90,13 @@
     background:var(--panel3);border-radius:6px;padding:3px 0;width:46px;text-align:center;}
   .gauge-opac{border-top:1px solid var(--border);}
   /* Current-color dot at the top of the brush panel (opens the color popover) */
-  .gauge .colordot{width:44px;height:44px;flex:none;border-radius:50%;cursor:pointer;padding:0;
-    border:3px solid var(--panel3);box-shadow:0 0 0 1px var(--border),0 2px 6px #0007;background:#e6e8ee;
-    background-image:linear-gradient(45deg,#0003 25%,transparent 25%),linear-gradient(-45deg,#0003 25%,transparent 25%);
-    background-size:12px 12px;touch-action:manipulation;}
-  .gauge .colordot:active{transform:scale(.94);}
+  /* main colour (front, top-left) + sub colour (behind, bottom-right) — X swaps them */
+  .gauge .colordot{width:48px;height:48px;flex:none;position:relative;cursor:pointer;padding:0;border:none;
+    background:transparent;touch-action:manipulation;}
+  .gauge .colordot i{position:absolute;display:block;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px #000,0 2px 6px #0007;}
+  .gauge .colordot .cd-main{left:0;top:0;width:32px;height:32px;background:#e6e8ee;z-index:2;}
+  .gauge .colordot .cd-sub{right:0;bottom:0;width:26px;height:26px;background:#000;z-index:1;}
+  .gauge .colordot:active .cd-main{transform:scale(.94);}
   /* Procreate-style color popover */
   .colorpop{position:absolute;z-index:40;display:none;width:248px;padding:14px;border-radius:16px;
     background:var(--panel);border:1px solid var(--border);box-shadow:0 12px 34px #000b;flex-direction:column;gap:10px;}
@@ -367,7 +369,7 @@
     touch-action:none;display:flex;align-items:center;justify-content:center;}
   .tl-colgrip::after{content:"";width:3px;height:60%;border-radius:2px;background:var(--muted);opacity:.6;}
   .tl-colgrip:active::after{background:var(--accent);opacity:1;}
-  .tl-fnum{width:44px;flex:none;font-size:11px;color:var(--muted);
+  .tl-fnum{width:var(--celw,44px);flex:none;font-size:11px;color:var(--muted);
     padding:2px 0 6px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
     touch-action:none;display:flex;flex-direction:column;align-items:center;gap:1px;}
   .tl-fnum .fgrip{width:100%;height:13px;font-size:10px;line-height:13px;text-align:center;
@@ -405,9 +407,13 @@
     box-shadow:0 6px 20px #000a;max-width:140px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
   .tl-drop{position:fixed;z-index:99;background:var(--accent);pointer-events:none;border-radius:2px;
     box-shadow:0 0 6px var(--accent);}
-  .tl-cell{width:44px;height:46px;flex:none;border-right:1px solid var(--border);
+  /* cel cell: sized to the canvas aspect (--thw × 40); doubles when any layer has a mask */
+  .tl-cell{width:var(--celw,44px);height:46px;flex:none;border-right:1px solid var(--border);
     border-bottom:1px solid var(--border);cursor:pointer;background:#0e0f13;
-    display:flex;align-items:center;justify-content:center;padding:3px;touch-action:pan-x;}
+    display:flex;align-items:center;justify-content:center;gap:3px;padding:3px;touch-action:pan-x;}
+  .tl-cell canvas.mthumb{background:#000;border:1px solid #777;box-sizing:border-box;}
+  .tl-cell canvas.mthumb.editing{outline:2px solid var(--accent);outline-offset:0;}
+  .tl-cell canvas.mthumb.off{opacity:.35;}
   .tl-cell.active{box-shadow:inset 0 0 0 2px var(--accent);}
   .tl-cell.sel{background:#161b22;box-shadow:inset 0 0 0 2px var(--accent2);}
   .tl-cell.active.sel{box-shadow:inset 0 0 0 2px var(--accent);}
@@ -416,7 +422,7 @@
   .tl-tagspacer{width:var(--lcolw,118px);flex:none;position:sticky;left:0;z-index:4;background:var(--panel);
     font-size:10px;color:var(--muted);display:flex;align-items:center;padding-left:6px;}
   .tl-tagspacer::before{content:"🏷";opacity:.7;}
-  .tl-tagcell{width:44px;flex:none;position:relative;border-right:1px solid transparent;touch-action:pan-x;}
+  .tl-tagcell{width:var(--celw,44px);flex:none;position:relative;border-right:1px solid transparent;touch-action:pan-x;}
   .tl-tagcell.on{opacity:.9;border-radius:3px;}
   .tl-tagcell.active{opacity:1;box-shadow:inset 0 0 0 2px #fff;}
   .tl-tagname{position:absolute;left:3px;top:0;font-size:10px;line-height:18px;color:#141414;
@@ -434,7 +440,7 @@
   .radial-item .ri-lb{font-size:10px;color:var(--muted);}
   .radial-item.on{background:var(--accent);border-color:#fff;transform:translate(-50%,-50%) scale(1.15);}
   .radial-item.on .ri-lb{color:#fff;}
-  .tl-cell canvas{max-width:100%;max-height:100%;image-rendering:pixelated;
+  .tl-cell canvas{width:var(--thw,38px);height:40px;object-fit:contain;image-rendering:pixelated;
     background-image:linear-gradient(45deg,#3a3a3a 25%,transparent 25%),linear-gradient(-45deg,#3a3a3a 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#3a3a3a 75%),linear-gradient(-45deg,transparent 75%,#3a3a3a 75%);
     background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0;}
 
@@ -443,6 +449,12 @@
   .mbar .hbtn{flex:none;}
 
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:50;align-items:center;justify-content:center;padding:16px;}
+  /* Photoshop-style canvas-size anchor (3×3) */
+  .anchor{display:grid;grid-template-columns:repeat(3,30px);gap:3px;}
+  .anchor button{width:30px;height:30px;border:1px solid var(--border);background:var(--panel2);border-radius:5px;
+    color:var(--muted);font-size:14px;cursor:pointer;padding:0;line-height:1;touch-action:manipulation;}
+  .anchor button.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .anchor-hint{color:var(--muted);font-size:11px;margin-left:8px;}
   .modal-bg.show{display:flex;}
   .modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;width:100%;max-width:340px;max-height:85vh;overflow-y:auto;}
   .modal h2{margin:0 0 12px;font-size:15px;}
@@ -587,7 +599,7 @@
   <!-- Brush gauges panel (color dot + size + opacity, stacked) -->
   <div class="panel" id="pnlGauge">
     <div class="gauge" id="gauge" title="ブラシサイズ">
-      <button class="colordot" id="colorDot" title="カラー（タップで開く）"></button>
+      <button class="colordot" id="colorDot" title="カラー（タップで開く／右下のサブカラーをタップで入替 X）"><i class="cd-sub" id="subDot"></i><i class="cd-main" id="mainDot"></i></button>
       <div class="g-track" id="gtrack"><div class="g-fill" id="gfill"></div><div class="g-dot" id="gdot"></div></div>
       <span class="g-val" id="gval">1</span>
       <div class="g-hist">
@@ -624,15 +636,15 @@
   <!-- Procreate-style color popover: opens from the ● color dot on the brush panel -->
   <div class="colorpop" id="colorPop">
     <div class="wheelwrap">
-      <canvas id="colorWheel" width="220" height="220"></canvas>
-      <div class="wheel-cursor" id="wheelCursor"></div>
+      <canvas id="colorWheel" width="220" height="220" title="外周＝色相 / 三角＝彩度・明度"></canvas>
     </div>
-    <input type="range" id="valSlider" class="cp-val" min="0" max="100" value="90" title="明るさ">
     <div class="cp-row">
-      <div class="swatch"><i id="curColor" style="background:#e6e8ee"></i></div>
+      <div class="swatch" title="メインカラー"><i id="curColor" style="background:#e6e8ee"></i></div>
+      <button class="minibtn" id="swapColorBtn" title="メイン⇄サブ入替 (X)">⇄</button>
+      <div class="swatch sub" id="subSwatchBox" title="サブカラー（タップで入替）"><i id="subSwatch" style="background:#000000"></i></div>
       <input type="color" id="colorPick" value="#e6e8ee" title="スポイト / 直接指定">
       <div style="flex:1"></div>
-      <button class="minibtn" id="addSwatch" title="パレットに追加">＋ 保存</button>
+      <button class="minibtn" id="addSwatch" title="パレットに追加">＋</button>
     </div>
     <div class="palette" id="palette"></div>
   </div>
@@ -880,6 +892,9 @@
     </div>
     <div class="field"><label>幅</label><input type="number" class="num" id="newW" value="32" min="1" max="512"> px</div>
     <div class="field"><label>高さ</label><input type="number" class="num" id="newH" value="32" min="1" max="512"> px</div>
+    <div class="field" id="anchorField"><label>基準</label>
+      <div class="anchor" id="anchorGrid" title="どの方向へ広げる／削るか"></div>
+      <span class="anchor-hint" id="anchorHint"></span></div>
     <div class="row">
       <button class="hbtn" id="sizeCancel">キャンセル</button>
       <button class="hbtn primary" id="sizeOk">OK</button>
@@ -958,13 +973,85 @@ function getCel(layerIdx,frameIdx){
   const id=doc.layers[layerIdx].id, k=celKey(id,frameIdx);
   let c=doc.cels.get(k); if(!c){c=newCel();doc.cels.set(k,c);} return c;
 }
-function activeCel(){return getCel(activeLayer,activeFrame);}
+// while editing a layer mask, every paint op targets the grey mask buffer instead of the cel
+function activeCel(){if(maskEdit!==null&&maskBuf&&doc.layers[activeLayer]&&doc.layers[activeLayer].id===maskEdit)return maskBuf;
+  return getCel(activeLayer,activeFrame);}
+
+/* ================= Layer masks (Photoshop-style, one per layer, all frames) ================= */
+// doc.masks: Map layerId -> Uint8Array(W*H), 255 = visible. Stored beside the cels, never inside the layer JSON.
+let maskEdit=null, maskBuf=null;   // layer id being painted + its grey Uint32 working buffer
+// keys are always strings: layer ids are numbers in memory but come back as strings from JSON / snapshots
+function getMask(L){return (doc.masks&&L)?(doc.masks.get(String(L.id))||null):null;}
+function setMask(L,m){if(!doc.masks)doc.masks=new Map();if(m)doc.masks.set(String(L.id),m);else doc.masks.delete(String(L.id));}
+function grey32(v){return ((255<<24)|(v<<16)|(v<<8)|v)>>>0;}
+function maskBufFromMask(){const L=doc.layers.find(l=>l.id===maskEdit);const mk=L&&getMask(L);
+  if(!mk){maskEdit=null;maskBuf=null;return;}
+  maskBuf=new Uint32Array(W*H);for(let i=0;i<W*H;i++)maskBuf[i]=grey32(mk[i]);}
+// paint → mask: luminance × alpha (white / any colour = show, black or erased = hide, greys = partial)
+function syncMaskFromBuf(){if(maskEdit===null||!maskBuf)return;const L=doc.layers.find(l=>l.id===maskEdit);const mk=L&&getMask(L);
+  if(!mk||maskBuf.length!==mk.length){maskEdit=null;maskBuf=null;return;}
+  for(let i=0;i<mk.length;i++){const p=maskBuf[i],a=p>>>24;if(!a){mk[i]=0;maskBuf[i]=grey32(0);continue;}
+    const v=Math.round((0.299*(p&255)+0.587*((p>>8)&255)+0.114*((p>>16)&255))*a/255);mk[i]=v;maskBuf[i]=grey32(v);}}
+function enterMaskEdit(li){const L=doc.layers[li];if(!L||!getMask(L))return;
+  if(maskEdit!==null)syncMaskFromBuf();
+  activeLayer=li;selLayers=new Set([li]);maskEdit=L.id;maskBufFromMask();
+  refreshTimeline();render();toast('マスク編集：描く＝表示 / 消す・黒＝隠す');}
+function exitMaskEdit(){if(maskEdit===null)return;syncMaskFromBuf();maskEdit=null;maskBuf=null;refreshTimeline();render();}
+// keep the edit state honest after any structural change (layer gone, other layer picked, mask removed)
+function checkMaskEdit(){if(maskEdit===null)return;const L=doc.layers[activeLayer];
+  if(!L||L.id!==maskEdit||!getMask(L)){maskEdit=null;maskBuf=null;}}
+function addLayerMask(li){const L=doc.layers[li];if(!L)return;
+  if(L.group||L.adj){toast('画像レイヤーにのみマスクを付けられます');return;}
+  if(getMask(L)){enterMaskEdit(li);return;}
+  pushUndo();const m=new Uint8Array(W*H);const fromSel=!!selection;
+  if(fromSel){const sm=selection.mask;for(let i=0;i<W*H;i++)m[i]=sm[i]?255:0;}else m.fill(255);
+  setMask(L,m);selection=null;refreshTimeline();render();updateSelModVisible();toast(fromSel?'マスクを追加（選択範囲を表示）':'マスクを追加');}
+function maskFromSelection(li){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;
+  pushUndo();if(selection){const sm=selection.mask;for(let i=0;i<W*H;i++)mk[i]=sm[i]?255:0;}else mk.fill(255);
+  if(maskEdit===L.id)maskBufFromMask();refreshTimeline();render();toast(selection?'選択範囲をマスクに反映':'マスクを全表示にリセット');}
+function loadMaskSelection(li,mode){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;
+  const shp=selBuf();let n=0;for(let i=0;i<W*H;i++)if(mk[i]>127){shp[i]=1;n++;}
+  if(!n){toast('マスクに表示部分がありません');return;}
+  pushUndo();applyShape(shp,mode||'replace');if(selection)computeSelBounds();render();updateSelModVisible();toast('マスクを選択範囲に読込');}
+function toggleMask(li){const L=doc.layers[li];if(!L||!getMask(L))return;L.maskOn=L.maskOn===false;refreshTimeline();render();
+  toast(L.maskOn===false?'マスクを無効化':'マスクを有効化');}
+function applyMask(li){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;pushUndo();
+  if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
+  if(L.maskOn!==false)doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));if(!c)return;
+    for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);
+      c[i]=na?((na<<24)|(p&0xffffff))>>>0:0;}});
+  setMask(L,null);delete L.maskOn;refreshTimeline();render();toast('マスクを適用');}
+function applyMaskSilent(L){const mk=getMask(L);if(!mk)return;if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
+  if(L.maskOn!==false)doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));if(!c)return;
+    for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);c[i]=na?((na<<24)|(p&0xffffff))>>>0:0;}});
+  setMask(L,null);delete L.maskOn;}
+function deleteMask(li){const L=doc.layers[li];if(!L||!getMask(L))return;pushUndo();
+  if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
+  setMask(L,null);delete L.maskOn;refreshTimeline();render();toast('マスクを削除');}
+function openMaskRadial(li,cx,cy){const L=doc.layers[li];if(!L)return;
+  showRadial(cx,cy,[
+    {icon:'⬚',label:'選択読込',fn:()=>loadMaskSelection(li)},
+    {icon:'◐',label:'選択から',fn:()=>maskFromSelection(li)},
+    {icon:L.maskOn===false?'👁':'🚫',label:L.maskOn===false?'有効':'無効',fn:()=>toggleMask(li)},
+    {icon:'✓',label:'適用',fn:()=>applyMask(li)},
+    {icon:'🗑',label:'削除',fn:()=>deleteMask(li)},
+  ]);}
+function drawMaskThumb(ctx,layerId){const L=doc.layers.find(l=>l.id===layerId);const mk=L&&getMask(L);
+  ctx.clearRect(0,0,W,H);if(!mk)return;const u=new Uint32Array(W*H);for(let i=0;i<u.length;i++)u[i]=grey32(mk[i]);
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(u.buffer),W,H),0,0);}
+function bindMaskLong(mv,li){mv.addEventListener('pointerdown',e=>{e.stopPropagation();
+  const sx=e.clientX,sy=e.clientY;
+  const t=setTimeout(()=>{justDragged=true;setTimeout(()=>justDragged=false,140);openMaskRadial(li,sx,sy);cleanup();},430);
+  const mvh=ev=>{if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){clearTimeout(t);cleanup();}};
+  const up=()=>{clearTimeout(t);cleanup();};
+  function cleanup(){document.removeEventListener('pointermove',mvh);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+  document.addEventListener('pointermove',mvh);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);});}
 
 function newDoc(w,h){
   W=w;H=h;
   doc={layers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
        frames:[{id:uid(),duration:125}], cels:new Map()};
-  activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;
+  activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;maskEdit=null;maskBuf=null;
   selLayers=new Set([0]);selFrames=new Set([0]);
   $('#docsize').textContent=W+'×'+H;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display='none';
@@ -979,7 +1066,7 @@ let projHandle=null;   // File System Access handle of the current tab's .pxproj
 function bundleFromGlobals(name){return {doc,W,H,activeLayer,activeFrame,undoStack,redoStack,
   selection,palette,activeSwatch,zoom,panX,panY,projHandle,name};}
 function loadBundle(s){
-  if(playing)stopPlay();activeTag=null;floating=null;
+  if(playing)stopPlay();activeTag=null;floating=null;maskEdit=null;maskBuf=null;
   doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
   undoStack=s.undoStack;redoStack=s.redoStack;selection=s.selection;
   palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;projHandle=s.projHandle||null;
@@ -987,7 +1074,7 @@ function loadBundle(s){
   $('#docsize').textContent=W+'×'+H;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display=(doc&&doc.convert)?'':'none';
   ensureComp();renderPalette();refreshTimeline();render();updateUndoUI();updateSelModVisible();}
-function saveCurrentTab(){if(docTabs[curTab])docTabs[curTab]=bundleFromGlobals(docTabs[curTab].name);}
+function saveCurrentTab(){if(maskEdit!==null)syncMaskFromBuf();if(docTabs[curTab])docTabs[curTab]=bundleFromGlobals(docTabs[curTab].name);}
 function renderTabs(){const bar=$('#docTabbar');if(!bar)return;bar.innerHTML='';
   docTabs.forEach((t,i)=>{const el=document.createElement('div');el.className='dtab'+(i===curTab?' active':'');
     el.innerHTML='<span class="dt-name"></span>'+(docTabs.length>1?'<span class="dt-x" title="タブを閉じる">×</span>':'');
@@ -1038,7 +1125,8 @@ function setHistoryMax(n){HISTORY_MAX=Math.max(50,Math.min(1000,Math.round(n)));
   try{localStorage.setItem('pxeditor-histmax',HISTORY_MAX);}catch(_){}updateUndoUI();}
 function snapshot(){
   const cels={};doc.cels.forEach((v,k)=>{cels[k]=v.slice();});
-  return {W,H,layers:JSON.parse(JSON.stringify(doc.layers)),
+  const masks={};if(doc.masks)doc.masks.forEach((v,k)=>{masks[k]=v.slice();});
+  return {W,H,masks,layers:JSON.parse(JSON.stringify(doc.layers)),
     frames:JSON.parse(JSON.stringify(doc.frames)),cels,activeLayer,activeFrame,
     sel:selection?selection.mask.slice():null, convert:doc.convert||null,
     floating:floating?cloneFloating(floating):null};
@@ -1048,7 +1136,9 @@ function restore(s){
   doc.layers=JSON.parse(JSON.stringify(s.layers));
   doc.frames=JSON.parse(JSON.stringify(s.frames));
   doc.cels=new Map();for(const k in s.cels)doc.cels.set(k,s.cels[k].slice());
+  doc.masks=new Map();if(s.masks)for(const k in s.masks)doc.masks.set(k,s.masks[k].slice());
   activeLayer=Math.min(s.activeLayer,doc.layers.length-1);
+  if(maskEdit!==null){checkMaskEdit();if(maskEdit!==null)maskBufFromMask();}
   activeFrame=Math.min(s.activeFrame,doc.frames.length-1);
   // selection is part of history: restore it (guarded to current size)
   if(s.sel&&s.sel.length===W*H){selection={mask:s.sel.slice()};computeSelBounds();}
@@ -1121,9 +1211,10 @@ function compositeFrame(frameIdx,ctxTarget){
     }
     const cel=doc.cels.get(celKey(L.id,frameIdx));if(!cel)continue;
     const la=groupOpacity(L)*L.opacity;   // 0..255; groups multiply their children's opacity
+    const mk=L.maskOn===false?null:getMask(L);   // layer mask: 255 = shown, 0 = hidden (non-destructive)
     for(let i=0;i<out.length;i++){
       const s=cel[i];const sa=(s>>>24)&255;if(!sa)continue;
-      const a=Math.round(sa*la/255);if(!a)continue;
+      const a=mk?Math.round(sa*la*mk[i]/65025):Math.round(sa*la/255);if(!a)continue;
       out[i]=blend(out[i],s,a);
     }
   }
@@ -1133,7 +1224,7 @@ function compositeFrame(frameIdx,ctxTarget){
 // renderView() = paint only, reusing the cached composite (use for pan/zoom/
 // selection animation) so view changes stay O(1) on big canvases.
 let compDirty=true;
-function render(){compDirty=true;paintView();}
+function render(){if(maskEdit!==null)syncMaskFromBuf();compDirty=true;paintView();}
 function renderView(){paintView();}
 function paintView(){
   const rect=stage.getBoundingClientRect();
@@ -1148,6 +1239,11 @@ function paintView(){
   if(compDirty){compositeFrame(activeFrame,cctx);compDirty=false;}
   vctx.imageSmoothingEnabled=false;
   vctx.drawImage(comp,0,0,W,H,panX,panY,W*zoom,H*zoom);
+  if(maskEdit!==null){const L=doc.layers[activeLayer];const mk=L&&L.id===maskEdit&&getMask(L);
+    if(mk){const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;const u=new Uint32Array(W*H);
+      for(let i=0;i<u.length;i++){const hid=255-mk[i];if(hid)u[i]=(((hid*0.55|0)<<24)|0x0000ff)>>>0;}   // red tint = hidden
+      tmp.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(u.buffer),W,H),0,0);
+      vctx.drawImage(tmp,0,0,W,H,panX,panY,W*zoom,H*zoom);}}
   if(previewCel){
     const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;
     tmp.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(previewCel.buffer),W,H),0,0);
@@ -1332,6 +1428,7 @@ function ants(rx,ry,rw,rh){
 /* ================= Tools ================= */
 let tool='pencil', lastPaintTool='pencil';
 let color=packHex('#e6e8ee',255);
+let subColor=packHex('#000000',255);   // background / secondary colour (X swaps)
 let brushSize=1, opacity=255, pixelPerfect=false, mirrorX=false, brushShape='square';
 let previewCel=null;
 let xf=null;   // active free-transform state (see Free transform section)
@@ -2083,8 +2180,12 @@ function renderPalette(){
   });
 }
 function setColorHex(hex){color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;
-  const dot=$('#colorDot');if(dot){dot.style.background=hex;dot.style.backgroundImage='none';}
+  const dot=$('#mainDot');if(dot)dot.style.background=hex;
   syncWheel(hex);}
+function updateSubColorUI(){const hex=toHex(subColor);const a=$('#subDot'),b=$('#subSwatch');
+  if(a)a.style.background=hex;if(b)b.style.background=hex;}
+// X: swap main ⇄ sub (Photoshop / Aseprite)
+function swapColors(){const t=color;color=subColor;subColor=t;setColorHex(toHex(color));updateSubColorUI();toast('メイン⇄サブ入替');}
 
 /* ---- Color wheel (hue+sat disc, brightness slider) ---- */
 function hsv2rgb(h,s,v){h/=360;const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);
@@ -2180,46 +2281,72 @@ function buildCurveEditor(body,cfg){
   cv.addEventListener('pointerup',()=>{dragP=null;});
   draw();
 }
-let wheelV=0.9, wheelH=0, wheelS=0, wheelCanvas, wheelCtx, wheelDrawnV=-1;
+let wheelV=0.9, wheelH=0, wheelS=0, wheelCanvas, wheelCtx, ringImg=null, triCache=null, triCacheHue=-1, wheelMode=null;
+const WHEEL_N=220, WHEEL_R=WHEEL_N/2, RING_W=26, TRI_R=WHEEL_R-RING_W-7;
+// SV triangle vertices: pure hue on the ring side, white and black opposite (rotates with the hue)
+function triVerts(){const a=wheelH*Math.PI/180,c=WHEEL_R,P=t=>({x:c+TRI_R*Math.cos(t),y:c+TRI_R*Math.sin(t)});
+  return {Ph:P(a),Pw:P(a-2*Math.PI/3),Pb:P(a+2*Math.PI/3)};}
+function triBary(px,py){const{Ph,Pw,Pb}=triVerts();
+  const det=(Pw.y-Pb.y)*(Ph.x-Pb.x)+(Pb.x-Pw.x)*(Ph.y-Pb.y);
+  const wh=((Pw.y-Pb.y)*(px-Pb.x)+(Pb.x-Pw.x)*(py-Pb.y))/det, ww=((Pb.y-Ph.y)*(px-Pb.x)+(Ph.x-Pb.x)*(py-Pb.y))/det;
+  return [wh,ww,1-wh-ww];}
+function drawTriangle(){   // cached per hue: barycentric mix of hue / white / black == HSV (s,v)
+  if(triCache&&triCacheHue===wheelH)return triCache;
+  const n=WHEEL_N,cv=document.createElement('canvas');cv.width=n;cv.height=n;const g=cv.getContext('2d');
+  const img=g.createImageData(n,n),d=img.data,hue=hsv2rgb(wheelH,1,1);
+  const{Ph,Pw,Pb}=triVerts();
+  const x0=Math.max(0,Math.floor(Math.min(Ph.x,Pw.x,Pb.x))-1),x1=Math.min(n-1,Math.ceil(Math.max(Ph.x,Pw.x,Pb.x))+1);
+  const y0=Math.max(0,Math.floor(Math.min(Ph.y,Pw.y,Pb.y))-1),y1=Math.min(n-1,Math.ceil(Math.max(Ph.y,Pw.y,Pb.y))+1);
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){let[wh,ww,wb]=triBary(x+0.5,y+0.5);
+    if(wh<-0.03||ww<-0.03||wb<-0.03)continue;   // a little slack so the clipped edge stays coloured
+    wh=Math.max(0,wh);ww=Math.max(0,ww);wb=Math.max(0,wb);const t=wh+ww+wb;wh/=t;ww/=t;
+    const i=(y*n+x)*4;d[i]=Math.round(wh*hue[0]+ww*255);d[i+1]=Math.round(wh*hue[1]+ww*255);d[i+2]=Math.round(wh*hue[2]+ww*255);d[i+3]=255;}
+  g.putImageData(img,0,0);triCache=cv;triCacheHue=wheelH;return cv;}
 function drawWheel(){
   if(!wheelCanvas){wheelCanvas=$('#colorWheel');wheelCtx=wheelCanvas.getContext('2d');}
-  if(wheelDrawnV===wheelV)return; wheelDrawnV=wheelV;
-  const n=wheelCanvas.width,R=n/2,ctx=wheelCtx,img=ctx.createImageData(n,n),d=img.data;
-  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
-    const dx=x-R,dy=y-R,r=Math.sqrt(dx*dx+dy*dy),i=(y*n+x)*4;
-    if(r>R){d[i+3]=0;continue;}
-    let h=Math.atan2(dy,dx)*180/Math.PI;if(h<0)h+=360;
-    const rgb=hsv2rgb(h,Math.min(1,r/R),wheelV);
-    d[i]=rgb[0];d[i+1]=rgb[1];d[i+2]=rgb[2];d[i+3]=255;
-  }
-  ctx.putImageData(img,0,0);
-}
-function updateWheelCursor(){
-  const cv=$('#colorWheel');if(!cv)return;
-  const size=cv.clientWidth||180, R=size/2, ang=wheelH*Math.PI/180, rad=wheelS*R;
-  const cur=$('#wheelCursor');
-  cur.style.left=(cv.offsetLeft+R+Math.cos(ang)*rad)+'px';
-  cur.style.top=(cv.offsetTop+R+Math.sin(ang)*rad)+'px';
-}
+  const n=WHEEL_N,R=WHEEL_R,ctx=wheelCtx;
+  if(!ringImg){ringImg=ctx.createImageData(n,n);const d=ringImg.data;
+    for(let y=0;y<n;y++)for(let x=0;x<n;x++){const dx=x+0.5-R,dy=y+0.5-R,r=Math.hypot(dx,dy),i=(y*n+x)*4;
+      if(r>R||r<R-RING_W)continue;
+      let h=Math.atan2(dy,dx)*180/Math.PI;if(h<0)h+=360;const rgb=hsv2rgb(h,1,1);
+      const edge=Math.min(1,R-r,r-(R-RING_W));   // 1px anti-aliased rims
+      d[i]=rgb[0];d[i+1]=rgb[1];d[i+2]=rgb[2];d[i+3]=Math.round(255*Math.max(0,edge));}}
+  ctx.clearRect(0,0,n,n);ctx.putImageData(ringImg,0,0);
+  const{Ph,Pw,Pb}=triVerts();
+  ctx.save();ctx.beginPath();ctx.moveTo(Ph.x,Ph.y);ctx.lineTo(Pw.x,Pw.y);ctx.lineTo(Pb.x,Pb.y);ctx.closePath();ctx.clip();
+  ctx.drawImage(drawTriangle(),0,0);ctx.restore();
+  // cursors: hue marker on the ring, s/v marker in the triangle
+  const ring=(x,y,r)=>{ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.lineWidth=3.5;ctx.strokeStyle='#000';ctx.stroke();
+    ctx.lineWidth=1.8;ctx.strokeStyle='#fff';ctx.stroke();};
+  const a=wheelH*Math.PI/180,rr=R-RING_W/2;ring(R+Math.cos(a)*rr,R+Math.sin(a)*rr,7);
+  const wh=wheelS*wheelV,ww=wheelV*(1-wheelS),wb=1-wheelV;
+  ring(wh*Ph.x+ww*Pw.x+wb*Pb.x,wh*Ph.y+ww*Pw.y+wb*Pb.y,6);}
+function updateWheelCursor(){if(wheelCanvas)drawWheel();}
 function wheelToColor(){const [r,g,b]=hsv2rgb(wheelH,wheelS,wheelV);
   const hex='#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
-  color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;updateWheelCursor();}
-function syncWheel(hex){ // reflect an external color into wheel H/S/V + slider
+  color=packHex(hex,255);$('#curColor').style.background=hex;$('#colorPick').value=hex;
+  const dot=$('#mainDot');if(dot)dot.style.background=hex;drawWheel();}
+function syncWheel(hex){ // reflect an external color into wheel H/S/V
   const n=parseInt(hex.slice(1),16),[h,s,v]=rgb2hsv((n>>16)&255,(n>>8)&255,n&255);
-  wheelH=h;wheelS=s;wheelV=v;const vs=$('#valSlider');if(vs)vs.value=Math.round(v*100);
-  drawWheel();updateWheelCursor();}
-function wheelPick(cx,cy){const cv=$('#colorWheel'),r=cv.getBoundingClientRect(),R=r.width/2;
-  let dx=cx-r.left-R,dy=cy-r.top-R,dist=Math.sqrt(dx*dx+dy*dy);
-  let h=Math.atan2(dy,dx)*180/Math.PI;if(h<0)h+=360;
-  wheelH=h;wheelS=Math.min(1,dist/R);wheelToColor();}
+  if(s>0)wheelH=h;   // greys keep the current hue so the triangle doesn't jump
+  wheelS=s;wheelV=v;drawWheel();}
+// mode: 'hue' (ring / outside) or 'sv' (inside the triangle); chosen on press, kept while dragging
+function wheelPick(cx,cy,mode){const cv=$('#colorWheel'),r=cv.getBoundingClientRect(),k=WHEEL_N/r.width;
+  const x=(cx-r.left)*k,y=(cy-r.top)*k,dx=x-WHEEL_R,dy=y-WHEEL_R;
+  if(!mode){const[wh,ww,wb]=triBary(x,y);mode=(wh>=0&&ww>=0&&wb>=0)?'sv':'hue';}
+  if(mode==='hue'){let h=Math.atan2(dy,dx)*180/Math.PI;if(h<0)h+=360;wheelH=h;}
+  else{let[wh,ww,wb]=triBary(x,y);wh=Math.max(0,wh);ww=Math.max(0,ww);wb=Math.max(0,wb);const t=wh+ww+wb||1;wh/=t;ww/=t;
+    wheelV=wh+ww;wheelS=wheelV>0?wh/wheelV:0;}
+  wheelToColor();return mode;}
 function initWheel(){
-  const cv=$('#colorWheel');drawWheel();updateWheelCursor();
-  let dragging=false;
-  cv.addEventListener('pointerdown',e=>{e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}dragging=true;wheelPick(e.clientX,e.clientY);});
-  cv.addEventListener('pointermove',e=>{if(dragging)wheelPick(e.clientX,e.clientY);});
-  cv.addEventListener('pointerup',()=>{dragging=false;});
-  cv.addEventListener('pointercancel',()=>{dragging=false;});
-  $('#valSlider').oninput=e=>{wheelV=(+e.target.value)/100;drawWheel();wheelToColor();};
+  const cv=$('#colorWheel');drawWheel();
+  cv.addEventListener('pointerdown',e=>{e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}wheelMode=wheelPick(e.clientX,e.clientY,null);});
+  cv.addEventListener('pointermove',e=>{if(wheelMode)wheelPick(e.clientX,e.clientY,wheelMode);});
+  cv.addEventListener('pointerup',()=>{wheelMode=null;});
+  cv.addEventListener('pointercancel',()=>{wheelMode=null;});
+  $('#swapColorBtn').onclick=e=>{e.stopPropagation();swapColors();};
+  $('#subSwatchBox').onclick=e=>{e.stopPropagation();swapColors();};
+  updateSubColorUI();
 }
 function pickColor(x,y){
   if(!inBounds(x,y))return;compositeFrame(activeFrame,cctx);
@@ -2290,9 +2417,13 @@ function normalizeSel(){
   if(!selFrames.size)selFrames.add(activeFrame);
 }
 function refreshTimeline(){
-  normalizeSel();
+  normalizeSel();checkMaskEdit();
   const grid=$('#tlGrid');grid.innerHTML='';
   grid.style.setProperty('--lcolw',layerColW+'px');
+  // cel thumbs keep the canvas aspect (40px tall); a mask thumb sits beside the cel when any layer has one
+  const thW=Math.max(24,Math.min(120,Math.round(40*W/H)));
+  const anyMask=doc.layers.some(L=>!!getMask(L));
+  grid.style.setProperty('--thw',thW+'px');grid.style.setProperty('--celw',(anyMask?thW*2+9:thW+6)+'px');
   const hrow=document.createElement('div');hrow.className='tl-row tl-head';
   const corner=document.createElement('div');corner.className='tl-corner';
   const mkc=(txt,title,fn)=>{const b=document.createElement('button');b.className='corner-btn';b.textContent=txt;b.title=title;
@@ -2364,13 +2495,22 @@ function refreshTimeline(){
       const cell=document.createElement('div');
       cell.className='tl-cell'+(li===activeLayer&&fi===activeFrame?' active':'')+((selLayers.has(li)&&selFrames.has(fi))?' sel':'');
       cell.dataset.l=li;cell.dataset.f=fi;
-      const cv=document.createElement('canvas');cv.width=W;cv.height=H;cell.appendChild(cv);
+      const cv=document.createElement('canvas');cv.width=W;cv.height=H;cv.className='cthumb';cell.appendChild(cv);
       drawCelThumb(cv.getContext('2d'),L.id,fi);
+      const mk=getMask(L);
+      if(mk){const mv=document.createElement('canvas');mv.width=W;mv.height=H;
+        mv.className='mthumb'+(maskEdit===L.id?' editing':'')+(L.maskOn===false?' off':'');
+        mv.title='マスク（タップで編集 / 長押しでメニュー）';drawMaskThumb(mv.getContext('2d'),L.id);
+        mv.onclick=ev=>{ev.stopPropagation();if(justDragged)return;activeFrame=fi;selFrames=new Set([fi]);
+          if(maskEdit===L.id){activeLayer=li;exitMaskEdit();}else enterMaskEdit(li);};
+        bindMaskLong(mv,li);cell.appendChild(mv);}
       cell.onclick=ev=>{if(justDragged)return;
         const hold=selModeNow();   // tablet: ＋/− held or tap-locked
         const mode=(ev.ctrlKey||ev.metaKey)?(ev.altKey?'subtract':ev.shiftKey?'add':'replace'):(hold!=='replace'?hold:null);
         if(mode){loadCelSelection(li,fi,mode);return;}
-        activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);refreshTimeline();render();};
+        activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);
+        if(maskEdit!==null){exitMaskEdit();return;}   // tapping the image thumb leaves mask editing
+        refreshTimeline();render();};
       bindCellLong(cell,li,fi);
       row.appendChild(cell);
     });
@@ -2480,6 +2620,7 @@ function openRadial(kind,idx,cx,cy){
       {icon:'📋',label:'コピー',fn:copyLayersSel},
       {icon:'📥',label:'貼付',fn:pasteLayers},
       {icon:'⬇',label:'結合',fn:mergeLayersSel},
+      {icon:'◐',label:'マスク',fn:()=>addLayerMask(idx)},
     ];
     if(selLayers.size>=2)items.splice(2,0,{icon:'🗂',label:'グループ化',fn:groupLayersSel});
     const L=doc.layers[idx];if(L&&L.group)items.push({icon:'📂',label:'解除',fn:()=>ungroupLayer(idx)});
@@ -2555,7 +2696,8 @@ function blitClip(dst,src,sw,sh){if(sw===W&&sh===H){dst.set(src);return;}
 function dupLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);pushUndo();
   idxs.forEach(li=>{const src=doc.layers[li];const nl={id:uid(),name:src.name+' コピー',visible:true,opacity:src.opacity,locked:false};
     if(src.adj)nl.adj=JSON.parse(JSON.stringify(src.adj));if(src.parent)nl.parent=src.parent;
-    doc.layers.splice(li+1,0,nl);doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});});
+    doc.layers.splice(li+1,0,nl);doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});
+    const mk=getMask(src);if(mk){setMask(nl,mk.slice());if(src.maskOn===false)nl.maskOn=false;}});
   activeLayer=Math.min(activeLayer+1,doc.layers.length-1);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを複製');}
 function deleteLayersSel(){
   const ids=new Set();
@@ -2564,7 +2706,7 @@ function deleteLayersSel(){
   const remaining=doc.layers.filter(l=>!ids.has(l.id));
   if(!remaining.some(l=>!l.group&&!l.adj)){toast('全レイヤーは削除できません');return;}
   pushUndo();
-  doc.layers.filter(l=>ids.has(l.id)).forEach(L=>doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi))));
+  doc.layers.filter(l=>ids.has(l.id)).forEach(L=>{doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));setMask(L,null);});
   doc.layers=remaining;
   activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤー削除');}
 /* ---- Layer groups (single level: a group header + its contiguous children) ---- */
@@ -2601,10 +2743,13 @@ function pasteLayers(){if(!layerClip||!layerClip.length){toast('コピーされ�
 function mergeLayersSel(){let idxs=[...selLayers].sort((a,b)=>a-b);
   if(idxs.length<2){if(activeLayer===0){toast('下にレイヤーがありません');return;}idxs=[activeLayer-1,activeLayer];}
   pushUndo();const bottom=idxs[0],bot=doc.layers[bottom];
+  if(getMask(bot))applyMaskSilent(bot);   // masks are baked in by a merge (as in Photoshop)
   doc.frames.forEach((f,fi)=>{let bcel=doc.cels.get(celKey(bot.id,fi));
     for(let k=1;k<idxs.length;k++){const top=doc.layers[idxs[k]];const tc=doc.cels.get(celKey(top.id,fi));if(!tc)continue;
+      const mk=top.maskOn===false?null:getMask(top);
       if(!bcel){bcel=newCel();doc.cels.set(celKey(bot.id,fi),bcel);}
-      for(let i=0;i<tc.length;i++){const s=tc[i];const sa=Math.round(((s>>>24)&255)*top.opacity/255);if(sa)bcel[i]=blend(bcel[i],s,sa);}}});
+      for(let i=0;i<tc.length;i++){const s=tc[i];const sa=Math.round(((s>>>24)&255)*top.opacity/255*(mk?mk[i]/255:1));if(sa)bcel[i]=blend(bcel[i],s,sa);}}});
+  idxs.slice(1).forEach(li=>setMask(doc.layers[li],null));
   idxs.slice(1).sort((a,b)=>b-a).forEach(li=>{const L=doc.layers[li];doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));doc.layers.splice(li,1);});
   activeLayer=bottom;selLayers=new Set([bottom]);refreshTimeline();render();toast('レイヤーを結合');}
 
@@ -2736,7 +2881,9 @@ function moveFrame(from,to){
 
 function updateCelThumb(li,fi){
   const cell=$(`#tlGrid .tl-cell[data-l="${li}"][data-f="${fi}"]`);
-  if(cell){const cv=cell.querySelector('canvas');if(cv)drawCelThumb(cv.getContext('2d'),doc.layers[li].id,fi);}
+  if(cell){const cv=cell.querySelector('canvas.cthumb');if(cv)drawCelThumb(cv.getContext('2d'),doc.layers[li].id,fi);
+    if(maskEdit!==null&&doc.layers[li].id===maskEdit)   // the mask is shared by every frame of the layer
+      $$(`#tlGrid .tl-cell[data-l="${li}"] canvas.mthumb`).forEach(mv=>drawMaskThumb(mv.getContext('2d'),maskEdit));}
 }
 let thumbT;
 function updateCelThumbThrottled(){if(thumbT)return;thumbT=setTimeout(()=>{thumbT=null;updateCelThumb(activeLayer,activeFrame);},120);}
@@ -2933,7 +3080,7 @@ function openColorPop(){const pop=$('#colorPop');pop.classList.add('show');
   positionColorPop();drawWheel();syncWheel(toHex(color));updateWheelCursor();}
 function closeColorPop(){$('#colorPop').classList.remove('show');}
 function toggleColorPop(){$('#colorPop').classList.contains('show')?closeColorPop():openColorPop();}
-$('#colorDot').onclick=e=>{e.stopPropagation();toggleColorPop();};
+$('#colorDot').onclick=e=>{e.stopPropagation();if(e.target.id==='subDot'){swapColors();return;}toggleColorPop();};
 // tap outside closes it
 document.addEventListener('pointerdown',e=>{const pop=$('#colorPop');
   if(!pop.classList.contains('show'))return;
@@ -3299,6 +3446,7 @@ document.addEventListener('keydown',e=>{
     if(k==='arrowleft')prevFrameWrap();else if(k==='arrowright')nextFrameWrap();
     else if(k==='arrowup')gotoLayer(activeLayer+1);else if(k==='arrowdown')gotoLayer(activeLayer-1);return;}
   if(k===' '){e.preventDefault();if(!e.repeat)$('#playBtn').click();return;}   // Space = 再生/停止
+  if(k==='x'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){swapColors();return;}          // X = メイン⇄サブ
   const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',a:'quick',k:'range',v:'move',h:'hand'};
   if(map[k])setTool(map[k]);
   if(k==='['||k==='q'){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
@@ -3343,8 +3491,21 @@ function menuAction(a){$('#menuModal').classList.remove('show');
 function clearCel(){pushUndo();activeCel().fill(0);render();updateCelThumb(activeLayer,activeFrame);}
 
 let sizeMode='new';
+// canvas-size anchor: which side stays put (ax/ay ∈ 0, .5, 1) — Photoshop's 3×3 grid
+let resizeAnchor={ax:0,ay:0};
+const ANCHOR_NAMES={'0,0':'左上','0.5,0':'上','1,0':'右上','0,0.5':'左','0.5,0.5':'中央','1,0.5':'右','0,1':'左下','0.5,1':'下','1,1':'右下'};
+function buildAnchorGrid(){const g=$('#anchorGrid');if(!g)return;g.innerHTML='';
+  const arrows=[['↖','↑','↗'],['←','●','→'],['↙','↓','↘']];
+  for(let r=0;r<3;r++)for(let c=0;c<3;c++){const b=document.createElement('button');b.type='button';
+    const ax=c/2,ay=r/2,on=ax===resizeAnchor.ax&&ay===resizeAnchor.ay;
+    // the anchor shows ●; every other cell shows the direction the canvas grows from the anchor
+    const dc=Math.sign(c-resizeAnchor.ax*2),dr=Math.sign(r-resizeAnchor.ay*2);
+    b.textContent=on?'●':arrows[dr+1][dc+1];b.classList.toggle('on',on);b.title=ANCHOR_NAMES[ax+','+ay];
+    b.onclick=()=>{resizeAnchor={ax,ay};buildAnchorGrid();};g.appendChild(b);}
+  const h=$('#anchorHint');if(h)h.textContent=ANCHOR_NAMES[resizeAnchor.ax+','+resizeAnchor.ay]+'を固定';}
 function openSize(mode){sizeMode=mode;$('#sizeTitle').textContent=mode==='new'?'新規キャンバス':'キャンバスサイズ変更';
-  $('#newW').value=W;$('#newH').value=H;$('#sizeModal').classList.add('show');}
+  $('#newW').value=W;$('#newH').value=H;$('#anchorField').style.display=mode==='resize'?'':'none';buildAnchorGrid();
+  $('#sizeModal').classList.add('show');}
 $('#sizeCancel').onclick=()=>$('#sizeModal').classList.remove('show');
 $('#tabSaveClose').onclick=()=>finishCloseTab(true);
 $('#tabDiscardClose').onclick=()=>finishCloseTab(false);
@@ -3352,11 +3513,19 @@ $('#tabCancelClose').onclick=()=>{$('#tabCloseModal').classList.remove('show');p
 $$('#presets .hbtn').forEach(b=>b.onclick=()=>{$('#newW').value=b.dataset.w;$('#newH').value=b.dataset.h;});
 $('#sizeOk').onclick=()=>{const w=Math.max(1,Math.min(512,+$('#newW').value|0)),h=Math.max(1,Math.min(512,+$('#newH').value|0));
   $('#sizeModal').classList.remove('show');
-  if(sizeMode==='new'){newDoc(w,h);projHandle=null;toast(w+'×'+h+' 新規作成');}else resizeCanvas(w,h);};
-function resizeCanvas(nw,nh){pushUndo();const ow=W,oh=H,nm=new Map();
-  doc.cels.forEach((v,k)=>{const nc=new Uint32Array(nw*nh);const cw=Math.min(ow,nw),ch=Math.min(oh,nh);
-    for(let y=0;y<ch;y++)for(let x=0;x<cw;x++)nc[y*nw+x]=v[y*ow+x];nm.set(k,nc);});
-  W=nw;H=nh;doc.cels=nm;ensureComp();$('#docsize').textContent=W+'×'+H;selection=null;fitView();render();refreshTimeline();toast('サイズ変更 '+nw+'×'+nh);}
+  if(sizeMode==='new'){newDoc(w,h);projHandle=null;toast(w+'×'+h+' 新規作成');}else resizeCanvas(w,h,resizeAnchor.ax,resizeAnchor.ay);};
+// ax/ay: anchor (0=left/top, .5=centre, 1=right/bottom). Pixels keep their place relative to the anchor.
+function resizeCanvas(nw,nh,ax=0,ay=0){pushUndo();const ow=W,oh=H,nm=new Map();
+  const ox=Math.round((nw-ow)*ax),oy=Math.round((nh-oh)*ay);   // where the old (0,0) lands in the new canvas
+  const copy=(src,dst,fillv)=>{if(fillv)dst.fill(fillv);
+    for(let y=0;y<oh;y++){const ny=y+oy;if(ny<0||ny>=nh)continue;
+      for(let x=0;x<ow;x++){const nx=x+ox;if(nx<0||nx>=nw)continue;dst[ny*nw+nx]=src[y*ow+x];}}};
+  doc.cels.forEach((v,k)=>{const nc=new Uint32Array(nw*nh);copy(v,nc,0);nm.set(k,nc);});
+  if(doc.masks){const mm=new Map();doc.masks.forEach((v,k)=>{const nmk=new Uint8Array(nw*nh);copy(v,nmk,255);mm.set(k,nmk);});doc.masks=mm;}
+  doc.layers.forEach(L=>{if(L.shape){L.shape.x0+=ox;L.shape.x1+=ox;L.shape.y0+=oy;L.shape.y1+=oy;}});   // shapes follow their pixels
+  W=nw;H=nh;doc.cels=nm;ensureComp();$('#docsize').textContent=W+'×'+H;selection=null;floating=null;
+  if(maskEdit!==null)maskBufFromMask();
+  fitView();render();refreshTimeline();toast('サイズ変更 '+nw+'×'+nh+'（'+ANCHOR_NAMES[ax+','+ay]+'基準）');}
 
 /* ================= Import ================= */
 $('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;
@@ -3897,8 +4066,12 @@ window.addEventListener('load',()=>{try{const bridge=sessionStorage.getItem('pxb
 /* ================= Save / Load ================= */
 function b64FromU32(u32){const u8=new Uint8Array(u32.buffer);let s='';for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
 function u32FromB64(b64){const s=atob(b64);const u8=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u8[i]=s.charCodeAt(i);return new Uint32Array(u8.buffer);}
+function b64FromU8(u8){let s='';for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
+function u8FromB64(b64){const s=atob(b64);const u8=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u8[i]=s.charCodeAt(i);return u8;}
+function masksB64(d){const m={};if(d.masks)d.masks.forEach((v,k)=>{m[k]=b64FromU8(v);});return m;}
+function masksFromB64(o){const m=new Map();if(o)for(const k in o)m.set(k,u8FromB64(o[k]));return m;}
 function projData(){const cels={};doc.cels.forEach((v,k)=>cels[k]=b64FromU32(v));
-  return {ver:1,W,H,palette,layers:doc.layers,frames:doc.frames,tags:doc.tags||null,cels,activeLayer,activeFrame,convert:doc.convert||null};}
+  return {ver:1,W,H,palette,layers:doc.layers,frames:doc.frames,tags:doc.tags||null,cels,masks:masksB64(doc),activeLayer,activeFrame,convert:doc.convert||null};}
 function projFileName(){return (((docTabs[curTab]&&docTabs[curTab].name)||'pixel').replace(/[^\w\-\u3040-\u30ff\u4e00-\u9faf]+/g,'_')||'pixel')+'.pxproj';}
 async function writeProjTo(handle){const w=await handle.createWritable();
   await w.write(new Blob([JSON.stringify(projData())],{type:'application/json'}));await w.close();}
@@ -3922,8 +4095,9 @@ function loadProjectText(text,name,handle){try{
     const d=JSON.parse(String(text).replace(/^\uFEFF/,'').trim());
     if(!d||!Array.isArray(d.layers)||!Array.isArray(d.frames)||!d.cels)throw new Error('プロジェクト形式ではありません');
     W=d.W;H=d.H;
-    doc={layers:d.layers,frames:d.frames,cels:new Map(),tags:d.tags||null};
+    doc={layers:d.layers,frames:d.frames,cels:new Map(),tags:d.tags||null,masks:masksFromB64(d.masks)};
     for(const k in d.cels)doc.cels.set(k,u32FromB64(d.cels[k]));palette=d.palette||DEFAULT_PAL.slice();
+    maskEdit=null;maskBuf=null;
     doc.convert=d.convert||null;$('#mReconvert').style.display=doc.convert?'':'none';
     activeLayer=d.activeLayer||0;activeFrame=d.activeFrame||0;
     nextId=Math.max(...doc.layers.map(l=>+l.id),...doc.frames.map(f=>+f.id),0)+1;
@@ -4039,12 +4213,14 @@ function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open(IDB_NAM
   r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains(IDB_STORE))db.createObjectStore(IDB_STORE);};
   r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
 function serializeDoc(d){const cels={};d.cels.forEach((v,k)=>{cels[k]=v.buffer.slice(0);});
+  const masks={};if(d.masks)d.masks.forEach((v,k)=>{masks[k]=v.buffer.slice(0);});
   return {layers:JSON.parse(JSON.stringify(d.layers)),frames:JSON.parse(JSON.stringify(d.frames)),
-    cels,convert:d.convert||null,tags:d.tags?JSON.parse(JSON.stringify(d.tags)):null};}
+    cels,masks,convert:d.convert||null,tags:d.tags?JSON.parse(JSON.stringify(d.tags)):null};}
 function serializeTab(t){return {name:t.name,W:t.W,H:t.H,activeLayer:t.activeLayer,activeFrame:t.activeFrame,
   palette:t.palette?t.palette.slice():DEFAULT_PAL.slice(),doc:serializeDoc(t.doc)};}
 function deserializeTab(s){const cels=new Map();for(const k in s.doc.cels)cels.set(k,new Uint32Array(s.doc.cels[k]));
-  const doc={layers:s.doc.layers,frames:s.doc.frames,cels,convert:s.doc.convert||null,tags:s.doc.tags||null};
+  const masks=new Map();if(s.doc.masks)for(const k in s.doc.masks)masks.set(k,new Uint8Array(s.doc.masks[k]));
+  const doc={layers:s.doc.layers,frames:s.doc.frames,cels,masks,convert:s.doc.convert||null,tags:s.doc.tags||null};
   return {doc,W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
     selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};}
 function scheduleAutosave(){if(typeof cloudTouch==='function')cloudTouch();
@@ -4147,10 +4323,10 @@ function cloudSnapshot(){saveCurrentTab();
   return {v:1,curTab,tabs:docTabs.map(t=>{const cels={};t.doc.cels.forEach((v,k)=>{cels[k]=b64FromU32(v);});
     return {name:t.name,W:t.W,H:t.H,activeLayer:t.activeLayer,activeFrame:t.activeFrame,
       palette:t.palette?t.palette.slice():DEFAULT_PAL.slice(),layers:t.doc.layers,frames:t.doc.frames,
-      tags:t.doc.tags||null,convert:t.doc.convert||null,cels};})};}
+      tags:t.doc.tags||null,convert:t.doc.convert||null,cels,masks:masksB64(t.doc)};})};}
 function cloudApply(snap){
   docTabs=snap.tabs.map(s=>{const cels=new Map();for(const k in s.cels)cels.set(k,u32FromB64(s.cels[k]));
-    return {doc:{layers:s.layers,frames:s.frames,cels,convert:s.convert||null,tags:s.tags||null},
+    return {doc:{layers:s.layers,frames:s.frames,cels,masks:masksFromB64(s.masks),convert:s.convert||null,tags:s.tags||null},
       W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
       selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};});
   curTab=Math.max(0,Math.min(snap.curTab||0,docTabs.length-1));
