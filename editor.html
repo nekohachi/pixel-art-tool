@@ -3165,8 +3165,9 @@ function replaceColorAt(x,y){if(!inBounds(x,y))return;
   render();updateCelThumb(activeLayer,activeFrame);toast('色を置換');}
 $('#pasteBtn').onclick=pasteFromClipboard;$('#copyBtn').onclick=copyFramePNG;
 $('#selDeselect').onclick=()=>{deselect();toast('選択解除');};
-$('#selInvert').onclick=()=>{if(!selection)return;const m=selection.mask;for(let i=0;i<m.length;i++)m[i]=m[i]?0:1;
-  computeSelBounds();render();toast('選択範囲を反転');};
+function invertSelection(){if(!selection)return;const m=selection.mask;for(let i=0;i<m.length;i++)m[i]=m[i]?0:1;
+  computeSelBounds();render();toast('選択範囲を反転');}
+$('#selInvert').onclick=invertSelection;
 // Big +/- buttons act as Ctrl/Alt: hold to modify momentarily, tap to lock.
 let selHoldTime=0;
 function bindSelMod(btn,mode){
@@ -3429,6 +3430,7 @@ function initLayout(){const saved=loadLayout();dockState=saved||defaultDock();
   relayout();makePanelsMovable();}
 $('#mPanel').onclick=togglePanel;
 
+let altSelMenuAt=0;   // Alt+S "opened" the Select menu; a following D deselects (Photoshop accelerator)
 document.addEventListener('keydown',e=>{
   if(e.target.isContentEditable||['INPUT','SELECT'].includes(e.target.tagName))return;
   const k=e.key.toLowerCase();
@@ -3439,6 +3441,13 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&k==='c'&&selection){e.preventDefault();copySelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='v'&&pixClip){e.preventDefault();pasteSelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='s'){e.preventDefault();saveProjectOverwrite();return;}
+  // Photoshop selection shortcuts: Ctrl+T 変形 / Shift+Ctrl+I 反転 / Alt+S, D (Select menu → Deselect) 解除
+  const code=e.code||'';   // Option+S / +D type ß / ∂ on macOS, so match the physical key too
+  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(k==='t'||code==='KeyT')){e.preventDefault();if(!xf)beginTransform();return;}
+  if((e.ctrlKey||e.metaKey)&&e.shiftKey&&(k==='i'||code==='KeyI')){e.preventDefault();if(selection)invertSelection();return;}
+  if(e.altKey&&!e.ctrlKey&&!e.metaKey&&(k==='s'||code==='KeyS')){e.preventDefault();altSelMenuAt=performance.now();return;}
+  if((k==='d'||code==='KeyD')&&(e.altKey||(altSelMenuAt>0&&performance.now()-altSelMenuAt<1500))&&!e.ctrlKey&&!e.metaKey){
+    e.preventDefault();altSelMenuAt=0;if(selection){deselect();toast('選択を解除');}return;}
   if(k==='escape'){deselect();return;}
   if(selection&&k.startsWith('arrow')){const d={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]}[k];
     if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
