@@ -749,7 +749,7 @@
     <div class="mpane" data-pane="export">
       <button class="hbtn" data-act="exportPng">⬇ PNG書き出し（現フレーム）</button>
       <button class="hbtn" data-act="exportSheet">🗂 スプライトシート書き出し</button>
-      <button class="hbtn" data-act="exportSeq">🔢 PNG連番書き出し（ZIP）</button>
+      <button class="hbtn" data-act="exportSeq">🔢 PNG連番書き出し</button>
       <button class="hbtn" data-act="exportGif">🎞 アニメGIF書き出し</button>
       <button class="hbtn" data-act="exportAse">🅰 Aseprite書き出し (.aseprite)</button>
       <button class="hbtn" data-act="copyPng">📋 現フレームをコピー(PNG)</button>
@@ -4120,32 +4120,34 @@ function frameToCanvas(fi,scale=1){const c=document.createElement('canvas');c.wi
   const ctx=c.getContext('2d');ctx.imageSmoothingEnabled=false;
   const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;compositeFrame(fi,tmp.getContext('2d'));
   ctx.drawImage(tmp,0,0,W,H,0,0,W*scale,H*scale);return c;}
-function exportPNG(){const s=exportScale();if(!s)return;frameToCanvas(activeFrame,s).toBlob(b=>{downloadBlob(b,'frame-'+(activeFrame+1)+'.png');toast('PNG書き出し');});}
+// Export file names come from the project (tab) name: <name>_00.png, _01, … A name that already
+// ends in _NN (as the exported frames would) loses that suffix so "walk_00" never becomes "walk_00_00".
+function exportBaseName(){const raw=String((docTabs[curTab]&&docTabs[curTab].name)||'pixel');
+  const safe=raw.replace(/[^\w\-\u3040-\u30ff\u4e00-\u9faf]+/g,'_').replace(/^_+|_+$/g,'')||'pixel';
+  return safe.replace(/_\d{2,3}$/,'')||safe;}
+function seqName(i,n){return exportBaseName()+'_'+String(i).padStart(Math.max(2,String(Math.max(0,n-1)).length),'0')+'.png';}
+function exportPNG(){const s=exportScale();if(!s)return;const name=seqName(activeFrame,doc.frames.length);
+  frameToCanvas(activeFrame,s).toBlob(b=>{downloadBlob(b,name);toast('PNG書き出し: '+name);});}
 function exportSheet(){const s=exportScale();if(!s)return;const n=doc.frames.length;
   const c=document.createElement('canvas');c.width=W*s*n;c.height=H*s;const ctx=c.getContext('2d');ctx.imageSmoothingEnabled=false;
-  for(let i=0;i<n;i++)ctx.drawImage(frameToCanvas(i,s),i*W*s,0);c.toBlob(b=>{downloadBlob(b,'spritesheet.png');toast(n+'枚のシート書き出し');});}
+  for(let i=0;i<n;i++)ctx.drawImage(frameToCanvas(i,s),i*W*s,0);c.toBlob(b=>{downloadBlob(b,exportBaseName()+'_sheet.png');toast(n+'枚のシート書き出し');});}
 function exportScale(){const s=prompt('拡大倍率（1〜32）',W<=64?'8':'4');if(s===null)return null;return Math.max(1,Math.min(32,parseInt(s)||1));}
-// Export every frame as numbered PNGs, packed into a ZIP (store, no deflate).
-const CRC_T=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}return t;})();
-function crc32(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=CRC_T[(c^b[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
-function zipStore(files){
-  const u16=v=>[v&255,(v>>8)&255], u32=v=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
-  const enc=new TextEncoder();const parts=[],central=[];let off=0;
-  for(const f of files){const name=enc.encode(f.name),data=f.data,crc=crc32(data);
-    const lh=new Uint8Array([0x50,0x4b,0x03,0x04,...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0)]);
-    parts.push(lh,name,data);
-    central.push(new Uint8Array([0x50,0x4b,0x01,0x02,...u16(20),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)]),name);
-    off+=lh.length+name.length+data.length;}
-  let cenSize=0;central.forEach(c=>cenSize+=c.length);
-  const end=new Uint8Array([0x50,0x4b,0x05,0x06,...u16(0),...u16(0),...u16(files.length),...u16(files.length),...u32(cenSize),...u32(off),...u16(0)]);
-  return new Blob([...parts,...central,end],{type:'application/zip'});
-}
-async function exportSeq(){const s=exportScale();if(!s)return;toast('連番PNG生成中…');
+// Export every frame as its own PNG (<project>_00.png …): into a chosen folder on desktop
+// (File System Access), through one share sheet on iPad, or as plain downloads elsewhere.
+async function exportSeq(){const s=exportScale();if(!s)return;const n=doc.frames.length;toast('連番PNG生成中…');
   const files=[];
-  for(let i=0;i<doc.frames.length;i++){const c=frameToCanvas(i,s);
-    const blob=await new Promise(r=>c.toBlob(r,'image/png'));
-    files.push({name:'frame-'+String(i+1).padStart(3,'0')+'.png',data:new Uint8Array(await blob.arrayBuffer())});}
-  downloadBlob(zipStore(files),'frames.zip');toast(files.length+'枚をZIPで書き出し');}
+  for(let i=0;i<n;i++){const blob=await new Promise(r=>frameToCanvas(i,s).toBlob(r,'image/png'));
+    files.push(new File([blob],seqName(i,n),{type:'image/png'}));}
+  const done=()=>toast(n+'枚を書き出し: '+files[0].name+(n>1?' 〜 '+files[n-1].name:''));
+  if(window.showDirectoryPicker){try{const dir=await window.showDirectoryPicker({mode:'readwrite'});
+      for(const f of files){const h=await dir.getFileHandle(f.name,{create:true});const w=await h.createWritable();await w.write(f);await w.close();}
+      done();return;}
+    catch(e){if(e&&e.name==='AbortError')return;}}   // picker unavailable here → fall back to downloads
+  if(canShareFile(files[0])&&navigator.canShare({files})){
+    try{await navigator.share({files,title:exportBaseName()});toast('共有シートから保存しました');return;}
+    catch(e){if(e&&e.name==='AbortError')return;}}
+  for(const f of files){anchorDownload(f,f.name);await new Promise(r=>setTimeout(r,150));}   // browser may ask once to allow multiple downloads
+  done();}
 function anchorDownload(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 // iOS/iPadOS ignores <a download>, so a "saved" file just opens in a tab. Where there is
