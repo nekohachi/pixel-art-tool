@@ -784,7 +784,7 @@
         <div class="csec">出力サイズ</div>
         <div class="cf">
           <div class="cfrow"><label>キャンバス長辺（ドット数）</label><span class="cv" id="cvCapV">200 px</span></div>
-          <input type="range" id="cvCap" min="8" max="512" step="4" value="200">
+          <input type="range" id="cvCap" min="8" max="1980" step="4" value="200">
         </div>
         <div class="cf">
           <div class="cfrow"><label>ドットの粗さ（1ドット=Npx）</label><span class="cv" id="cvDotV">3 px</span></div>
@@ -914,8 +914,8 @@
       <button class="hbtn" data-w="128" data-h="128">128²</button>
       <button class="hbtn" data-w="160" data-h="144">GB</button>
     </div>
-    <div class="field"><label>幅</label><input type="number" class="num" id="newW" value="32" min="1" max="512"> px</div>
-    <div class="field"><label>高さ</label><input type="number" class="num" id="newH" value="32" min="1" max="512"> px</div>
+    <div class="field"><label>幅</label><input type="number" class="num" id="newW" value="32" min="1" max="2048"> px</div>
+    <div class="field"><label>高さ</label><input type="number" class="num" id="newH" value="32" min="1" max="2048"> px</div>
     <div class="field" id="anchorField"><label>基準</label>
       <div class="anchor" id="anchorGrid" title="どの方向へ広げる／削るか"></div>
       <span class="anchor-hint" id="anchorHint"></span></div>
@@ -3552,7 +3552,7 @@ $('#tabSaveClose').onclick=()=>finishCloseTab(true);
 $('#tabDiscardClose').onclick=()=>finishCloseTab(false);
 $('#tabCancelClose').onclick=()=>{$('#tabCloseModal').classList.remove('show');pendingCloseTab=-1;};
 $$('#presets .hbtn').forEach(b=>b.onclick=()=>{$('#newW').value=b.dataset.w;$('#newH').value=b.dataset.h;});
-$('#sizeOk').onclick=()=>{const w=Math.max(1,Math.min(512,+$('#newW').value|0)),h=Math.max(1,Math.min(512,+$('#newH').value|0));
+$('#sizeOk').onclick=()=>{const w=Math.max(1,Math.min(2048,+$('#newW').value|0)),h=Math.max(1,Math.min(2048,+$('#newH').value|0));
   $('#sizeModal').classList.remove('show');
   if(sizeMode==='new'){newDoc(w,h);projHandle=null;toast(w+'×'+h+' 新規作成');}else resizeCanvas(w,h,resizeAnchor.ax,resizeAnchor.ay);};
 // ax/ay: anchor (0=left/top, .5=centre, 1=right/bottom). Pixels keep their place relative to the anchor.
@@ -3574,7 +3574,7 @@ function cropCanvas(x0,y0,nw,nh,msg){pushUndo();const ow=W,oh=H,nm=new Map();
 
 /* ================= Crop tool (Photoshop-style: drag the box to cut or extend the canvas) ================= */
 let crop=null, cropShift=false;   // {x0,y0,x1,y1} image px; beyond the canvas = transparent padding
-const CROP_HIT=22, CROP_MAX=512;
+const CROP_HIT=22, CROP_MAX=2048;
 function cropProp(){return cropShift||shiftHeld;}
 function beginCrop(){if(xf){toast('変形を確定してから切り抜いてください');return;}
   crop={x0:0,y0:0,x1:W,y1:H};$('#cropBar').classList.add('show');updateCropBar();renderView();}
@@ -3937,7 +3937,7 @@ $('#convModal').querySelectorAll('input,select').forEach(el=>{
   el.addEventListener('input',scheduleConvPreview);el.addEventListener('change',scheduleConvPreview);});
 // canvas long-edge quick presets
 $('#cvFitMax').onclick=()=>{if(!convImg)return;const dot=+$('#cvDot').value;
-  $('#cvCap').value=Math.min(512,Math.max(16,Math.round(srcLongEdge(convImg)/dot)));convRender();};
+  $('#cvCap').value=Math.min(1980,Math.max(16,Math.round(srcLongEdge(convImg)/dot)));convRender();};
 $('#cvFit64').onclick=()=>{$('#cvCap').value=64;convRender();};
 $('#cvFit128').onclick=()=>{$('#cvCap').value=128;convRender();};
 $('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
