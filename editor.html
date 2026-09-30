@@ -1106,8 +1106,8 @@ function renderTabs(){const bar=$('#docTabbar');if(!bar)return;bar.innerHTML='';
     bar.appendChild(el);});
   const add=document.createElement('button');add.className='dtab-add';add.textContent='＋';add.title='新しいキャンバス';
   add.onclick=()=>newDocTab(32,32);bar.appendChild(add);}
-function switchTab(i){if(i===curTab||!docTabs[i])return;saveCurrentTab();curTab=i;loadBundle(docTabs[i]);renderTabs();}
-function closeTab(i){if(docTabs.length<=1)return;
+function switchTab(i){if(i===curTab||!docTabs[i])return;if(convBackup)cancelConverter();saveCurrentTab();curTab=i;loadBundle(docTabs[i]);renderTabs();}
+function closeTab(i){if(docTabs.length<=1)return;if(convBackup)cancelConverter();
   const wasCur=(i===curTab);
   docTabs.splice(i,1);
   if(wasCur){curTab=Math.min(i,docTabs.length-1);loadBundle(docTabs[curTab]);}
@@ -1124,7 +1124,7 @@ async function finishCloseTab(save){const i=pendingCloseTab;$('#tabCloseModal').
   if(save){if(i!==curTab)switchTab(i);await saveProjectOverwrite();}
   closeTab(i);}
 // create a fresh blank document in a NEW tab and switch to it
-function newDocTab(w,h,name){
+function newDocTab(w,h,name){if(convBackup)cancelConverter();
   if(docTabs.length)saveCurrentTab();
   W=w;H=h;
   doc={layers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
@@ -3919,7 +3919,8 @@ function convRender(){convLabels();if(!convImg)return;
     ?`${src} × ${convSeq.frames.length}フレーム → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色（プレビューは1フレーム）`
     :`${src} → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色`;}
 function scheduleConvPreview(){clearTimeout(convPrevTimer);convPrevTimer=setTimeout(()=>{convPrevTimer=null;convRender();},80);}
-function openConverter(img,params,seq){convImg=img;convSeq=seq||null;convBackup={snap:snapshot(),undo:undoStack,redo:redoStack};
+function openConverter(img,params,seq){if(convBackup)cancelConverter();   // a converter left open elsewhere is cancelled first
+  convImg=img;convSeq=seq||null;convBackup={snap:snapshot(),undo:undoStack,redo:redoStack,tabIdx:curTab};
   const row=$('#cvSeqRow');
   if(convSeq){row.style.display='';const sl=$('#cvSeqFrame');sl.max=convSeq.frames.length;sl.value=1;
     $('#cvSeqV').textContent='1 / '+convSeq.frames.length;}
@@ -3949,7 +3950,14 @@ $('#cvFitMax').onclick=()=>{$('#cvDot').value=1;convRender();};
 $('#cvFit256').onclick=()=>{$('#cvDot').value=dotForLongEdge(256);convRender();};
 $('#cvFit128').onclick=()=>{$('#cvDot').value=dotForLongEdge(128);convRender();};
 $('#cvFit64').onclick=()=>{$('#cvDot').value=dotForLongEdge(64);convRender();};
-$('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
+// The converter previews by replacing the current document, so everything it does must land in
+// the tab it was opened on. If the user somehow ended up on another tab, go back there first —
+// otherwise cancel/apply would overwrite that other tab's work.
+function convReturnToTab(){if(!convBackup)return;const j=convBackup.tabIdx;   // tab bundles are rebuilt on save, so track the index
+  if(j==null||j===curTab||!docTabs[j])return;saveCurrentTab();curTab=j;loadBundle(docTabs[j]);renderTabs();}
+function cancelConverter(){if(convBackup){convReturnToTab();restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}
+  convBackup=null;closeConverter();}
+$('#convCancel').onclick=cancelConverter;
 // GIF sequence: convert EVERY frame with the same params + one shared palette into a multi-frame doc
 async function applyConvertSeq(p){
   const seq=convSeq,back=convBackup,N=seq.frames.length,kind=seq.video?'動画':'GIF';
@@ -3972,7 +3980,7 @@ async function applyConvertSeq(p){
   convBackup=null;scheduleAutosave();
   toast(`${kind}を変換しました ${r0.gw}×${r0.gh} × ${N}フレーム`);
 }
-$('#convApply').onclick=()=>{if(!convImg)return;
+$('#convApply').onclick=()=>{if(!convImg)return;convReturnToTab();
   if(convSeq){applyConvertSeq(convParams());return;}
   const p=convParams();const r=(convLastResult&&!convPrevTimer)?convLastResult:Converter.convert(convImg,p);
   const back=convBackup;   // pre-conversion doc + history (captured on open)
