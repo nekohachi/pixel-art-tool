@@ -2699,11 +2699,13 @@ function showRadial(px,py,items){
     wrap.appendChild(it);els.push(it);}
   let hi=-1;
   const setHi=i=>{if(i===hi)return;hi=i;els.forEach((e,k)=>e.classList.toggle('on',k===i));};
-  // selection is decided purely by how far/which way the finger moved from the
-  // press point (px,py) — not by where the (clamped) menu is drawn.
-  const pick=(x,y)=>{const dx=x-px,dy=y-py;if(Math.hypot(dx,dy)<38){setHi(-1);return;}
-    const ang=Math.atan2(dy,dx);let best=-1,bd=1e9;
-    for(let i=0;i<n;i++){let da=Math.abs(Math.atan2(Math.sin(ang-angs[i]),Math.cos(ang-angs[i])));if(da<bd){bd=da;best=i;}}
+  // After a short dead zone around the press point, the item nearest the pointer wins.
+  // On an unclamped ring that equals "which way did the finger go"; when the menu had
+  // to be shifted away from a screen edge it becomes plain hover, so items that ended
+  // up on the far side of the press point (e.g. 削除/複製 at the right edge) stay reachable.
+  const pick=(x,y)=>{if(Math.hypot(x-px,y-py)<38){setHi(-1);return;}
+    let best=-1,bd=1e9;
+    for(let i=0;i<n;i++){const d=Math.hypot(x-(cx+Math.cos(angs[i])*R),y-(cy+Math.sin(angs[i])*R));if(d<bd){bd=d;best=i;}}
     setHi(best);};
   const t0=performance.now();
   const move=ev=>pick(ev.clientX,ev.clientY);
