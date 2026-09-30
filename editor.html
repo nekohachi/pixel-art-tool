@@ -284,6 +284,7 @@
     font-size:18px;cursor:pointer;}
   .xfbar .xfok{background:var(--accent);color:#fff;border-color:var(--accent);}
   .xfbar .xfcancel{background:var(--panel2);color:var(--text);}
+  .xfbar .cropsize{font-size:14px;color:var(--text);font-variant-numeric:tabular-nums;padding:0 6px;min-width:64px;text-align:center;}
   /* Regular-shape (Shift) toggle for the shape tools */
   .shapereg{position:absolute;left:132px;top:12px;z-index:15;display:none;
     width:50px;height:50px;border-radius:50%;border:2px solid var(--border);
@@ -563,6 +564,13 @@
     <button class="xfok" id="xfOk" title="確定">✓</button>
     <button class="xfcancel" id="xfCancel" title="取消">✕</button>
   </div>
+  <!-- Crop tool bar: size readout, Shift aspect lock, commit / cancel -->
+  <div class="xfbar" id="cropBar">
+    <span class="cropsize" id="cropSize">0×0</span>
+    <button class="xfmod" id="cropShiftBtn" title="縦横比を保持（Shift）">⇧ 比率</button>
+    <button class="xfok" id="cropOk" title="確定 (Enter)">✓</button>
+    <button class="xfcancel" id="cropCancel" title="取消 (Esc)">✕</button>
+  </div>
   <button class="seldeselect" id="selDeselect" title="選択解除">⬚</button>
   <!-- Regular-shape toggle: appears while a shape tool is active (Shift shortcut) -->
   <button class="shapereg" id="shapeReg" title="正方形・正円・正多角形で描く（Shift）">⬜<span class="sr-k">⇧</span></button>
@@ -629,6 +637,7 @@
       <div class="tsep"></div>
       <button class="tool" data-tool="move" title="移動 (V)">✥</button>
       <button class="tool" data-tool="hand" title="手のひら (H)">✋</button>
+      <button class="tool" data-tool="crop" title="切り抜き／キャンバスサイズ (C)">⛶</button>
       <button class="tool" data-tool="mirror" title="左右対称">🔀</button>
     </div>
   </div>
@@ -742,7 +751,7 @@
     </div>
     <div class="mpane" data-pane="import">
       <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
-      <button class="hbtn" data-act="convert">🎨 画像をドット絵に変換…</button>
+      <button class="hbtn" data-act="convert">🎨 画像・GIF・動画をドット絵に変換…</button>
       <button class="hbtn" data-act="reconvert" id="mReconvert" style="display:none">🎛 変換を再調整…</button>
       <button class="hbtn" data-act="paste">📥 クリップボードから貼り付け</button>
     </div>
@@ -879,6 +888,21 @@
 </div>
 
 <!-- Size modal -->
+<div class="modal-bg" id="videoModal">
+  <div class="modal">
+    <h2>🎬 動画をフレームに切り出し</h2>
+    <p class="sync-status" id="vidInfo">読み込み中…</p>
+    <div class="field"><label>fps</label><input type="range" id="vidFps" min="1" max="30" value="12"><span class="anchor-hint" id="vidFpsV">12</span></div>
+    <div class="field"><label>開始</label><input type="number" class="num" id="vidFrom" value="0" min="0" step="0.1"> 秒</div>
+    <div class="field"><label>終了</label><input type="number" class="num" id="vidTo" value="0" min="0" step="0.1"> 秒</div>
+    <p class="anchor-hint" id="vidCount"></p>
+    <div class="row">
+      <button class="hbtn" id="vidCancel">キャンセル</button>
+      <button class="hbtn primary" id="vidOk">切り出して変換</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="sizeModal">
   <div class="modal">
     <h2 id="sizeTitle">新規キャンバス</h2>
@@ -902,7 +926,7 @@
   </div>
 </div>
 
-<div class="dropzone" id="dropZone"><div class="dz-card">📂 ここにドロップして開く<span>.pxproj / 画像 / GIF / .aseprite</span></div></div>
+<div class="dropzone" id="dropZone"><div class="dz-card">📂 ここにドロップして開く<span>.pxproj / 画像 / GIF / 動画 / .aseprite</span></div></div>
 
 <div class="modal-bg" id="syncModal">
   <div class="modal">
@@ -939,7 +963,7 @@
 </div>
 
 <input type="file" id="fileImg" class="hiddenfile">
-<input type="file" id="fileConv" accept="image/*" class="hiddenfile">
+<input type="file" id="fileConv" accept="image/*,video/*" class="hiddenfile">
 <input type="file" id="fileProj" class="hiddenfile">
 <div class="toast" id="toast"></div>
 
@@ -1051,7 +1075,7 @@ function newDoc(w,h){
   W=w;H=h;
   doc={layers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
        frames:[{id:uid(),duration:125}], cels:new Map()};
-  activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;maskEdit=null;maskBuf=null;
+  activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;maskEdit=null;maskBuf=null;if(crop)endCropUI();
   selLayers=new Set([0]);selFrames=new Set([0]);
   $('#docsize').textContent=W+'×'+H;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display='none';
@@ -1066,7 +1090,7 @@ let projHandle=null;   // File System Access handle of the current tab's .pxproj
 function bundleFromGlobals(name){return {doc,W,H,activeLayer,activeFrame,undoStack,redoStack,
   selection,palette,activeSwatch,zoom,panX,panY,projHandle,name};}
 function loadBundle(s){
-  if(playing)stopPlay();activeTag=null;floating=null;maskEdit=null;maskBuf=null;
+  if(playing)stopPlay();activeTag=null;floating=null;maskEdit=null;maskBuf=null;if(crop)endCropUI();
   doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
   undoStack=s.undoStack;redoStack=s.redoStack;selection=s.selection;
   palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;projHandle=s.projHandle||null;
@@ -1253,6 +1277,7 @@ function paintView(){
   if(!xf)drawSelectionOverlay();   // the transform quad replaces the marquee while transforming
   updateSelModVisible();
   if(xf)drawXfOverlay();
+  if(crop)drawCropOverlay();
 }
 function drawFrameLayer(fi,alpha){
   const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;
@@ -1481,6 +1506,7 @@ function setTool(t){
   updateSelModVisible();
   updateBrushCursor();
   if(!SHAPE.includes(t))closeShapeEditor();   // leaving shape tools dismisses the editor
+  if(t==='crop'){if(!crop)beginCrop();}else if(crop){endCropUI();renderView();}   // crop box lives only on the crop tool
 }
 function inBounds(x,y){return x>=0&&y>=0&&x<W&&y<H;}
 function clampX(x){return Math.max(0,Math.min(W-1,x));}
@@ -1730,6 +1756,8 @@ stage.addEventListener('pointerdown',e=>{
     if(hit)startXfDrag(hit,e.clientX,e.clientY);
     return;
   }
+  if(tool==='crop'){if(!crop)beginCrop();if(!crop)return;   // (blocked while transforming)
+    const r=stage.getBoundingClientRect();startCropDrag(cropHitTest(e.clientX-r.left,e.clientY-r.top),e.clientX,e.clientY);return;}
   const{x,y}=screenToPix(e.clientX,e.clientY);
   maybeStartOutsideMenu(e,x,y);   // long-press outside the image → copy/paste radial
   if(tool==='hand'||spaceHand){panning=true;panStart={x:e.clientX,y:e.clientY,panX,panY};return;}
@@ -3061,6 +3089,8 @@ $('#shapeReg').onclick=()=>{regularShape=!regularShape;updateShapeRegBtn();
 $('#xfBtn').onclick=beginTransform;
 $('#xfOk').onclick=commitTransform;
 $('#xfCancel').onclick=cancelTransform;
+$('#cropOk').onclick=commitCrop;$('#cropCancel').onclick=cancelCrop;
+$('#cropShiftBtn').onclick=()=>{cropShift=!cropShift;updateCropBar();};
 $('#xfShiftBtn').onclick=()=>{xfShift=!xfShift;$('#xfShiftBtn').classList.toggle('on',xfShift);};
 $('#xfCtrlBtn').onclick=()=>{xfCtrl=!xfCtrl;$('#xfCtrlBtn').classList.toggle('on',xfCtrl);};
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
@@ -3438,6 +3468,8 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&k==='y'){e.preventDefault();redo();return;}
   if(xf){if(k==='enter'){e.preventDefault();commitTransform();return;}
     if(k==='escape'){e.preventDefault();cancelTransform();return;}}
+  if(crop){if(k==='enter'){e.preventDefault();commitCrop();return;}
+    if(k==='escape'){e.preventDefault();cancelCrop();return;}}
   if((e.ctrlKey||e.metaKey)&&k==='c'&&selection){e.preventDefault();copySelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='v'&&pixClip){e.preventDefault();pasteSelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='s'){e.preventDefault();saveProjectOverwrite();return;}
@@ -3456,7 +3488,7 @@ document.addEventListener('keydown',e=>{
     else if(k==='arrowup')gotoLayer(activeLayer+1);else if(k==='arrowdown')gotoLayer(activeLayer-1);return;}
   if(k===' '){e.preventDefault();if(!e.repeat)$('#playBtn').click();return;}   // Space = 再生/停止
   if(k==='x'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){swapColors();return;}          // X = メイン⇄サブ
-  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',a:'quick',k:'range',v:'move',h:'hand'};
+  const map={b:'pencil',e:'eraser',g:'bucket',l:'line',u:'rect',o:'ellipse',i:'dropper',m:'select',a:'quick',k:'range',v:'move',h:'hand',c:'crop'};
   if(map[k])setTool(map[k]);
   if(k==='['||k==='q'){brushSize=Math.max(1,brushSize-1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
   if(k===']'||k==='w'){brushSize=Math.min(MAXBRUSH,brushSize+1);if(SIZETOOLS.includes(tool))brushSizes[tool]=brushSize;updateGauge();updateBrushCursor();}
@@ -3524,8 +3556,11 @@ $('#sizeOk').onclick=()=>{const w=Math.max(1,Math.min(512,+$('#newW').value|0)),
   $('#sizeModal').classList.remove('show');
   if(sizeMode==='new'){newDoc(w,h);projHandle=null;toast(w+'×'+h+' 新規作成');}else resizeCanvas(w,h,resizeAnchor.ax,resizeAnchor.ay);};
 // ax/ay: anchor (0=left/top, .5=centre, 1=right/bottom). Pixels keep their place relative to the anchor.
-function resizeCanvas(nw,nh,ax=0,ay=0){pushUndo();const ow=W,oh=H,nm=new Map();
-  const ox=Math.round((nw-ow)*ax),oy=Math.round((nh-oh)*ay);   // where the old (0,0) lands in the new canvas
+function resizeCanvas(nw,nh,ax=0,ay=0){const ox=Math.round((nw-W)*ax),oy=Math.round((nh-H)*ay);
+  cropCanvas(-ox,-oy,nw,nh,'サイズ変更 '+nw+'×'+nh+'（'+ANCHOR_NAMES[ax+','+ay]+'基準）');}
+// New canvas = the nw×nh window whose top-left is old (x0,y0); may reach outside the old canvas (transparent).
+function cropCanvas(x0,y0,nw,nh,msg){pushUndo();const ow=W,oh=H,nm=new Map();
+  const ox=-x0,oy=-y0;   // where the old (0,0) lands in the new canvas
   const copy=(src,dst,fillv)=>{if(fillv)dst.fill(fillv);
     for(let y=0;y<oh;y++){const ny=y+oy;if(ny<0||ny>=nh)continue;
       for(let x=0;x<ow;x++){const nx=x+ox;if(nx<0||nx>=nw)continue;dst[ny*nw+nx]=src[y*ow+x];}}};
@@ -3534,7 +3569,58 @@ function resizeCanvas(nw,nh,ax=0,ay=0){pushUndo();const ow=W,oh=H,nm=new Map();
   doc.layers.forEach(L=>{if(L.shape){L.shape.x0+=ox;L.shape.x1+=ox;L.shape.y0+=oy;L.shape.y1+=oy;}});   // shapes follow their pixels
   W=nw;H=nh;doc.cels=nm;ensureComp();$('#docsize').textContent=W+'×'+H;selection=null;floating=null;
   if(maskEdit!==null)maskBufFromMask();
-  fitView();render();refreshTimeline();toast('サイズ変更 '+nw+'×'+nh+'（'+ANCHOR_NAMES[ax+','+ay]+'基準）');}
+  crop=null;$('#cropBar').classList.remove('show');
+  fitView();render();refreshTimeline();toast(msg||'切り抜き '+nw+'×'+nh);}
+
+/* ================= Crop tool (Photoshop-style: drag the box to cut or extend the canvas) ================= */
+let crop=null, cropShift=false;   // {x0,y0,x1,y1} image px; beyond the canvas = transparent padding
+const CROP_HIT=22, CROP_MAX=512;
+function cropProp(){return cropShift||shiftHeld;}
+function beginCrop(){if(xf){toast('変形を確定してから切り抜いてください');return;}
+  crop={x0:0,y0:0,x1:W,y1:H};$('#cropBar').classList.add('show');updateCropBar();renderView();}
+function endCropUI(){crop=null;$('#cropBar').classList.remove('show');}
+function cropRect(){const x0=Math.round(Math.min(crop.x0,crop.x1)),y0=Math.round(Math.min(crop.y0,crop.y1));
+  const w=Math.round(Math.abs(crop.x1-crop.x0)),h=Math.round(Math.abs(crop.y1-crop.y0));
+  return {x0,y0,w:Math.max(1,Math.min(CROP_MAX,w)),h:Math.max(1,Math.min(CROP_MAX,h))};}
+function updateCropBar(){if(!crop)return;const r=cropRect();$('#cropSize').textContent=r.w+'×'+r.h;
+  $('#cropShiftBtn').classList.toggle('on',cropProp());}
+function commitCrop(){if(!crop)return;const r=cropRect();endCropUI();
+  if(r.x0===0&&r.y0===0&&r.w===W&&r.h===H){renderView();toast('サイズ変更なし');return;}
+  cropCanvas(r.x0,r.y0,r.w,r.h);}
+function cancelCrop(){if(!crop)return;endCropUI();renderView();toast('切り抜きを取消');}
+// stage-local px → which part of the box: corner/edge ('lt','r','b'…), inside = move, outside = draw a new box
+function cropHitTest(lx,ly){const r=cropRect();const sx=panX+r.x0*zoom,sy=panY+r.y0*zoom,ex=sx+r.w*zoom,ey=sy+r.h*zoom;
+  if(lx<sx-CROP_HIT||lx>ex+CROP_HIT||ly<sy-CROP_HIT||ly>ey+CROP_HIT)return {mode:'new'};
+  const h=(Math.abs(lx-sx)<CROP_HIT?'l':Math.abs(lx-ex)<CROP_HIT?'r':'')+(Math.abs(ly-sy)<CROP_HIT?'t':Math.abs(ly-ey)<CROP_HIT?'b':'');
+  return h?{mode:'edge',edges:h}:{mode:'move'};}
+function startCropDrag(hit,cx,cy){const start={...crop};const p0=screenToPixF(cx,cy);
+  if(hit.mode==='new')crop={x0:p0.x,y0:p0.y,x1:p0.x,y1:p0.y};
+  const move=ev=>{const p=screenToPixF(ev.clientX,ev.clientY);const dx=p.x-p0.x,dy=p.y-p0.y;let c;
+    if(hit.mode==='move')c={x0:start.x0+dx,y0:start.y0+dy,x1:start.x1+dx,y1:start.y1+dy};
+    else if(hit.mode==='new'){c={x0:p0.x,y0:p0.y,x1:p.x,y1:p.y};
+      if(cropProp()){const d=Math.max(Math.abs(dx),Math.abs(dy));c.x1=p0.x+(dx<0?-d:d);c.y1=p0.y+(dy<0?-d:d);}}
+    else{c={...start};const e=hit.edges;
+      if(e.includes('l'))c.x0=start.x0+dx;if(e.includes('r'))c.x1=start.x1+dx;
+      if(e.includes('t'))c.y0=start.y0+dy;if(e.includes('b'))c.y1=start.y1+dy;
+      if(cropProp()&&e.length===2){const ar=(start.x1-start.x0)/((start.y1-start.y0)||1);   // Shift on a corner: keep the aspect
+        const nh=(c.x1-c.x0)/ar;if(e.includes('t'))c.y0=c.y1-nh;else c.y1=c.y0+nh;}}
+    crop={x0:Math.round(c.x0),y0:Math.round(c.y0),x1:Math.round(c.x1),y1:Math.round(c.y1)};   // whole pixels
+    updateCropBar();renderView();};
+  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);
+    if(hit.mode==='new'&&Math.abs(crop.x1-crop.x0)<1&&Math.abs(crop.y1-crop.y0)<1)crop=start;   // a tap keeps the old box
+    crop={x0:Math.min(crop.x0,crop.x1),y0:Math.min(crop.y0,crop.y1),x1:Math.max(crop.x0,crop.x1),y1:Math.max(crop.y0,crop.y1)};
+    if(crop.x1-crop.x0<1)crop.x1=crop.x0+1;if(crop.y1-crop.y0<1)crop.y1=crop.y0+1;
+    updateCropBar();renderView();};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);}
+function drawCropOverlay(){if(!crop)return;const r=cropRect();const g=vctx;
+  const sx=panX+r.x0*zoom,sy=panY+r.y0*zoom,sw=r.w*zoom,sh=r.h*zoom;g.save();
+  g.fillStyle='rgba(0,0,0,.55)';g.beginPath();g.rect(0,0,view.width,view.height);g.rect(sx,sy,sw,sh);g.fill('evenodd');   // dim what gets cut
+  g.strokeStyle='rgba(255,255,255,.3)';g.lineWidth=1;g.beginPath();   // rule-of-thirds guides
+  for(let i=1;i<3;i++){g.moveTo(sx+sw*i/3,sy);g.lineTo(sx+sw*i/3,sy+sh);g.moveTo(sx,sy+sh*i/3);g.lineTo(sx+sw,sy+sh*i/3);}g.stroke();
+  g.strokeStyle='#fff';g.lineWidth=1.5;g.strokeRect(sx,sy,sw,sh);
+  const hs=(x,y)=>{g.fillStyle='#fff';g.strokeStyle='#000';g.lineWidth=1;g.fillRect(x-6,y-6,12,12);g.strokeRect(x-6.5,y-6.5,13,13);};
+  [[sx,sy],[sx+sw,sy],[sx,sy+sh],[sx+sw,sy+sh],[sx+sw/2,sy],[sx+sw/2,sy+sh],[sx,sy+sh/2],[sx+sw,sy+sh/2]].forEach(p=>hs(p[0],p[1]));
+  g.restore();}
 
 /* ================= Import ================= */
 $('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;
@@ -3546,6 +3632,7 @@ $('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;
   }
   // GIF: 全フレームを連番で読み込み、まとめてドット絵変換にかけられるよう変換器（連番モード）へ
   if(isGifFile(f)){loadGifFile(f,()=>loadImageFileRaw(f));e.target.value='';return;}
+  if(isVideoFile(f)){openVideoImport(f,false);e.target.value='';return;}   // 動画も同じ連番変換へ
   // PNG/その他画像: 元の画像サイズのまま新規キャンバスに読み込む
   loadImageFileRaw(f);e.target.value='';};
 function loadImageFileRaw(f){const img=new Image();
@@ -3826,13 +3913,18 @@ function openConverter(img,params,seq){convImg=img;convSeq=seq||null;convBackup=
   if(convSeq){row.style.display='';const sl=$('#cvSeqFrame');sl.max=convSeq.frames.length;sl.value=1;
     $('#cvSeqV').textContent='1 / '+convSeq.frames.length;}
   else row.style.display='none';
-  $('#convTitle').textContent=params?'🎛 変換を再調整':(convSeq?'🎞 GIFをドット絵に変換':'🎨 ドット絵に変換');
+  $('#convTitle').textContent=params?'🎛 変換を再調整':(convSeq?(convSeq.video?'🎬 動画をドット絵に変換':'🎞 GIFをドット絵に変換'):'🎨 ドット絵に変換');
   if(params){setConvParams(params);}
   else{ // fresh image: default the canvas long-edge to native dot resolution (capped so huge images stay manageable)
     const dot=+$('#cvDot').value;let cap=Math.min(256,Math.max(16,Math.round(srcLongEdge(img)/dot)));
     cap=Math.min(256,Math.ceil(cap/8)*8);$('#cvCap').value=cap;}
   $('#convModal').classList.add('show');convRender();}
-function reopenConverter(){const c=doc.convert;if(!c||(!c.src&&!c.gif)){toast('再調整できる変換元がありません');return;}
+function reopenConverter(){const c=doc.convert;if(!c||(!c.src&&!c.gif&&!c.video)){toast('再調整できる変換元がありません');return;}
+  if(c.video){   // video frames live only in memory: reopen from the cache if it is still the same clip
+    const vc=videoSeqCache;
+    if(vc&&vc.video&&vc.video.name===c.video.name&&vc.video.n===c.video.n)openConverter(seqFrameCanvas(vc,0),c.params,vc);
+    else toast('動画は保存されないため、再調整するには動画をもう一度読み込んでください');
+    return;}
   if(c.gif){   // GIF sequence: re-decode the stored source and reopen in sequence mode
     fetch(c.gif).then(r=>r.arrayBuffer()).then(buf=>{const g=decodeGIF(buf);g.src=c.gif;
       openConverter(seqFrameCanvas(g,0),c.params,g);}).catch(()=>toast('変換元GIFを読み込めませんでした'));
@@ -3851,25 +3943,25 @@ $('#cvFit128').onclick=()=>{$('#cvCap').value=128;convRender();};
 $('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
 // GIF sequence: convert EVERY frame with the same params + one shared palette into a multi-frame doc
 async function applyConvertSeq(p){
-  const seq=convSeq,back=convBackup,N=seq.frames.length;
-  closeConverter();toast('GIFを変換中… 0/'+N);
+  const seq=convSeq,back=convBackup,N=seq.frames.length,kind=seq.video?'動画':'GIF';
+  closeConverter();toast(kind+'を変換中… 0/'+N);
   const k=Math.min(8,N),samples=[];   // pool a few evenly spaced frames for the shared palette
   for(let s=0;s<k;s++){const i=Math.floor(s*(N-1)/Math.max(1,k-1));samples.push(seqFrameCanvas(seq,i,document.createElement('canvas')));}
   const pal=Converter.paletteForImages(samples,p);const fp=Object.assign({},p,{fixedPalette:pal});
   const results=[];
   for(let i=0;i<N;i++){results.push(Converter.convert(seqFrameCanvas(seq,i),fp));
-    if(i%4===3){toast('GIFを変換中… '+(i+1)+'/'+N);await new Promise(r=>setTimeout(r,0));}}
+    if(i%4===3){toast(kind+'を変換中… '+(i+1)+'/'+N);await new Promise(r=>setTimeout(r,0));}}
   const r0=results[0];newDoc(r0.gw,r0.gh);const L=doc.layers[0];
   doc.frames=results.map((r,i)=>({id:uid(),duration:seq.frames[i].delay}));
   results.forEach((r,i)=>{const cel=newCel();const d=r.data;
     for(let j=0;j<r.gw*r.gh;j++)cel[j]=rgba(d[j*4],d[j*4+1],d[j*4+2],d[j*4+3]);doc.cels.set(celKey(L.id,i),cel);});
   palette=['#00000000'].concat(pal.map(c=>'#'+[c[0],c[1],c[2]].map(v=>v.toString(16).padStart(2,'0')).join('')));
   activeSwatch=1;activeFrame=0;selFrames=new Set([0]);
-  doc.convert={gif:seq.src,params:p};$('#mReconvert').style.display='';
+  doc.convert=seq.video?{video:seq.video,params:p}:{gif:seq.src,params:p};$('#mReconvert').style.display='';
   renderPalette();refreshTimeline();render();
   if(back){undoStack=back.undo.slice();undoStack.push(back.snap);if(undoStack.length>HISTORY_MAX)undoStack.shift();redoStack=[];updateUndoUI();}
   convBackup=null;scheduleAutosave();
-  toast(`GIFを変換しました ${r0.gw}×${r0.gh} × ${N}フレーム`);
+  toast(`${kind}を変換しました ${r0.gw}×${r0.gh} × ${N}フレーム`);
 }
 $('#convApply').onclick=()=>{if(!convImg)return;
   if(convSeq){applyConvertSeq(convParams());return;}
@@ -3905,11 +3997,58 @@ function importImageRaw(img){
   refreshTimeline();render();updateCelThumb(0,0);
   toast('画像を読み込みました '+iw+'×'+ih+(scaled?'（縮小）':''));}
 // Menu: convert a chosen image file
-$('#fileConv').onchange=e=>{const f=e.target.files[0];if(!f)return;
+$('#fileConv').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.value='';
+  if(isVideoFile(f)){openVideoImport(f,false);return;}   // 動画 → フレーム切り出し → 連番モード
   const single=()=>{const img=new Image();img.onload=()=>openConverter(img);
     img.onerror=()=>toast('画像の読み込みに失敗');img.src=URL.createObjectURL(f);};
-  if(isGifFile(f))loadGifFile(f,single);else single();   // GIF → 連番モードで変換器を開く
-  e.target.value='';};
+  if(isGifFile(f))loadGifFile(f,single);else single();};   // GIF → 連番モードで変換器を開く
+
+/* ================= Video → frame sequence (same converter rules for every frame) ================= */
+const VIDEO_MAX_FRAMES=300, VIDEO_LONG_EDGE=320;   // frames are captured at ≤320px long edge: plenty for ≤256-dot output
+let videoSrc=null;        // {file,el,url,duration,newTab} while the cut-out dialog is open
+let videoSeqCache=null;   // the last extracted sequence (memory only) so 再調整 can reopen it
+function isVideoFile(f){return (f.type||'').startsWith('video/')||/\.(mp4|m4v|webm|mov|ogv)$/i.test(f.name||'');}
+function openVideoImport(f,newTab){const v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';
+  if(videoSrc)closeVideoModal();
+  const url=URL.createObjectURL(f);videoSrc={file:f,el:v,url,duration:0,newTab:!!newTab};
+  $('#vidInfo').textContent='読み込み中…';$('#vidCount').textContent='';$('#vidOk').disabled=false;$('#videoModal').classList.add('show');
+  v.onerror=()=>{toast('この動画は再生できません（mp4 / webm 推奨）');closeVideoModal();};
+  v.onloadedmetadata=async()=>{let d=v.duration;
+    if(!isFinite(d)||d<=0){   // MediaRecorder webm has no duration header: seeking to the end makes the browser compute it
+      await new Promise(r=>{const t=setTimeout(r,3000);v.ondurationchange=()=>{if(isFinite(v.duration)){clearTimeout(t);v.ondurationchange=null;r();}};v.currentTime=1e101;});
+      d=v.duration;}
+    if(videoSrc==null||videoSrc.el!==v)return;   // dialog was closed meanwhile
+    if(!isFinite(d)||d<=0){toast('動画の長さを取得できません');closeVideoModal();return;}
+    videoSrc.duration=d;const dd=Math.round(d*10)/10;$('#vidFrom').value=0;$('#vidFrom').max=dd;$('#vidTo').value=dd;$('#vidTo').max=dd;
+    $('#vidInfo').textContent=(f.name||'動画')+'　'+v.videoWidth+'×'+v.videoHeight+'　'+d.toFixed(1)+'秒';updateVideoCount();};
+  v.src=url;}
+function videoPlan(){if(!videoSrc||!videoSrc.duration)return null;const d=videoSrc.duration;
+  const fps=Math.max(1,Math.min(60,+$('#vidFps').value||12));
+  const from=Math.max(0,Math.min(d,+$('#vidFrom').value||0)),to=Math.max(from,Math.min(d,+$('#vidTo').value||d));
+  const n=Math.max(1,Math.floor((to-from)*fps+1e-6));
+  return {fps,from,to,n:Math.min(VIDEO_MAX_FRAMES,n),truncated:n>VIDEO_MAX_FRAMES};}
+function updateVideoCount(){const p=videoPlan();$('#vidFpsV').textContent=$('#vidFps').value;if(!p)return;
+  $('#vidCount').textContent=p.n+'フレーム（'+(p.n/p.fps).toFixed(1)+'秒分 / '+p.fps+'fps）'+(p.truncated?'　※最大'+VIDEO_MAX_FRAMES+'フレーム。fpsを下げるか範囲を狭めてください':'');}
+function closeVideoModal(){$('#videoModal').classList.remove('show');
+  if(videoSrc){try{videoSrc.el.pause();videoSrc.el.removeAttribute('src');videoSrc.el.load();}catch(_){}URL.revokeObjectURL(videoSrc.url);}videoSrc=null;}
+async function extractVideoFrames(){const p=videoPlan();if(!p)return;const {el:v,file,newTab}=videoSrc;
+  const sc=Math.min(1,VIDEO_LONG_EDGE/Math.max(1,v.videoWidth,v.videoHeight));
+  const w=Math.max(1,Math.round(v.videoWidth*sc)),h=Math.max(1,Math.round(v.videoHeight*sc));
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d',{willReadFrequently:true});
+  const seek=t=>new Promise(r=>{let done=false;const fin=()=>{if(done)return;done=true;v.removeEventListener('seeked',fin);r();};
+    v.addEventListener('seeked',fin);setTimeout(fin,2500);v.currentTime=t;});
+  $('#vidOk').disabled=true;const frames=[],delay=Math.round(1000/p.fps);
+  for(let i=0;i<p.n;i++){await seek(Math.min(videoSrc.duration,p.from+i/p.fps));
+    if(!videoSrc||videoSrc.el!==v)return;   // cancelled
+    g.drawImage(v,0,0,w,h);frames.push({data:g.getImageData(0,0,w,h).data,delay});
+    if(i%5===4)$('#vidCount').textContent='切り出し中… '+(i+1)+'/'+p.n;}
+  const seq={w,h,frames,src:null,video:{name:file.name||'video',fps:p.fps,from:p.from,to:p.to,n:frames.length}};
+  closeVideoModal();videoSeqCache=seq;
+  if(newTab)newDocTab(32,32,(file.name||'video').replace(/\.[^.]+$/,''));
+  openConverter(seqFrameCanvas(seq,0),null,seq);}
+$('#vidFps').oninput=updateVideoCount;$('#vidFrom').oninput=updateVideoCount;$('#vidTo').oninput=updateVideoCount;
+$('#vidCancel').onclick=closeVideoModal;
+$('#vidOk').onclick=()=>extractVideoFrames().catch(e=>{console.error(e);toast('切り出しに失敗: '+(e.message||e));closeVideoModal();});
 
 /* ---- Clipboard copy / paste ---- */
 async function copyFramePNG(){
@@ -4266,6 +4405,7 @@ function openDroppedFile(f){
   const toConverter=()=>{const img=new Image();
     img.onload=()=>{newDocTab(32,32,f.name.replace(/\.[^.]+$/,''));openConverter(img);};
     img.onerror=()=>toast('このファイルは開けません');img.src=URL.createObjectURL(f);};
+  if(isVideoFile(f)){openVideoImport(f,true);return;}            // 動画 → 切り出し → 連番モード
   if(isGifFile(f)){loadGifFile(f,toConverter);return;}          // GIF → 連番モード
   if(f.type.startsWith('image/')||/\.(png|jpe?g|webp|bmp)$/.test(name)){toConverter();return;}
   toast('対応していないファイルです');}
