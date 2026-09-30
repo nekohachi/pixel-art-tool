@@ -751,7 +751,7 @@
     </div>
     <div class="mpane" data-pane="import">
       <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
-      <button class="hbtn" data-act="convert">🎨 画像をドット絵に変換…</button>
+      <button class="hbtn" data-act="convert">🎨 画像・GIF・動画をドット絵に変換…</button>
       <button class="hbtn" data-act="reconvert" id="mReconvert" style="display:none">🎛 変換を再調整…</button>
       <button class="hbtn" data-act="paste">📥 クリップボードから貼り付け</button>
     </div>
@@ -888,6 +888,21 @@
 </div>
 
 <!-- Size modal -->
+<div class="modal-bg" id="videoModal">
+  <div class="modal">
+    <h2>🎬 動画をフレームに切り出し</h2>
+    <p class="sync-status" id="vidInfo">読み込み中…</p>
+    <div class="field"><label>fps</label><input type="range" id="vidFps" min="1" max="30" value="12"><span class="anchor-hint" id="vidFpsV">12</span></div>
+    <div class="field"><label>開始</label><input type="number" class="num" id="vidFrom" value="0" min="0" step="0.1"> 秒</div>
+    <div class="field"><label>終了</label><input type="number" class="num" id="vidTo" value="0" min="0" step="0.1"> 秒</div>
+    <p class="anchor-hint" id="vidCount"></p>
+    <div class="row">
+      <button class="hbtn" id="vidCancel">キャンセル</button>
+      <button class="hbtn primary" id="vidOk">切り出して変換</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="sizeModal">
   <div class="modal">
     <h2 id="sizeTitle">新規キャンバス</h2>
@@ -911,7 +926,7 @@
   </div>
 </div>
 
-<div class="dropzone" id="dropZone"><div class="dz-card">📂 ここにドロップして開く<span>.pxproj / 画像 / GIF / .aseprite</span></div></div>
+<div class="dropzone" id="dropZone"><div class="dz-card">📂 ここにドロップして開く<span>.pxproj / 画像 / GIF / 動画 / .aseprite</span></div></div>
 
 <div class="modal-bg" id="syncModal">
   <div class="modal">
@@ -948,7 +963,7 @@
 </div>
 
 <input type="file" id="fileImg" class="hiddenfile">
-<input type="file" id="fileConv" accept="image/*" class="hiddenfile">
+<input type="file" id="fileConv" accept="image/*,video/*" class="hiddenfile">
 <input type="file" id="fileProj" class="hiddenfile">
 <div class="toast" id="toast"></div>
 
@@ -3617,6 +3632,7 @@ $('#fileImg').onchange=e=>{const f=e.target.files[0];if(!f)return;
   }
   // GIF: 全フレームを連番で読み込み、まとめてドット絵変換にかけられるよう変換器（連番モード）へ
   if(isGifFile(f)){loadGifFile(f,()=>loadImageFileRaw(f));e.target.value='';return;}
+  if(isVideoFile(f)){openVideoImport(f,false);e.target.value='';return;}   // 動画も同じ連番変換へ
   // PNG/その他画像: 元の画像サイズのまま新規キャンバスに読み込む
   loadImageFileRaw(f);e.target.value='';};
 function loadImageFileRaw(f){const img=new Image();
@@ -3897,13 +3913,18 @@ function openConverter(img,params,seq){convImg=img;convSeq=seq||null;convBackup=
   if(convSeq){row.style.display='';const sl=$('#cvSeqFrame');sl.max=convSeq.frames.length;sl.value=1;
     $('#cvSeqV').textContent='1 / '+convSeq.frames.length;}
   else row.style.display='none';
-  $('#convTitle').textContent=params?'🎛 変換を再調整':(convSeq?'🎞 GIFをドット絵に変換':'🎨 ドット絵に変換');
+  $('#convTitle').textContent=params?'🎛 変換を再調整':(convSeq?(convSeq.video?'🎬 動画をドット絵に変換':'🎞 GIFをドット絵に変換'):'🎨 ドット絵に変換');
   if(params){setConvParams(params);}
   else{ // fresh image: default the canvas long-edge to native dot resolution (capped so huge images stay manageable)
     const dot=+$('#cvDot').value;let cap=Math.min(256,Math.max(16,Math.round(srcLongEdge(img)/dot)));
     cap=Math.min(256,Math.ceil(cap/8)*8);$('#cvCap').value=cap;}
   $('#convModal').classList.add('show');convRender();}
-function reopenConverter(){const c=doc.convert;if(!c||(!c.src&&!c.gif)){toast('再調整できる変換元がありません');return;}
+function reopenConverter(){const c=doc.convert;if(!c||(!c.src&&!c.gif&&!c.video)){toast('再調整できる変換元がありません');return;}
+  if(c.video){   // video frames live only in memory: reopen from the cache if it is still the same clip
+    const vc=videoSeqCache;
+    if(vc&&vc.video&&vc.video.name===c.video.name&&vc.video.n===c.video.n)openConverter(seqFrameCanvas(vc,0),c.params,vc);
+    else toast('動画は保存されないため、再調整するには動画をもう一度読み込んでください');
+    return;}
   if(c.gif){   // GIF sequence: re-decode the stored source and reopen in sequence mode
     fetch(c.gif).then(r=>r.arrayBuffer()).then(buf=>{const g=decodeGIF(buf);g.src=c.gif;
       openConverter(seqFrameCanvas(g,0),c.params,g);}).catch(()=>toast('変換元GIFを読み込めませんでした'));
@@ -3922,25 +3943,25 @@ $('#cvFit128').onclick=()=>{$('#cvCap').value=128;convRender();};
 $('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
 // GIF sequence: convert EVERY frame with the same params + one shared palette into a multi-frame doc
 async function applyConvertSeq(p){
-  const seq=convSeq,back=convBackup,N=seq.frames.length;
-  closeConverter();toast('GIFを変換中… 0/'+N);
+  const seq=convSeq,back=convBackup,N=seq.frames.length,kind=seq.video?'動画':'GIF';
+  closeConverter();toast(kind+'を変換中… 0/'+N);
   const k=Math.min(8,N),samples=[];   // pool a few evenly spaced frames for the shared palette
   for(let s=0;s<k;s++){const i=Math.floor(s*(N-1)/Math.max(1,k-1));samples.push(seqFrameCanvas(seq,i,document.createElement('canvas')));}
   const pal=Converter.paletteForImages(samples,p);const fp=Object.assign({},p,{fixedPalette:pal});
   const results=[];
   for(let i=0;i<N;i++){results.push(Converter.convert(seqFrameCanvas(seq,i),fp));
-    if(i%4===3){toast('GIFを変換中… '+(i+1)+'/'+N);await new Promise(r=>setTimeout(r,0));}}
+    if(i%4===3){toast(kind+'を変換中… '+(i+1)+'/'+N);await new Promise(r=>setTimeout(r,0));}}
   const r0=results[0];newDoc(r0.gw,r0.gh);const L=doc.layers[0];
   doc.frames=results.map((r,i)=>({id:uid(),duration:seq.frames[i].delay}));
   results.forEach((r,i)=>{const cel=newCel();const d=r.data;
     for(let j=0;j<r.gw*r.gh;j++)cel[j]=rgba(d[j*4],d[j*4+1],d[j*4+2],d[j*4+3]);doc.cels.set(celKey(L.id,i),cel);});
   palette=['#00000000'].concat(pal.map(c=>'#'+[c[0],c[1],c[2]].map(v=>v.toString(16).padStart(2,'0')).join('')));
   activeSwatch=1;activeFrame=0;selFrames=new Set([0]);
-  doc.convert={gif:seq.src,params:p};$('#mReconvert').style.display='';
+  doc.convert=seq.video?{video:seq.video,params:p}:{gif:seq.src,params:p};$('#mReconvert').style.display='';
   renderPalette();refreshTimeline();render();
   if(back){undoStack=back.undo.slice();undoStack.push(back.snap);if(undoStack.length>HISTORY_MAX)undoStack.shift();redoStack=[];updateUndoUI();}
   convBackup=null;scheduleAutosave();
-  toast(`GIFを変換しました ${r0.gw}×${r0.gh} × ${N}フレーム`);
+  toast(`${kind}を変換しました ${r0.gw}×${r0.gh} × ${N}フレーム`);
 }
 $('#convApply').onclick=()=>{if(!convImg)return;
   if(convSeq){applyConvertSeq(convParams());return;}
@@ -3976,11 +3997,58 @@ function importImageRaw(img){
   refreshTimeline();render();updateCelThumb(0,0);
   toast('画像を読み込みました '+iw+'×'+ih+(scaled?'（縮小）':''));}
 // Menu: convert a chosen image file
-$('#fileConv').onchange=e=>{const f=e.target.files[0];if(!f)return;
+$('#fileConv').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.value='';
+  if(isVideoFile(f)){openVideoImport(f,false);return;}   // 動画 → フレーム切り出し → 連番モード
   const single=()=>{const img=new Image();img.onload=()=>openConverter(img);
     img.onerror=()=>toast('画像の読み込みに失敗');img.src=URL.createObjectURL(f);};
-  if(isGifFile(f))loadGifFile(f,single);else single();   // GIF → 連番モードで変換器を開く
-  e.target.value='';};
+  if(isGifFile(f))loadGifFile(f,single);else single();};   // GIF → 連番モードで変換器を開く
+
+/* ================= Video → frame sequence (same converter rules for every frame) ================= */
+const VIDEO_MAX_FRAMES=300, VIDEO_LONG_EDGE=320;   // frames are captured at ≤320px long edge: plenty for ≤256-dot output
+let videoSrc=null;        // {file,el,url,duration,newTab} while the cut-out dialog is open
+let videoSeqCache=null;   // the last extracted sequence (memory only) so 再調整 can reopen it
+function isVideoFile(f){return (f.type||'').startsWith('video/')||/\.(mp4|m4v|webm|mov|ogv)$/i.test(f.name||'');}
+function openVideoImport(f,newTab){const v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';
+  if(videoSrc)closeVideoModal();
+  const url=URL.createObjectURL(f);videoSrc={file:f,el:v,url,duration:0,newTab:!!newTab};
+  $('#vidInfo').textContent='読み込み中…';$('#vidCount').textContent='';$('#vidOk').disabled=false;$('#videoModal').classList.add('show');
+  v.onerror=()=>{toast('この動画は再生できません（mp4 / webm 推奨）');closeVideoModal();};
+  v.onloadedmetadata=async()=>{let d=v.duration;
+    if(!isFinite(d)||d<=0){   // MediaRecorder webm has no duration header: seeking to the end makes the browser compute it
+      await new Promise(r=>{const t=setTimeout(r,3000);v.ondurationchange=()=>{if(isFinite(v.duration)){clearTimeout(t);v.ondurationchange=null;r();}};v.currentTime=1e101;});
+      d=v.duration;}
+    if(videoSrc==null||videoSrc.el!==v)return;   // dialog was closed meanwhile
+    if(!isFinite(d)||d<=0){toast('動画の長さを取得できません');closeVideoModal();return;}
+    videoSrc.duration=d;const dd=Math.round(d*10)/10;$('#vidFrom').value=0;$('#vidFrom').max=dd;$('#vidTo').value=dd;$('#vidTo').max=dd;
+    $('#vidInfo').textContent=(f.name||'動画')+'　'+v.videoWidth+'×'+v.videoHeight+'　'+d.toFixed(1)+'秒';updateVideoCount();};
+  v.src=url;}
+function videoPlan(){if(!videoSrc||!videoSrc.duration)return null;const d=videoSrc.duration;
+  const fps=Math.max(1,Math.min(60,+$('#vidFps').value||12));
+  const from=Math.max(0,Math.min(d,+$('#vidFrom').value||0)),to=Math.max(from,Math.min(d,+$('#vidTo').value||d));
+  const n=Math.max(1,Math.floor((to-from)*fps+1e-6));
+  return {fps,from,to,n:Math.min(VIDEO_MAX_FRAMES,n),truncated:n>VIDEO_MAX_FRAMES};}
+function updateVideoCount(){const p=videoPlan();$('#vidFpsV').textContent=$('#vidFps').value;if(!p)return;
+  $('#vidCount').textContent=p.n+'フレーム（'+(p.n/p.fps).toFixed(1)+'秒分 / '+p.fps+'fps）'+(p.truncated?'　※最大'+VIDEO_MAX_FRAMES+'フレーム。fpsを下げるか範囲を狭めてください':'');}
+function closeVideoModal(){$('#videoModal').classList.remove('show');
+  if(videoSrc){try{videoSrc.el.pause();videoSrc.el.removeAttribute('src');videoSrc.el.load();}catch(_){}URL.revokeObjectURL(videoSrc.url);}videoSrc=null;}
+async function extractVideoFrames(){const p=videoPlan();if(!p)return;const {el:v,file,newTab}=videoSrc;
+  const sc=Math.min(1,VIDEO_LONG_EDGE/Math.max(1,v.videoWidth,v.videoHeight));
+  const w=Math.max(1,Math.round(v.videoWidth*sc)),h=Math.max(1,Math.round(v.videoHeight*sc));
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d',{willReadFrequently:true});
+  const seek=t=>new Promise(r=>{let done=false;const fin=()=>{if(done)return;done=true;v.removeEventListener('seeked',fin);r();};
+    v.addEventListener('seeked',fin);setTimeout(fin,2500);v.currentTime=t;});
+  $('#vidOk').disabled=true;const frames=[],delay=Math.round(1000/p.fps);
+  for(let i=0;i<p.n;i++){await seek(Math.min(videoSrc.duration,p.from+i/p.fps));
+    if(!videoSrc||videoSrc.el!==v)return;   // cancelled
+    g.drawImage(v,0,0,w,h);frames.push({data:g.getImageData(0,0,w,h).data,delay});
+    if(i%5===4)$('#vidCount').textContent='切り出し中… '+(i+1)+'/'+p.n;}
+  const seq={w,h,frames,src:null,video:{name:file.name||'video',fps:p.fps,from:p.from,to:p.to,n:frames.length}};
+  closeVideoModal();videoSeqCache=seq;
+  if(newTab)newDocTab(32,32,(file.name||'video').replace(/\.[^.]+$/,''));
+  openConverter(seqFrameCanvas(seq,0),null,seq);}
+$('#vidFps').oninput=updateVideoCount;$('#vidFrom').oninput=updateVideoCount;$('#vidTo').oninput=updateVideoCount;
+$('#vidCancel').onclick=closeVideoModal;
+$('#vidOk').onclick=()=>extractVideoFrames().catch(e=>{console.error(e);toast('切り出しに失敗: '+(e.message||e));closeVideoModal();});
 
 /* ---- Clipboard copy / paste ---- */
 async function copyFramePNG(){
@@ -4337,6 +4405,7 @@ function openDroppedFile(f){
   const toConverter=()=>{const img=new Image();
     img.onload=()=>{newDocTab(32,32,f.name.replace(/\.[^.]+$/,''));openConverter(img);};
     img.onerror=()=>toast('このファイルは開けません');img.src=URL.createObjectURL(f);};
+  if(isVideoFile(f)){openVideoImport(f,true);return;}            // 動画 → 切り出し → 連番モード
   if(isGifFile(f)){loadGifFile(f,toConverter);return;}          // GIF → 連番モード
   if(f.type.startsWith('image/')||/\.(png|jpe?g|webp|bmp)$/.test(name)){toConverter();return;}
   toast('対応していないファイルです');}
