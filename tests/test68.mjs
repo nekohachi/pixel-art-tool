@@ -10,7 +10,7 @@ const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/ch
 const ctx=await b.newContext({viewport:{width:1024,height:768}});const page=await ctx.newPage();
 const errors=[];page.on('pageerror',e=>errors.push('PAGEERR '+e.message));page.on('console',m=>{if(m.type()==='error')errors.push('CONSOLE '+m.text());});
 await page.goto(base+'/editor.html',{waitUntil:'load'});await page.waitForTimeout(400);
-const ok=(n,c)=>console.log((c?'✅':'❌')+' '+n);
+let fails=0;const ok=(n,c)=>{if(!c)fails++;console.log((c?'✅':'❌')+' '+n);};
 await page.evaluate(()=>{window.T={
   setup(){while(docTabs.length>1)closeTab(docTabs.length-1);newDoc(8,8);getCel(0,0)[0]=packHex('#ff0000',255);setTabName('A');
     newDocTab(6,6,'B');getCel(0,0)[0]=packHex('#0000ff',255);pushUndo();getCel(0,0)[1]=packHex('#0000ff',255);   // B has history + a last edit
@@ -23,8 +23,8 @@ await page.evaluate(()=>{window.T={
 
 // 1) cancelling after a (bypassed) tab switch restores A and leaves B untouched
 const C=await page.evaluate(()=>{T.setup();openConverter(T.img());const preview=[W,H];T.bypassSwitch(1);const onB=curTab===1;
-  $('#convCancel').click();return {preview,onB,R:T.R,B:T.B,...T.state()};});
-const RED=C.R,BLUE=C.B;
+  $('#convCancel').click();return {preview,onB,RED:T.R,BLUE:T.B,...T.state()};});
+const RED=C.RED,BLUE=C.BLUE;
 ok('converter preview replaced tab A (40×40) and we moved to B',C.preview[0]===40&&C.onB);
 ok('cancel returns to tab A and restores it (8×8, red pixel)',C.cur===0&&C.A[0]===8&&C.A[1]===RED);
 ok('tab B is untouched (6×6, blue pixels, history kept)',C.B[0]===6&&C.B[1]===BLUE&&C.B[2]===BLUE&&C.undoB===1);
@@ -44,4 +44,4 @@ ok('newDocTab under an open converter cancels it (A restored, new tab C opened)'
 ok('closeTab under an open converter cancels it (A restored, B closed)',!S.cl.open&&S.cl.n===1&&S.cl.A[0]===8&&S.cl.A[1]===RED);
 
 console.log('ERRORS:',errors.length?JSON.stringify(errors):'none');
-await b.close();server.close();process.exit(errors.length?1:0);
+await b.close();server.close();process.exit(errors.length||fails?1:0);
