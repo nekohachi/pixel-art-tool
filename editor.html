@@ -783,17 +783,16 @@
         </div>
         <div class="csec">出力サイズ</div>
         <div class="cf">
-          <div class="cfrow"><label>キャンバス長辺（ドット数）</label><span class="cv" id="cvCapV">200 px</span></div>
-          <input type="range" id="cvCap" min="8" max="1980" step="4" value="200">
-        </div>
-        <div class="cf">
           <div class="cfrow"><label>ドットの粗さ（1ドット=Npx）</label><span class="cv" id="cvDotV">3 px</span></div>
-          <input type="range" id="cvDot" min="1" max="64" step="1" value="3">
+          <input type="range" id="cvDot" min="1" max="128" step="1" value="3">
+          <div class="conv-hint">元画像の N×N ピクセルを1ドットに集約。ドット数は「元のサイズ ÷ N」で決まります（長辺は最大1980ドット）。</div>
+          <div class="conv-hint" id="cvSizeInfo" style="color:var(--text)"></div>
         </div>
         <div class="preset" style="margin:6px 0 2px">
-          <button class="hbtn" id="cvFitMax" title="元画像の解像度いっぱい（最大の細かさ）">最大</button>
-          <button class="hbtn" id="cvFit128" title="長辺を最大128ドットに">≤128</button>
-          <button class="hbtn" id="cvFit64" title="長辺を最大64ドットに">≤64</button>
+          <button class="hbtn" id="cvFitMax" title="1ドット=1px（最大の細かさ）">最大</button>
+          <button class="hbtn" id="cvFit256" title="長辺が256ドット以内になる粗さに">≤256</button>
+          <button class="hbtn" id="cvFit128" title="長辺が128ドット以内になる粗さに">≤128</button>
+          <button class="hbtn" id="cvFit64" title="長辺が64ドット以内になる粗さに">≤64</button>
         </div>
 
         <div class="csec">パレット / 減色</div>
@@ -3873,19 +3872,25 @@ $('#cvSeqFrame').oninput=e=>{if(!convSeq)return;const i=Math.max(0,Math.min(conv
   $('#cvSeqV').textContent=(i+1)+' / '+convSeq.frames.length;convImg=seqFrameCanvas(convSeq,i);};
 function convParams(){return {
   palSource:$('#cvPalSource').value, quantAlgo:$('#cvQuant').value, colors:+$('#cvColors').value,
-  dot:+$('#cvDot').value, cap:+$('#cvCap').value, smooth:+$('#cvSmooth').value,
+  dot:+$('#cvDot').value, cap:CONV_MAX_EDGE, smooth:+$('#cvSmooth').value,
   sample:$('#cvSample').value, dither:$('#cvDither').value, dstr:+$('#cvDstr').value,
   sharp:+$('#cvSharp').value, outline:+$('#cvOutline').value, dilate:+$('#cvDilate').value,
   bri:+$('#cvBri').value, sat:+$('#cvSat').value, con:+$('#cvCon').value, hue:+$('#cvHue').value,
   keepAlpha:$('#cvKeepAlpha').checked, bg:$('#cvBg').value, alphaTh:+$('#cvAlphaTh').value };}
+const CONV_MAX_EDGE=1980;   // hard ceiling on the output long edge (dots)
+function convSrcSize(){if(!convImg)return {w:0,h:0};return {w:convImg.naturalWidth||convImg.width,h:convImg.naturalHeight||convImg.height};}
+// coarseness that keeps the long edge within `target` dots
+function dotForLongEdge(target){const {w,h}=convSrcSize();return Math.max(1,Math.min(128,Math.ceil(Math.max(w,h)/target)));}
 function setConvParams(p){if(!p)return;
   const S=(id,v)=>{if(v!==undefined)$(id).value=v;};
-  S('#cvPalSource',p.palSource);S('#cvQuant',p.quantAlgo);S('#cvColors',p.colors);S('#cvDot',p.dot);S('#cvCap',p.cap);
+  let dot=p.dot;   // projects saved with the old long-edge cap: fold that cap into the coarseness
+  if(p.cap&&p.cap<CONV_MAX_EDGE&&convImg){const {w,h}=convSrcSize();if(Math.max(w,h)/(dot||1)>p.cap)dot=Math.max(dot||1,Math.ceil(Math.max(w,h)/p.cap));}
+  S('#cvPalSource',p.palSource);S('#cvQuant',p.quantAlgo);S('#cvColors',p.colors);S('#cvDot',dot);
   S('#cvSmooth',p.smooth);S('#cvSample',p.sample);S('#cvDither',p.dither);S('#cvDstr',p.dstr);S('#cvSharp',p.sharp);
   S('#cvOutline',p.outline);S('#cvDilate',p.dilate);S('#cvBri',p.bri);S('#cvSat',p.sat);S('#cvCon',p.con);S('#cvHue',p.hue);
   if(p.keepAlpha!==undefined)$('#cvKeepAlpha').checked=p.keepAlpha;S('#cvBg',p.bg);S('#cvAlphaTh',p.alphaTh);}
 function convLabels(){const p=convParams();
-  $('#cvColorsV').textContent=p.colors;$('#cvDotV').textContent=p.dot+' px';$('#cvCapV').textContent=p.cap+' px';
+  $('#cvColorsV').textContent=p.colors;$('#cvDotV').textContent=p.dot+' px';
   $('#cvSmoothV').textContent=p.smooth+'%';$('#cvDstrV').textContent=p.dstr+'%';$('#cvSharpV').textContent=p.sharp+'%';
   $('#cvOutlineV').textContent=p.outline+'%';$('#cvBriV').textContent=p.bri+'%';$('#cvSatV').textContent=p.sat+'%';
   $('#cvConV').textContent=p.con+'%';$('#cvHueV').textContent=p.hue+'°';$('#cvAlphaThV').textContent=p.alphaTh;
@@ -3904,9 +3909,13 @@ function convRender(){convLabels();if(!convImg)return;
   const p=convParams();const r=Converter.convert(convImg,p);convLastResult=r;
   renderConvertedDoc(r);
   const iw=convImg.naturalWidth||convImg.width, ih=convImg.naturalHeight||convImg.height;
+  const capped=Math.max(iw,ih)/p.dot>CONV_MAX_EDGE?'（上限'+CONV_MAX_EDGE+'で縮小）':'';
+  const v=convSeq&&convSeq.video;
+  const src=v?`元動画 ${v.nativeW}×${v.nativeH}`+(v.nativeW!==convSeq.w?`（取り込み ${convSeq.w}×${convSeq.h}）`:''):convSeq?`GIF ${convSeq.w}×${convSeq.h}`:`元画像 ${iw}×${ih}`;
+  $('#cvSizeInfo').textContent=`${src} ÷ ${p.dot} → ${r.gw}×${r.gh} ドット${capped}`;
   $('#convInfo').textContent=convSeq
-    ?`GIF ${convSeq.w}×${convSeq.h} × ${convSeq.frames.length}フレーム → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色（プレビューは1フレーム）`
-    :`元画像 ${iw}×${ih} → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色`;}
+    ?`${src} × ${convSeq.frames.length}フレーム → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色（プレビューは1フレーム）`
+    :`${src} → キャンバス ${r.gw}×${r.gh} ドット / ${r.palette.length}色`;}
 function scheduleConvPreview(){clearTimeout(convPrevTimer);convPrevTimer=setTimeout(()=>{convPrevTimer=null;convRender();},80);}
 function openConverter(img,params,seq){convImg=img;convSeq=seq||null;convBackup={snap:snapshot(),undo:undoStack,redo:redoStack};
   const row=$('#cvSeqRow');
@@ -3915,9 +3924,7 @@ function openConverter(img,params,seq){convImg=img;convSeq=seq||null;convBackup=
   else row.style.display='none';
   $('#convTitle').textContent=params?'🎛 変換を再調整':(convSeq?(convSeq.video?'🎬 動画をドット絵に変換':'🎞 GIFをドット絵に変換'):'🎨 ドット絵に変換');
   if(params){setConvParams(params);}
-  else{ // fresh image: default the canvas long-edge to native dot resolution (capped so huge images stay manageable)
-    const dot=+$('#cvDot').value;let cap=Math.min(256,Math.max(16,Math.round(srcLongEdge(img)/dot)));
-    cap=Math.min(256,Math.ceil(cap/8)*8);$('#cvCap').value=cap;}
+  else $('#cvDot').value=dotForLongEdge(256);   // fresh source: start at ≤256 dots on the long edge
   $('#convModal').classList.add('show');convRender();}
 function reopenConverter(){const c=doc.convert;if(!c||(!c.src&&!c.gif&&!c.video)){toast('再調整できる変換元がありません');return;}
   if(c.video){   // video frames live only in memory: reopen from the cache if it is still the same clip
@@ -3936,10 +3943,10 @@ function closeConverter(){clearTimeout(convPrevTimer);convPrevTimer=null;convSeq
 $('#convModal').querySelectorAll('input,select').forEach(el=>{
   el.addEventListener('input',scheduleConvPreview);el.addEventListener('change',scheduleConvPreview);});
 // canvas long-edge quick presets
-$('#cvFitMax').onclick=()=>{if(!convImg)return;const dot=+$('#cvDot').value;
-  $('#cvCap').value=Math.min(1980,Math.max(16,Math.round(srcLongEdge(convImg)/dot)));convRender();};
-$('#cvFit64').onclick=()=>{$('#cvCap').value=64;convRender();};
-$('#cvFit128').onclick=()=>{$('#cvCap').value=128;convRender();};
+$('#cvFitMax').onclick=()=>{$('#cvDot').value=1;convRender();};
+$('#cvFit256').onclick=()=>{$('#cvDot').value=dotForLongEdge(256);convRender();};
+$('#cvFit128').onclick=()=>{$('#cvDot').value=dotForLongEdge(128);convRender();};
+$('#cvFit64').onclick=()=>{$('#cvDot').value=dotForLongEdge(64);convRender();};
 $('#convCancel').onclick=()=>{if(convBackup){restore(convBackup.snap);undoStack=convBackup.undo;redoStack=convBackup.redo;updateUndoUI();}convBackup=null;closeConverter();};
 // GIF sequence: convert EVERY frame with the same params + one shared palette into a multi-frame doc
 async function applyConvertSeq(p){
@@ -4004,7 +4011,11 @@ $('#fileConv').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.valu
   if(isGifFile(f))loadGifFile(f,single);else single();};   // GIF → 連番モードで変換器を開く
 
 /* ================= Video → frame sequence (same converter rules for every frame) ================= */
-const VIDEO_MAX_FRAMES=300, VIDEO_LONG_EDGE=320;   // frames are captured at ≤320px long edge: plenty for ≤256-dot output
+const VIDEO_MAX_FRAMES=300, VIDEO_PIXEL_BUDGET=48e6;   // all captured frames together stay within ~48M px (≈190MB RGBA)
+// capture size: native resolution when the clip is short, scaled down only as far as the budget needs
+function videoCaptureSize(vw,vh,n){const perFrame=VIDEO_PIXEL_BUDGET/Math.max(1,n);
+  const sc=Math.min(1,Math.sqrt(perFrame/Math.max(1,vw*vh)));
+  return {w:Math.max(1,Math.round(vw*sc)),h:Math.max(1,Math.round(vh*sc))};}
 let videoSrc=null;        // {file,el,url,duration,newTab} while the cut-out dialog is open
 let videoSeqCache=null;   // the last extracted sequence (memory only) so 再調整 can reopen it
 function isVideoFile(f){return (f.type||'').startsWith('video/')||/\.(mp4|m4v|webm|mov|ogv)$/i.test(f.name||'');}
@@ -4028,12 +4039,13 @@ function videoPlan(){if(!videoSrc||!videoSrc.duration)return null;const d=videoS
   const n=Math.max(1,Math.floor((to-from)*fps+1e-6));
   return {fps,from,to,n:Math.min(VIDEO_MAX_FRAMES,n),truncated:n>VIDEO_MAX_FRAMES};}
 function updateVideoCount(){const p=videoPlan();$('#vidFpsV').textContent=$('#vidFps').value;if(!p)return;
-  $('#vidCount').textContent=p.n+'フレーム（'+(p.n/p.fps).toFixed(1)+'秒分 / '+p.fps+'fps）'+(p.truncated?'　※最大'+VIDEO_MAX_FRAMES+'フレーム。fpsを下げるか範囲を狭めてください':'');}
+  const v=videoSrc.el,cs=videoCaptureSize(v.videoWidth,v.videoHeight,p.n);
+  $('#vidCount').textContent=p.n+'フレーム（'+(p.n/p.fps).toFixed(1)+'秒分 / '+p.fps+'fps）　取り込み '+cs.w+'×'+cs.h
+    +(cs.w<v.videoWidth?'（フレーム数が多いため縮小）':'')+(p.truncated?'　※最大'+VIDEO_MAX_FRAMES+'フレーム。fpsを下げるか範囲を狭めてください':'');}
 function closeVideoModal(){$('#videoModal').classList.remove('show');
   if(videoSrc){try{videoSrc.el.pause();videoSrc.el.removeAttribute('src');videoSrc.el.load();}catch(_){}URL.revokeObjectURL(videoSrc.url);}videoSrc=null;}
 async function extractVideoFrames(){const p=videoPlan();if(!p)return;const {el:v,file,newTab}=videoSrc;
-  const sc=Math.min(1,VIDEO_LONG_EDGE/Math.max(1,v.videoWidth,v.videoHeight));
-  const w=Math.max(1,Math.round(v.videoWidth*sc)),h=Math.max(1,Math.round(v.videoHeight*sc));
+  const {w,h}=videoCaptureSize(v.videoWidth,v.videoHeight,p.n);
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d',{willReadFrequently:true});
   const seek=t=>new Promise(r=>{let done=false;const fin=()=>{if(done)return;done=true;v.removeEventListener('seeked',fin);r();};
     v.addEventListener('seeked',fin);setTimeout(fin,2500);v.currentTime=t;});
@@ -4042,7 +4054,7 @@ async function extractVideoFrames(){const p=videoPlan();if(!p)return;const {el:v
     if(!videoSrc||videoSrc.el!==v)return;   // cancelled
     g.drawImage(v,0,0,w,h);frames.push({data:g.getImageData(0,0,w,h).data,delay});
     if(i%5===4)$('#vidCount').textContent='切り出し中… '+(i+1)+'/'+p.n;}
-  const seq={w,h,frames,src:null,video:{name:file.name||'video',fps:p.fps,from:p.from,to:p.to,n:frames.length}};
+  const seq={w,h,frames,src:null,video:{name:file.name||'video',fps:p.fps,from:p.from,to:p.to,n:frames.length,nativeW:v.videoWidth,nativeH:v.videoHeight}};
   closeVideoModal();videoSeqCache=seq;
   if(newTab)newDocTab(32,32,(file.name||'video').replace(/\.[^.]+$/,''));
   openConverter(seqFrameCanvas(seq,0),null,seq);}
