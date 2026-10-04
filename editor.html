@@ -23,7 +23,7 @@
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:"Segoe UI","Yu Gothic UI",system-ui,sans-serif;font-size:13px;
-    overscroll-behavior:none;user-select:none;-webkit-user-select:none;}
+    overscroll-behavior:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;}
   body{display:flex;flex-direction:column;overflow:hidden;}
   button{font-family:inherit;color:inherit;}
 
@@ -2593,12 +2593,12 @@ function openCelRadial(li,fi,cx,cy){showRadial(cx,cy,[
   {icon:'📋',label:'コピー',fn:()=>copyCel(li,fi)},
   {icon:'📥',label:'貼付',fn:()=>pasteCel(li,fi)},
   {icon:'🗑',label:'消去',fn:()=>clearCelAt(li,fi)},
-]);}
+],refreshTimeline);}   // full rebuild only once the finger is up
 // Long-press a preview cell -> cel radial (copy / paste / clear that layer×frame only)
 function bindCellLong(cell,li,fi){cell.addEventListener('pointerdown',e=>{
   const sx=e.clientX,sy=e.clientY;
   const t=setTimeout(()=>{justDragged=true;setTimeout(()=>justDragged=false,140);
-    activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);refreshTimeline();
+    activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);highlightTimeline();
     openCelRadial(li,fi,sx,sy);cleanup();},430);
   const mv=ev=>{if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){clearTimeout(t);cleanup();}};
   const up=()=>{clearTimeout(t);cleanup();};
@@ -2636,7 +2636,7 @@ function selectRange(kind,a,b){const set=kind==='layer'?selLayers:selFrames;
 function openRadial(kind,idx,cx,cy){
   const set=kind==='layer'?selLayers:selFrames;
   if(!set.has(idx)){set.clear();set.add(idx);}   // pressing outside the current selection re-anchors to it
-  setActiveItem(kind,idx);refreshTimeline();
+  setActiveItem(kind,idx);highlightTimeline();   // light highlight now, full rebuild after the menu closes
   let items;
   if(kind==='layer'){
     items=[
@@ -2651,7 +2651,7 @@ function openRadial(kind,idx,cx,cy){
     ];
     if(selLayers.size>=2)items.splice(2,0,{icon:'🗂',label:'グループ化',fn:groupLayersSel});
     const L=doc.layers[idx];if(L&&L.group)items.push({icon:'📂',label:'解除',fn:()=>ungroupLayer(idx)});
-    showRadial(cx,cy,items);return;
+    showRadial(cx,cy,items,refreshTimeline);return;
   }
   items = [
     {icon:'＋',label:'新規',fn:addFrame},
@@ -2661,7 +2661,7 @@ function openRadial(kind,idx,cx,cy){
     {icon:'📥',label:'貼付',fn:pasteFrames},
     {icon:'🏷',label:'タグ',fn:createTagFromSel},
   ];
-  showRadial(cx,cy,items);
+  showRadial(cx,cy,items,refreshTimeline);
 }
 /* ---- Animation tags (named frame ranges, loop / ping-pong playback) ---- */
 const TAG_COLORS=['#e0596b','#ffcd75','#41c98a','#5b8cff','#b13e53','#38b764','#41a6f6','#a7f070'];
@@ -2683,7 +2683,7 @@ function deleteTag(ti){if(!doc.tags[ti])return;doc.tags.splice(ti,1);
   if(activeTag===ti)activeTag=null;else if(activeTag>ti)activeTag--;refreshTimeline();render();toast('タグを削除');}
 function playTag(ti,dir){if(!doc.tags[ti])return;doc.tags[ti].dir=dir;activeTag=ti;
   if(playing)stopPlay();startPlayback();refreshTimeline();}
-function showRadial(px,py,items){
+function showRadial(px,py,items,afterClose){
   const n=items.length, R=94, pad=R+46;
   // clamp the menu centre so every item stays on-screen (even near an edge)
   const cx=Math.max(pad,Math.min(innerWidth-pad,px));
@@ -2711,7 +2711,9 @@ function showRadial(px,py,items){
   const move=ev=>pick(ev.clientX,ev.clientY);
   const finish=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);
     document.removeEventListener('pointercancel',onCancel);wrap.remove();guard.remove();
-    if(hi>=0)items[hi].fn();};
+    justDragged=true;setTimeout(()=>justDragged=false,220);   // the click that follows the release must not re-target a cel
+    if(hi>=0)items[hi].fn();
+    if(afterClose)afterClose();};
   // ignore a spurious pointercancel right after opening (e.g. DOM churn from
   // refreshTimeline removing the pressed cell) so the menu doesn't close instantly
   const onCancel=()=>{if(performance.now()-t0<250)return;finish();};
@@ -2917,8 +2919,10 @@ function updateCelThumb(li,fi){
 let thumbT;
 function updateCelThumbThrottled(){if(thumbT)return;thumbT=setTimeout(()=>{thumbT=null;updateCelThumb(activeLayer,activeFrame);},120);}
 function highlightTimeline(){
-  $$('#tlGrid .tl-fnum').forEach((el,i)=>el.classList.toggle('active',i===activeFrame));
-  $$('#tlGrid .tl-cell').forEach(el=>el.classList.toggle('active',+el.dataset.l===activeLayer&&+el.dataset.f===activeFrame));
+  $$('#tlGrid .tl-fnum').forEach(el=>{const i=+el.dataset.fi;el.classList.toggle('active',i===activeFrame);el.classList.toggle('sel',selFrames.has(i));});
+  $$('#tlGrid .tl-lhead').forEach(el=>{const i=+el.dataset.li;el.classList.toggle('active',i===activeLayer);el.classList.toggle('sel',selLayers.has(i));});
+  $$('#tlGrid .tl-cell').forEach(el=>{const l=+el.dataset.l,f=+el.dataset.f;el.classList.toggle('active',l===activeLayer&&f===activeFrame);
+    el.classList.toggle('sel',selLayers.has(l)&&selFrames.has(f));});
 }
 function syncLayerPanel(){/* layer opacity is now edited via long-press on the layer name */}
 
