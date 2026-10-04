@@ -4247,25 +4247,82 @@ window.addEventListener('load',()=>{try{const bridge=sessionStorage.getItem('pxb
     img.src=bridge;}}catch(_){}});
 
 /* ================= Save / Load ================= */
-function b64FromU32(u32){const u8=new Uint8Array(u32.buffer);let s='';for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
-function u32FromB64(b64){const s=atob(b64);const u8=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u8[i]=s.charCodeAt(i);return new Uint32Array(u8.buffer);}
-function b64FromU8(u8){let s='';for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
+function b64FromU8(u8){let s='';for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(s);}
+function b64FromU32(u32){return b64FromU8(new Uint8Array(u32.buffer,u32.byteOffset,u32.byteLength));}
 function u8FromB64(b64){const s=atob(b64);const u8=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u8[i]=s.charCodeAt(i);return u8;}
+function u32FromB64(b64){return new Uint32Array(u8FromB64(b64).buffer);}
+// base64 → bytes decoded straight from a byte range of the file (no intermediate JS strings)
+const B64T=(()=>{const t=new Int8Array(256).fill(-1);const a='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';for(let i=0;i<64;i++)t[a.charCodeAt(i)]=i;return t;})();
+function u8FromB64Bytes(src,s,e){while(e>s&&(src[e-1]===61||src[e-1]<=32))e--;   // strip '=' padding / whitespace
+  const n=e-s,out=new Uint8Array((n*3)>>2);let o=0,acc=0,bits=0;
+  for(let i=s;i<e;i++){const v=B64T[src[i]];if(v<0)continue;acc=(acc<<6)|v;bits+=6;if(bits>=8){bits-=8;out[o++]=(acc>>bits)&255;}}
+  return o===out.length?out:out.subarray(0,o);}
 function masksB64(d){const m={};if(d.masks)d.masks.forEach((v,k)=>{m[k]=b64FromU8(v);});return m;}
 function masksFromB64(o){const m=new Map();if(o)for(const k in o)m.set(k,u8FromB64(o[k]));return m;}
+// legacy v1 text form (JSON with base64 cels) — still readable, no longer written
 function projData(){const cels={};doc.cels.forEach((v,k)=>cels[k]=b64FromU32(v));
   return {ver:1,W,H,palette,layers:doc.layers,frames:doc.frames,tags:doc.tags||null,cels,masks:masksB64(doc),activeLayer,activeFrame,convert:doc.convert||null};}
+/* ---- .pxproj v2: gzip( "PXPJ" | u32 ver | u32 jsonLen | u32 dataStart | json | raw cel/mask blocks ) ----
+   Pixel data is written as raw 4-byte-aligned blocks after a small JSON header instead of base64
+   inside the JSON. A 200-frame video project used to become a 150MB text file that had to exist as
+   a JS string, a parsed object AND decoded arrays at once — more than a tablet tab can hold. */
+const PX_ALIGN=n=>(n+3)&~3;
+function projBinary(){const enc=new TextEncoder();const cels=[],masks=[];let off=0;
+  doc.cels.forEach((v,k)=>{cels.push({k,o:off,n:v.length});off=PX_ALIGN(off+v.length*4);});
+  if(doc.masks)doc.masks.forEach((v,k)=>{masks.push({k,o:off,n:v.length});off=PX_ALIGN(off+v.length);});
+  const json=enc.encode(JSON.stringify({ver:2,W,H,palette,layers:doc.layers,frames:doc.frames,tags:doc.tags||null,
+    activeLayer,activeFrame,convert:doc.convert||null,cels,masks}));
+  const dataStart=16+PX_ALIGN(json.length);const out=new Uint8Array(dataStart+off);const dv=new DataView(out.buffer);
+  out.set([0x50,0x58,0x50,0x4a]);dv.setUint32(4,2,true);dv.setUint32(8,json.length,true);dv.setUint32(12,dataStart,true);out.set(json,16);
+  cels.forEach(c=>{const v=doc.cels.get(c.k);out.set(new Uint8Array(v.buffer,v.byteOffset,v.byteLength),dataStart+c.o);});
+  masks.forEach(m=>out.set(doc.masks.get(m.k),dataStart+m.o));
+  return out;}
+async function projBlob(){const raw=projBinary();
+  if(typeof CompressionStream==='function'){const z=new Blob([raw]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Blob([await new Response(z).arrayBuffer()],{type:'application/octet-stream'});}
+  return new Blob([raw],{type:'application/octet-stream'});}
+// bytes (any supported form) → {W,H,palette,layers,frames,tags,cels:Map,masks:Map,activeLayer,activeFrame,convert}
+async function parseProjectBytes(u8){
+  if(u8[0]===0x1f&&u8[1]===0x8b){const z=new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'));
+    u8=new Uint8Array(await new Response(z).arrayBuffer());}
+  if(u8[0]===0x50&&u8[1]===0x58&&u8[2]===0x50&&u8[3]===0x4a){
+    const dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength);const jsonLen=dv.getUint32(8,true),base=dv.getUint32(12,true);
+    const h=JSON.parse(new TextDecoder().decode(u8.subarray(16,16+jsonLen)));
+    const cels=new Map(),masks=new Map();
+    (h.cels||[]).forEach(c=>cels.set(c.k,new Uint32Array(u8.buffer.slice(u8.byteOffset+base+c.o,u8.byteOffset+base+c.o+c.n*4))));
+    (h.masks||[]).forEach(m=>masks.set(m.k,u8.slice(base+m.o,base+m.o+m.n)));
+    return {W:h.W,H:h.H,palette:h.palette,layers:h.layers,frames:h.frames,tags:h.tags||null,cels,masks,activeLayer:h.activeLayer||0,activeFrame:h.activeFrame||0,convert:h.convert||null};}
+  return parseLegacyProject(u8);}
+function legacyFromObj(d){if(!d||!Array.isArray(d.layers)||!Array.isArray(d.frames)||!d.cels)throw new Error('プロジェクト形式ではありません');
+  const cels=d.cels instanceof Map?d.cels:new Map(Object.keys(d.cels).map(k=>[k,u32FromB64(d.cels[k])]));
+  return {W:d.W,H:d.H,palette:d.palette,layers:d.layers,frames:d.frames,tags:d.tags||null,cels,masks:masksFromB64(d.masks),
+    activeLayer:d.activeLayer||0,activeFrame:d.activeFrame||0,convert:d.convert||null};}
+// v1 text: small files go through JSON.parse; big ones have their "cels":{...} block decoded
+// directly from the bytes so the pixel base64 never becomes a JS string.
+function parseLegacyProject(u8,bigFrom=8e6){const td=new TextDecoder();
+  if(u8.length<bigFrom)return legacyFromObj(JSON.parse(td.decode(u8).replace(/^\uFEFF/,'').trim()));
+  const key=[...'"cels"'].map(c=>c.charCodeAt(0));const isWs=c=>c===32||c===10||c===13||c===9;
+  let p=-1,i=0;const ws=()=>{while(isWs(u8[i]))i++;};
+  for(let q=0;q<u8.length-key.length;q++){let j=0;while(j<key.length&&u8[q+j]===key[j])j++;if(j!==key.length)continue;
+    i=q+key.length;ws();if(u8[i]!==58)continue;i++;ws();if(u8[i]!==123)continue;p=q;i++;break;}   // "cels" : {  (any spacing)
+  if(p<0)throw new Error('プロジェクト形式ではありません');
+  const cels=new Map();
+  for(;;){ws();if(u8[i]===125){i++;break;}   // }
+    if(u8[i]!==34)throw new Error('cels');let j=++i;while(u8[j]!==34)j++;const k=td.decode(u8.subarray(i,j));i=j+1;ws();
+    if(u8[i]!==58)throw new Error('cels');i++;ws();if(u8[i]!==34)throw new Error('cels');j=++i;while(u8[j]!==34)j++;
+    const bytes=u8FromB64Bytes(u8,i,j);cels.set(k,new Uint32Array(bytes.buffer,bytes.byteOffset,bytes.byteLength>>2));i=j+1;ws();if(u8[i]===44)i++;}
+  const d=JSON.parse((td.decode(u8.subarray(0,p))+'"cels":{}'+td.decode(u8.subarray(i))).replace(/^\uFEFF/,'').trim());d.cels=cels;
+  return legacyFromObj(d);}
 function projFileName(){return (((docTabs[curTab]&&docTabs[curTab].name)||'pixel').replace(/[^\w\-\u3040-\u30ff\u4e00-\u9faf]+/g,'_')||'pixel')+'.pxproj';}
-async function writeProjTo(handle){const w=await handle.createWritable();
-  await w.write(new Blob([JSON.stringify(projData())],{type:'application/json'}));await w.close();}
+async function writeProjTo(handle){const blob=await projBlob();const w=await handle.createWritable();await w.write(blob);await w.close();}
 // 別名で保存: pick a location (File System Access) or download; remember the handle to overwrite later
 async function saveProjectAs(){const name=projFileName();
   if(window.showSaveFilePicker){try{
-    const h=await window.showSaveFilePicker({suggestedName:name,types:[{description:'Pixel project',accept:{'application/json':['.pxproj']}}]});
+    const h=await window.showSaveFilePicker({suggestedName:name,types:[{description:'Pixel project',accept:{'application/octet-stream':['.pxproj']}}]});
     await writeProjTo(h);projHandle=h;if(h.name)setTabName(h.name.replace(/\.pxproj$/i,''));toast('保存しました');return;
   }catch(e){if(e&&e.name==='AbortError')return;}}
-  const blob=new Blob([JSON.stringify(projData())],{type:'application/json'});
-  let file=null;try{file=new File([blob],name,{type:'application/json'});}catch(_){}
+  const blob=await projBlob();
+  let file=null;try{file=new File([blob],name,{type:'application/octet-stream'});}catch(_){}
   if(file&&canShareFile(file)){toast('「"ファイル"に保存」を選んでください');downloadBlob(blob,name);return;}
   downloadBlob(blob,name);toast('保存しました（ダウンロード）');}
 // 上書き保存: write straight back to the remembered file; if none yet, fall back to 別名で保存
@@ -4274,12 +4331,15 @@ async function saveProjectOverwrite(){
     catch(e){toast('上書き保存できないため別名で保存します');}}
   return saveProjectAs();}
 const saveProject=saveProjectAs;   // legacy alias
-function loadProjectText(text,name,handle){try{
-    const d=JSON.parse(String(text).replace(/^\uFEFF/,'').trim());
-    if(!d||!Array.isArray(d.layers)||!Array.isArray(d.frames)||!d.cels)throw new Error('プロジェクト形式ではありません');
+function projLoadError(err){console.error(err);
+  toast(/JSON|形式|cels|Unexpected/.test(err.message||'')?'プロジェクトファイル (.pxproj) ではないようです':'読み込み失敗: '+(err.message||err));}
+function loadProjectText(text,name,handle){try{applyProject(legacyFromObj(JSON.parse(String(text).replace(/^\uFEFF/,'').trim())),name,handle);}catch(err){projLoadError(err);}}
+async function loadProjectFile(file,handle){try{const u8=new Uint8Array(await file.arrayBuffer());
+    applyProject(await parseProjectBytes(u8),file.name,handle);}catch(err){projLoadError(err);}}
+function applyProject(d,name,handle){
     W=d.W;H=d.H;
-    doc={layers:d.layers,frames:d.frames,cels:new Map(),tags:d.tags||null,masks:masksFromB64(d.masks)};
-    for(const k in d.cels)doc.cels.set(k,u32FromB64(d.cels[k]));palette=d.palette||DEFAULT_PAL.slice();
+    doc={layers:d.layers,frames:d.frames,cels:d.cels,tags:d.tags||null,masks:d.masks||new Map()};
+    palette=d.palette||DEFAULT_PAL.slice();
     maskEdit=null;maskBuf=null;
     doc.convert=d.convert||null;$('#mReconvert').style.display=doc.convert?'':'none';
     activeLayer=d.activeLayer||0;activeFrame=d.activeFrame||0;
@@ -4287,14 +4347,11 @@ function loadProjectText(text,name,handle){try{
     undoStack=[];redoStack=[];selection=null;projHandle=handle||null;ensureComp();$('#docsize').textContent=W+'×'+H;
     fitView();renderPalette();refreshTimeline();render();updateUndoUI();
     setTabName((name||'プロジェクト').replace(/\.(pxproj|json|txt)$/i,''));if(typeof scheduleAutosave==='function')scheduleAutosave();toast('読み込みました');}
-    catch(err){console.error(err);
-      toast(/JSON|形式/.test(err.message||'')?'プロジェクトファイル (.pxproj) ではないようです':'読み込み失敗: '+(err.message||err));}}
-$('#fileProj').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-  rd.onload=()=>loadProjectText(rd.result,f.name,null);rd.readAsText(f);e.target.value='';};
+$('#fileProj').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.value='';loadProjectFile(f,null);};
 async function openProject(){
   if(window.showOpenFilePicker){try{
-    const [h]=await window.showOpenFilePicker({types:[{description:'Pixel project',accept:{'application/json':['.pxproj']}}]});
-    const f=await h.getFile();loadProjectText(await f.text(),f.name,h);return;
+    const [h]=await window.showOpenFilePicker({types:[{description:'Pixel project',accept:{'application/octet-stream':['.pxproj'],'application/json':['.json']}}]});
+    const f=await h.getFile();await loadProjectFile(f,h);return;
   }catch(e){if(e&&e.name==='AbortError')return;}}
   const inp=$('#fileProj');inp.value='';inp.click();}
 
@@ -4435,8 +4492,7 @@ function openDroppedFile(f){
     const rd=new FileReader();
     rd.onload=()=>loadAse(rd.result).catch(err=>{console.error(err);toast('Aseprite読み込み失敗: '+err.message);});
     rd.readAsArrayBuffer(f);return;}
-  if(name.endsWith('.pxproj')||name.endsWith('.json')||f.type==='application/json'){
-    const rd=new FileReader();rd.onload=()=>loadProjectText(rd.result,f.name,null);rd.readAsText(f);return;}
+  if(name.endsWith('.pxproj')||name.endsWith('.json')||f.type==='application/json'){loadProjectFile(f,null);return;}
   const toConverter=()=>{const img=new Image();
     img.onload=()=>{newDocTab(32,32,f.name.replace(/\.[^.]+$/,''));openConverter(img);};
     img.onerror=()=>toast('このファイルは開けません');img.src=URL.createObjectURL(f);};
