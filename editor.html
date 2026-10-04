@@ -2707,17 +2707,26 @@ function showRadial(px,py,items,afterClose){
     let best=-1,bd=1e9;
     for(let i=0;i<n;i++){const d=Math.hypot(x-(cx+Math.cos(angs[i])*R),y-(cy+Math.sin(angs[i])*R));if(d<bd){bd=d;best=i;}}
     setHi(best);};
-  const t0=performance.now();
+  const t0=performance.now();let done=false;
   const move=ev=>pick(ev.clientX,ev.clientY);
-  const finish=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);
-    document.removeEventListener('pointercancel',onCancel);wrap.remove();guard.remove();
+  // Touch fallback: the press started on an element whose touch-action allows panning (timeline
+  // cells use pan-x so the strip can scroll). Once the menu is open the finger must drive the menu,
+  // not a scroll — so touchmove is cancelled (non-passive) and read directly, and touchend closes.
+  // Without this iOS turns a sideways slide into a scroll, fires pointercancel and the item is lost.
+  const tmove=ev=>{ev.preventDefault();const t=ev.touches[0];if(t)pick(t.clientX,t.clientY);};
+  const finish=()=>{if(done)return;done=true;
+    document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);
+    document.removeEventListener('pointercancel',onCancel);document.removeEventListener('touchmove',tmove);
+    document.removeEventListener('touchend',finish);document.removeEventListener('touchcancel',finish);
+    wrap.remove();guard.remove();
     justDragged=true;setTimeout(()=>justDragged=false,220);   // the click that follows the release must not re-target a cel
     if(hi>=0)items[hi].fn();
     if(afterClose)afterClose();};
-  // ignore a spurious pointercancel right after opening (e.g. DOM churn from
-  // refreshTimeline removing the pressed cell) so the menu doesn't close instantly
-  const onCancel=()=>{if(performance.now()-t0<250)return;finish();};
+  // pointercancel (browser took the gesture over) no longer closes the menu: the touch
+  // listeners keep tracking the finger and touchend / the next release finishes it.
+  const onCancel=()=>{};
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',finish);document.addEventListener('pointercancel',onCancel);
+  document.addEventListener('touchmove',tmove,{passive:false});document.addEventListener('touchend',finish);document.addEventListener('touchcancel',finish);
   setHi(-1);
 }
 
