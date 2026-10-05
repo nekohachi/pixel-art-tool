@@ -471,6 +471,13 @@
 </div>
 
 <script>
+  // Android: a long-press on the page would open the browser's page menu (戻る / 進む / 再読み込み…).
+  // Suppress it everywhere except text fields (the swatch unlock handler still receives the event).
+  document.addEventListener("contextmenu", e => {
+    const t = e.target;
+    if (t && t.closest && t.closest("input[type=text],input[type=number],input[type=url],input[type=search],textarea,[contenteditable]")) return;
+    e.preventDefault();
+  }, { capture: true });
 (() => {
   "use strict";
   // Purge any old service worker + caches that could serve stale pages.

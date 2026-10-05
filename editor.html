@@ -1935,7 +1935,15 @@ stage.addEventListener('pointerup',endPointer);
 stage.addEventListener('pointercancel',endPointer);
 stage.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault();});   // no autoscroll on middle press
 stage.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault();});
-stage.addEventListener('contextmenu',e=>e.preventDefault());                 // Ctrl/right-click never opens a menu
+// No context menu anywhere in the editor: Ctrl/right-click on the stage, and a long-press on
+// Android (timeline cells, layer heads, tool buttons, panels…) which would otherwise pop the
+// browser's page menu (戻る / 進む / 再読み込み / ダウンロード…) on top of our own long-press
+// radials. Text fields keep theirs so paste / select-all still work there.
+document.addEventListener('contextmenu',e=>{
+  const t=e.target;
+  if(t&&t.closest&&t.closest('input[type=text],input[type=number],input[type=url],input[type=search],textarea,[contenteditable]'))return;
+  e.preventDefault();
+},{capture:true});
 stage.addEventListener('pointerleave',e=>{if(e.pointerType!=='touch')bc.style.display='none';});
 
 let curShape=null;   // the shape being drawn / edited
