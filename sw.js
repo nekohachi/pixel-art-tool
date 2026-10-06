@@ -21,7 +21,9 @@ self.addEventListener('fetch', e => {
   if (new URL(req.url).origin !== self.location.origin) return;   // let Firebase REST/SSE go straight to the network
   e.respondWith((async () => {
     try {
-      const res = await fetch(req);                 // always try the network first (fresh)
+      // network first, and revalidate with the server (ETag) instead of trusting the HTTP cache,
+      // so a new deploy shows up on the next load instead of up to max-age later
+      const res = await fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' });
       if (res && res.ok && new URL(req.url).origin === self.location.origin) {
         const copy = res.clone();
         caches.open(RT).then(c => c.put(req, copy)).catch(() => {});

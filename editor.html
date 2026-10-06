@@ -450,6 +450,7 @@
   .mbar .hbtn{flex:none;}
 
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:50;align-items:center;justify-content:center;padding:16px;}
+  .mver{font-size:10px;color:var(--muted);text-align:right;padding:4px 6px 0;}
   /* Photoshop-style canvas-size anchor (3×3) */
   .anchor{display:grid;grid-template-columns:repeat(3,30px);gap:3px;}
   .anchor button{width:30px;height:30px;border:1px solid var(--border);background:var(--panel2);border-radius:5px;
@@ -759,6 +760,8 @@
       <button class="hbtn" data-act="load">📂 プロジェクト読込</button>
       <button class="hbtn" data-act="sync">☁ クラウド同期…</button>
       <button class="hbtn" data-act="resetUi">🧹 UIレイアウトをリセット</button>
+      <button class="hbtn" data-act="update">🔄 最新版に更新（キャッシュを消して再読込）</button>
+      <div class="mver" id="appVer"></div>
     </div>
     <div class="mpane" data-pane="import">
       <button class="hbtn" data-act="import">🖼 画像 / Aseprite を読み込み</button>
@@ -3457,6 +3460,12 @@ function hidePrev(){$('#dockPrev').classList.remove('show');}
 
 function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(dockState));}catch(_){}}
 function loadLayout(){try{const s=localStorage.getItem(LAYOUT_KEY);if(s)return JSON.parse(s);}catch(_){}return null;}
+// Drop every cache this app could be served from and reload straight from the server.
+async function forceUpdate(){toast('最新版を取得中…');
+  try{if('serviceWorker' in navigator){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));}}catch(_){}
+  try{if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}}catch(_){}
+  if(typeof saveCurrentTab==='function'&&typeof autosaveNow==='function'){try{await autosaveNow();}catch(_){}}
+  location.replace(location.pathname+'?r='+Date.now());}
 function resetLayout(){
   dockState=defaultDock();
   layerColW=118;try{localStorage.setItem('pxeditor-lcolw',layerColW);}catch(_){}
@@ -3607,6 +3616,7 @@ function menuAction(a){$('#menuModal').classList.remove('show');
     case 'import':$('#fileImg').click();break;case 'save':saveProjectOverwrite();break;case 'saveas':saveProjectAs();break;case 'load':openProject();break;
     case 'sync':openSyncModal();break;
     case 'resetUi':resetLayout();break;
+    case 'update':forceUpdate();break;
     case 'convert':$('#fileConv').click();break;case 'reconvert':reopenConverter();break;
     case 'paste':pasteFromClipboard();break;case 'copyPng':copyFramePNG();break;
     case 'exportPng':exportPNG();break;case 'exportSheet':exportSheet();break;case 'exportSeq':exportSeq();break;case 'exportGif':exportGIF();break;
@@ -4739,6 +4749,7 @@ async function boot(){
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
   }
+  const av=$('#appVer');if(av)av.textContent='版: '+document.lastModified;   // served file's Last-Modified → tells which deploy is running
 }
 boot();
 </script>
