@@ -1,0 +1,22 @@
+import { createRequire } from 'module';
+const require = createRequire('/opt/node22/lib/node_modules/');
+const { chromium } = require('playwright');
+import http from 'http';import fs from 'fs';import path from 'path';
+const ROOT=path.resolve(path.dirname(new URL(import.meta.url).pathname),'..');const MIME={'.html':'text/html','.js':'text/javascript'};
+const server=http.createServer((req,res)=>{let p=req.url.split('?')[0];if(p==='/')p='/editor.html';const fp=path.join(ROOT,p);
+  if(!fs.existsSync(fp)){res.writeHead(404);res.end();return;}res.writeHead(200,{'Content-Type':MIME[path.extname(fp)]||'text/plain'});fs.createReadStream(fp).pipe(res);});
+await new Promise(r=>server.listen(0,r));const base=`http://127.0.0.1:${server.address().port}`;
+const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome'});
+const ctx=await b.newContext({viewport:{width:1024,height:768},hasTouch:true,isMobile:true});const page=await ctx.newPage();
+const errors=[];page.on('pageerror',e=>errors.push('PAGEERR '+e.message));page.on('console',m=>{if(m.type()==='error')errors.push('CONSOLE '+m.text());});
+await page.goto(base+'/editor.html',{waitUntil:'load'});await page.waitForTimeout(400);
+let fails=0;const ok=(n,c)=>{if(!c)fails++;console.log((c?'✅':'❌')+' '+n);};
+const R=await page.evaluate(()=>{const cm=el=>{const e=new MouseEvent('contextmenu',{bubbles:true,cancelable:true});el.dispatchEvent(e);return e.defaultPrevented;};
+  newDoc(8,8);addFrame();refreshTimeline();
+  const out={cell:cm($('#tlGrid .tl-cell')),lhead:cm($('#tlGrid .tl-lhead')),fnum:cm($('#tlGrid .tl-fnum')),tool:cm($('#grpPen')),stage:cm(stage),body:cm(document.body),
+    gauge:cm($('#colorDot')),input:!cm($('#newW'))};
+  const ln=$('#tlGrid .tl-lhead .lname');ln.contentEditable=true;out.rename=!cm(ln);ln.contentEditable=false;return out;});
+ok('long-press context menu is suppressed on cells / layer rows / frame numbers / tools / canvas / gauge',R.cell&&R.lhead&&R.fnum&&R.tool&&R.stage&&R.body&&R.gauge);
+ok('text inputs and a layer name being renamed keep their native menu',R.input&&R.rename);
+console.log('ERRORS:',errors.length?JSON.stringify(errors):'none');
+await b.close();server.close();process.exit(errors.length||fails?1:0);

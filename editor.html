@@ -1985,6 +1985,9 @@ stage.addEventListener('pointercancel',endPointer);
 stage.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault();});   // no autoscroll on middle press
 stage.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault();});
 stage.addEventListener('contextmenu',e=>e.preventDefault());                 // Ctrl/right-click never opens a menu
+// Android Chrome opens its page context menu on ANY long press (timeline cells, tool buttons…),
+// stealing the gesture from our radial menus. Text fields keep theirs (copy/paste).
+document.addEventListener('contextmenu',e=>{if(e.target.closest('input,textarea,[contenteditable="true"],a[href]'))return;e.preventDefault();});
 stage.addEventListener('pointerleave',e=>{if(e.pointerType!=='touch')bc.style.display='none';});
 
 let curShape=null;   // the shape being drawn / edited
