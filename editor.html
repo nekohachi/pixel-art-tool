@@ -543,6 +543,17 @@
   <!-- Docking drop-zone preview -->
   <div class="dockprev" id="dockPrev"></div>
 
+  <!-- Pen tool: straight / clean-diagonal line toggles (Shift / Ctrl equivalents), same spot as +/- -->
+  <div class="selmod" id="penMod">
+    <div>
+      <button id="penLineBtn" title="直線：押しながら引く／タップでロック（Shift）">━</button>
+      <div class="cap">直線 ⇧</div>
+    </div>
+    <div>
+      <button id="penSnapBtn" title="斜め：整った角度に吸着、離すまで角度調整できる（Ctrl）">⟋</button>
+      <div class="cap">斜め ⌃</div>
+    </div>
+  </div>
   <!-- Floating selection modifier buttons (Ctrl/Alt equivalents) -->
   <div class="selmod" id="selMod">
     <div>
@@ -1304,6 +1315,28 @@ function drawGrid(){
 let selection=null;
 let stickySel='replace';    // replace | add | subtract  (tap-locked)
 let selHold=null;           // 'add' | 'subtract'         (while +/- held)
+// Pen line modes: 'line' = straight (Shift), 'snap' = straight on a clean dot slope (Ctrl)
+let penHold=null, stickyPen=null, penLine=null, lastStrokeEnd=null;
+function penLineMode(){if(penHold==='snap'||stickyPen==='snap'||ctrlHeld)return 'snap';
+  if(penHold==='line'||stickyPen==='line'||shiftHeld)return 'line';return null;}
+// Snap a drag to the nearest "clean" slope (n:1 or 1:n, n≤8, plus the axes) and to an exact
+// multiple of that step, so the rasterised line repeats the same run length all the way.
+function snapCleanLine(x0,y0,x,y){const dx=x-x0,dy=y-y0,sx=Math.sign(dx||1),sy=Math.sign(dy||1);
+  if(!dx&&!dy)return {x0,y0,x,y,r:1,u:0,k:0,sx,sy,ratio:'0:0'};
+  const ax=Math.abs(dx),ay=Math.abs(dy),ang=Math.atan2(ay,ax);let best=null,bd=1e9;
+  const cands=[[1,0],[0,1],[1,1]];for(let n=2;n<=8;n++)cands.push([n,1],[1,n]);
+  for(const[r,u]of cands){const d=Math.abs(Math.atan2(u,r)-ang);if(d<bd){bd=d;best=[r,u];}}
+  const[r,u]=best;let k,ex,ey;
+  if(r>1){k=Math.max(0,Math.round(ax/r)-1);ex=x0+(k*r+r-1)*sx;ey=y0+k*sy;}          // shallow: k+1 runs of r px
+  else if(u>1){k=Math.max(0,Math.round(ay/u)-1);ex=x0+k*sx;ey=y0+(k*u+u-1)*sy;}     // steep: k+1 runs of u px
+  else{k=Math.max(1,Math.round((ax*r+ay*u)/(r*r+u*u)));ex=x0+k*r*sx;ey=y0+k*u*sy;}  // axis / 45°
+  return {x0,y0,x:ex,y:ey,r,u,k,sx,sy,ratio:r+':'+u};}
+// rasterise a snapped line as identical runs (Bresenham would give one odd run at an end)
+function cleanLineTo(cel,L,erase){const{x0,y0,r,u,k,sx,sy}=L;
+  if(r<=1&&u<=1){lineTo(cel,x0,y0,L.x,L.y,erase);return;}
+  for(let i=0;i<=k;i++){
+    if(r>1){const y=y0+i*sy;for(let j=0;j<r;j++)paintPix(cel,x0+(i*r+j)*sx,y,erase);}
+    else{const x=x0+i*sx;for(let j=0;j<u;j++)paintPix(cel,x,y0+(i*u+j)*sy,erase);}}}
 let curSelMode='replace';
 function selBuf(){return new Uint8Array(W*H);}
 function hasSel(){return !!selection;}
@@ -1726,7 +1759,7 @@ function updateBrushCursor(){
   if(['pencil','eraser'].includes(tool)){const s=Math.max(1,brushSize)*zoom;bc.style.width=s+'px';bc.style.height=s+'px';}
 }
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
-function cancelStroke(){
+function cancelStroke(){penLine=null;
   if(drawing){drawing=false;previewCel=null;lassoPts=null;dragCur=null;
     if(undoStack.length)restore(undoStack.pop());redoStack=lastClearedRedo;updateUndoUI();}
 }
@@ -1787,7 +1820,9 @@ stage.addEventListener('pointerdown',e=>{
   startHoldPick(e.clientX,e.clientY,x,y);
   if(SHAPE.includes(tool)){previewCel=cel.slice();updateShapePreview(x,y);return;}
   const erase=tool==='eraser';
-  if(pixelPerfect&&!erase&&brushSize<=1)ppPlot(cel,x,y);else paintPix(cel,x,y,erase);
+  const lm=(tool==='pencil'||tool==='eraser')?penLineMode():null;
+  if(lm){penLine={x0:x,y0:y,mode:lm,base:cel.slice(),cur:null};clearHold();}   // straight-line stroke: preview from a clean copy
+  if(pixelPerfect&&!erase&&brushSize<=1&&!lm)ppPlot(cel,x,y);else paintPix(cel,x,y,erase);
   render();
 });
 let holdTimer=null, holdStart=null, picking=false, pickHex=null;
@@ -1885,6 +1920,11 @@ stage.addEventListener('pointermove',e=>{
   if(GRADTOOL.includes(tool)){updateGradPreview(x,y);return;}
   if(strokeIsPen&&e.pressure>0)strokePressure=e.pressure;
   const cel=activeCel();const erase=tool==='eraser';
+  if(penLine){   // Shift/Ctrl line: redraw start→pointer from the untouched copy; Ctrl keeps re-snapping until release
+    cel.set(penLine.base);
+    if(penLine.mode==='snap'){const L=snapCleanLine(penLine.x0,penLine.y0,x,y);penLine.cur={x:L.x,y:L.y,ratio:L.ratio};cleanLineTo(cel,L,erase);}
+    else{penLine.cur={x,y};lineTo(cel,penLine.x0,penLine.y0,x,y,erase);}
+    render();updateCelThumbThrottled();return;}
   lineTo(cel,lastPix.x,lastPix.y,x,y,erase);lastPix={x,y};render();updateCelThumbThrottled();
 });
 // hide the hover cursor when the pen/mouse leaves the canvas
@@ -1928,6 +1968,15 @@ function finishAll(){
         // ignore an accidental zero-size tap
         if(s.x0!==s.x1||s.y0!==s.y1){commitShapeLayer(s);dragCur=null;return;}}
     }else if(GRADTOOL.includes(tool)&&previewCel){activeCel().set(previewCel);previewCel=null;}
+    else if(tool==='pencil'||tool==='eraser'){
+      if(penLine){const L=penLine;penLine=null;const erase=tool==='eraser';
+        if(!L.cur&&lastStrokeEnd&&(lastStrokeEnd.x!==L.x0||lastStrokeEnd.y!==L.y0)){   // Shift+tap: join from the last stroke end
+          const cel=activeCel();cel.set(L.base);
+          if(L.mode==='snap'){const S=snapCleanLine(lastStrokeEnd.x,lastStrokeEnd.y,L.x0,L.y0);cleanLineTo(cel,S,erase);lastStrokeEnd={x:S.x,y:S.y};}
+          else{lineTo(cel,lastStrokeEnd.x,lastStrokeEnd.y,L.x0,L.y0,erase);lastStrokeEnd={x:L.x0,y:L.y0};}}
+        else lastStrokeEnd=L.cur?{x:L.cur.x,y:L.cur.y}:{x:L.x0,y:L.y0};}
+      else if(lastPix)lastStrokeEnd={x:lastPix.x,y:lastPix.y};
+    }
     dragCur=null;render();updateCelThumb(activeLayer,activeFrame);
   }
 }
@@ -3224,7 +3273,20 @@ function bindSelMod(btn,mode){
   btn.addEventListener('pointerup',up);btn.addEventListener('pointercancel',up);
 }
 bindSelMod($('#selPlus'),'add');bindSelMod($('#selMinus'),'subtract');
-function updateSelBtns(){
+let penHoldTime=0;
+function bindPenMod(btn,mode){
+  btn.addEventListener('pointerdown',e=>{e.preventDefault();try{btn.setPointerCapture(e.pointerId);}catch(_){}
+    penHold=mode;penHoldTime=performance.now();updateSelBtns();});
+  const up=e=>{try{btn.releasePointerCapture(e.pointerId);}catch(_){}
+    const dt=performance.now()-penHoldTime;penHold=null;
+    if(dt<250)stickyPen=(stickyPen===mode?null:mode);   // quick tap = toggle lock
+    updateSelBtns();};
+  btn.addEventListener('pointerup',up);btn.addEventListener('pointercancel',up);
+}
+bindPenMod($('#penLineBtn'),'line');bindPenMod($('#penSnapBtn'),'snap');
+function updatePenBtns(){const m=penLineMode();
+  $('#penSnapBtn').classList.toggle('on',m==='snap');$('#penLineBtn').classList.toggle('on',m==='line'||(m==='snap'&&(stickyPen==='line'||penHold==='line')));}
+function updateSelBtns(){updatePenBtns();
   const keyOK=SELTOOL.includes(tool);   // PC: Shift = 追加, Alt = 除外 (same as the +/- buttons)
   const add=selHold==='add'||stickySel==='add'||(keyOK&&shiftHeld&&!altHeld);
   const sub=selHold==='subtract'||stickySel==='subtract'||(keyOK&&altHeld);
@@ -3232,7 +3294,9 @@ function updateSelBtns(){
 }
 function updateSelModVisible(){
   const t=!!xf;   // transforming: the transform toolbar replaces the selection controls
-  $('#selMod').classList.toggle('show',!t&&(SELTOOL.includes(tool)||!!selection));
+  const pen=tool==='pencil'||tool==='eraser';
+  $('#penMod').classList.toggle('show',!t&&pen);   // pen line toggles sit where +/- live
+  $('#selMod').classList.toggle('show',!t&&!pen&&(SELTOOL.includes(tool)||!!selection));
   $('#nudge').classList.toggle('show',!t&&!!selection);
   $('#selDel').classList.toggle('show',!t);
   $('#selDeselect').classList.toggle('show',!t&&!!selection);
@@ -3356,6 +3420,7 @@ function positionSelControls(){
   const bottomGap=H-tlTop;
   const sm=$('#selMod'),sd=$('#selDel'),nu=$('#nudge'),dz=$('#selDeselect'),rt=$('#rangeTolFloat'),iv=$('#selInvert'),sr=$('#shapeReg');
   if(sm){sm.style.left=x+'px';sm.style.top=Math.max(70,(colTopVal()+tlTop)/2)+'px';}
+  const pm=$('#penMod');if(pm){pm.style.left=x+'px';pm.style.top=Math.max(70,(colTopVal()+tlTop)/2)+'px';}
   if(sd){sd.style.left=x+'px';sd.style.top='12px';}              // 🗑 delete
   if(iv){iv.style.left=(x+62)+'px';iv.style.top='12px';}         // 🔃 invert, right of delete
   if(rt){rt.style.left=(x+124)+'px';rt.style.top='12px';}        // 色域許容, right of invert
