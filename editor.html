@@ -1038,7 +1038,7 @@ function exitMaskEdit(){if(maskEdit===null)return;syncMaskFromBuf();maskEdit=nul
 function checkMaskEdit(){if(maskEdit===null)return;const L=doc.layers[activeLayer];
   if(!L||L.id!==maskEdit||!getMask(L)){maskEdit=null;maskBuf=null;}}
 function addLayerMask(li){const L=doc.layers[li];if(!L)return;
-  if(L.group||L.adj){toast('画像レイヤーにのみマスクを付けられます');return;}
+  if(L.group){toast('グループにはマスクを付けられません');return;}
   if(getMask(L)){enterMaskEdit(li);return;}
   pushUndo();const m=new Uint8Array(W*H);const fromSel=!!selection;
   if(fromSel){const sm=selection.mask;for(let i=0;i<W*H;i++)m[i]=sm[i]?255:0;}else m.fill(255);
@@ -1052,7 +1052,8 @@ function loadMaskSelection(li,mode){const L=doc.layers[li];const mk=L&&getMask(L
   pushUndo();applyShape(shp,mode||'replace');if(selection)computeSelBounds();render();updateSelModVisible();toast('マスクを選択範囲に読込');}
 function toggleMask(li){const L=doc.layers[li];if(!L||!getMask(L))return;L.maskOn=L.maskOn===false;refreshTimeline();render();
   toast(L.maskOn===false?'マスクを無効化':'マスクを有効化');}
-function applyMask(li){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;pushUndo();
+function applyMask(li){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;
+  if(L.adj){toast('調整レイヤーのマスクは焼き込めません（削除のみ）');return;}pushUndo();
   if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
   if(L.maskOn!==false)doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));if(!c)return;
     for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);
@@ -1231,31 +1232,42 @@ function descendantIds(gid){const out=new Set();let grew=true;
   while(grew){grew=false;doc.layers.forEach(l=>{if(l.parent&&(l.parent===gid||out.has(l.parent))&&!out.has(l.id)){out.add(l.id);grew=true;}});}return out;}
 function effHidden(L){let p=L.parent;while(p){const g=layerById(p);if(!g)break;if(!g.visible)return true;p=g.parent;}return false;}
 function groupOpacity(L){let m=1,p=L.parent;while(p){const g=layerById(p);if(!g)break;m*=g.opacity/255;p=g.parent;}return m;}
+// Layers composite as a tree: every group renders its children into its own buffer, then that
+// buffer is blended in with the group's opacity. So an adjustment layer inside a group only
+// transforms what is below it *inside that group* (Photoshop's non-pass-through behaviour),
+// and group opacity applies to the group as a whole rather than to each child separately.
 function compositeFrame(frameIdx,ctxTarget){
+  const out=compositeGroup(null,frameIdx);
+  ctxTarget.putImageData(new ImageData(new Uint8ClampedArray(out.buffer),W,H),0,0);
+}
+function compositeGroup(parentId,frameIdx){
   const out=new Uint32Array(W*H);
   for(let li=0;li<doc.layers.length;li++){
-    const L=doc.layers[li];if(!L.visible)continue;
-    if(effHidden(L))continue;   // inside a collapsed/hidden group
-    if(L.adj){   // non-destructive adjustment layer: transform everything below it
+    const L=doc.layers[li];if((L.parent||null)!==parentId)continue;   // direct children only, bottom→top
+    if(!L.visible)continue;
+    const mk=L.maskOn===false?null:getMask(L);   // mask: 255 = full effect / shown, 0 = none
+    if(L.group){const sub=compositeGroup(L.id,frameIdx);blendBuf(out,sub,L.opacity,mk);continue;}
+    if(L.adj){   // non-destructive adjustment of everything below it in this scope, through its mask
       const adjusted=out.slice();applyAdjustBuf(L.adj.type,L.adj.params,adjusted,null);
-      const a=L.opacity;
-      if(a>=255)out.set(adjusted);
-      else for(let i=0;i<out.length;i++){const o=out[i],n=adjusted[i];
+      const op=L.opacity;
+      if(op>=255&&!mk){out.set(adjusted);continue;}
+      for(let i=0;i<out.length;i++){const f=mk?op*mk[i]/65025:op/255;if(f<=0)continue;
+        const o=out[i],n=adjusted[i];if(f>=1){out[i]=n;continue;}
         const or=o&255,og=(o>>8)&255,ob=(o>>16)&255,oa=(o>>>24)&255;
         const nr=n&255,ng=(n>>8)&255,nb=(n>>16)&255;
-        out[i]=(((oa)<<24)|((ob+(nb-ob)*a/255|0)<<16)|((og+(ng-og)*a/255|0)<<8)|(or+(nr-or)*a/255|0))>>>0;}
+        out[i]=((oa<<24)|((ob+(nb-ob)*f|0)<<16)|((og+(ng-og)*f|0)<<8)|(or+(nr-or)*f|0))>>>0;}
       continue;
     }
     const cel=doc.cels.get(celKey(L.id,frameIdx));if(!cel)continue;
-    const la=groupOpacity(L)*L.opacity;   // 0..255; groups multiply their children's opacity
-    const mk=L.maskOn===false?null:getMask(L);   // layer mask: 255 = shown, 0 = hidden (non-destructive)
-    for(let i=0;i<out.length;i++){
-      const s=cel[i];const sa=(s>>>24)&255;if(!sa)continue;
-      const a=mk?Math.round(sa*la*mk[i]/65025):Math.round(sa*la/255);if(!a)continue;
-      out[i]=blend(out[i],s,a);
-    }
+    blendBuf(out,cel,L.opacity,mk);
   }
-  ctxTarget.putImageData(new ImageData(new Uint8ClampedArray(out.buffer),W,H),0,0);
+  return out;
+}
+// src over dst at opacity (0..255), optionally through a mask
+function blendBuf(dst,src,op,mk){
+  for(let i=0;i<dst.length;i++){const s=src[i];const sa=(s>>>24)&255;if(!sa)continue;
+    const a=mk?Math.round(sa*op*mk[i]/65025):Math.round(sa*op/255);if(!a)continue;
+    dst[i]=blend(dst[i],s,a);}
 }
 // render() = recomposite then paint (use after any pixel/layer/frame change).
 // renderView() = paint only, reusing the cached composite (use for pan/zoom/
@@ -1812,7 +1824,7 @@ stage.addEventListener('pointerdown',e=>{
     render();return;
   }
   // paint tools
-  if(doc.layers[activeLayer].adj){toast('調整レイヤーには描けません');return;}
+  if(doc.layers[activeLayer].adj&&maskEdit!==doc.layers[activeLayer].id){toast('調整レイヤーには描けません（マスクをタップすると描けます）');return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
   strokeIsPen=(e.pointerType==='pen');strokePressure=(strokeIsPen&&e.pressure>0)?e.pressure:1;
   pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];
@@ -3239,9 +3251,14 @@ function openDestructiveAdjust(type){
 // non-destructive adjustment LAYER (affects all layers below it)
 let adjLayerType='hue';
 function addAdjustLayer(type){adjLayerType=type;pushUndo();
-  doc.layers.splice(activeLayer+1,0,{id:uid(),name:'調整: '+ADJUSTS[type],visible:true,opacity:255,locked:false,
-    adj:{type,params:adjDefaults(type)}});
-  activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();toast('調整レイヤーを追加');}
+  const cur=doc.layers[activeLayer];
+  const nl={id:uid(),name:'調整: '+ADJUSTS[type],visible:true,opacity:255,locked:false,adj:{type,params:adjDefaults(type)}};
+  if(cur&&cur.parent)nl.parent=cur.parent;   // stays inside the group it was created in → affects only that group
+  doc.layers.splice(activeLayer+1,0,nl);
+  let msg='調整レイヤーを追加';
+  if(selection){const m=new Uint8Array(W*H);const sm=selection.mask;for(let i=0;i<W*H;i++)m[i]=sm[i]?255:0;   // selection → mask
+    setMask(nl,m);selection=null;msg='調整レイヤーを追加（選択範囲をマスクに）';}
+  activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();updateSelModVisible();toast(msg);}
 function adjustLayerRadial(){return Object.keys(ADJUSTS).map(t=>({icon:adjIcon(t),label:ADJUSTS[t],fn:()=>addAdjustLayer(t)}));}
 // show the cut-in bound to the active adjustment layer (single selection only)
 function updateAdjustPanelForLayer(){
