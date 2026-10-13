@@ -586,6 +586,7 @@
   <div class="xfbar" id="xfBar">
     <button class="xfmod" id="xfShiftBtn" title="縦横比を保持／回転は15°刻み（Shift）">⇧ 比率</button>
     <button class="xfmod" id="xfCtrlBtn" title="角を単独で動かす自由変形（Ctrl）">⌃ 自由</button>
+    <button class="xfmod" id="xfRsBtn" title="RotSprite：Scale2x で8倍に拡大してから変形し、ドット絵の輪郭と色を保つ（離した時・確定時に適用）">RotSprite</button>
     <button class="xfok" id="xfOk" title="確定">✓</button>
     <button class="xfcancel" id="xfCancel" title="取消">✕</button>
   </div>
@@ -2174,7 +2175,7 @@ function beginTransform(){
     for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])srcBuf[y*w+x]=cel[si];}
     const base=cel.slice();for(let i=0;i<W*H;i++)if(m[i])base[i]=0;return {lid:T.id,srcBuf,base};});
   xf={srcW:w,srcH:h,fi:activeFrame,parts,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}]};
-  applyTransformRender();
+  applyTransformRender(true);
   $('#xfBar').classList.add('show');$('#xfOverlay').classList.add('show');$('#xfBtn').classList.add('on');
   updateSelModVisible();drawXfOverlay();toast('変形：外側ドラッグで回転 / 長押しで反転・90°');
 }
@@ -2191,20 +2192,50 @@ function inv3(m){const[a,b,c,d,e,f,g,h,i]=m;
   const A=e*i-f*h,B=-(d*i-f*g),C=d*h-e*g;const det=a*A+b*B+c*C;if(Math.abs(det)<1e-12)return null;const id=1/det;
   return [A*id,(c*h-b*i)*id,(b*f-c*e)*id, B*id,(a*i-c*g)*id,(c*d-a*f)*id, C*id,(b*g-a*h)*id,(a*e-b*d)*id];}
 // paint the floating buffer through the current quad onto the cut base; returns mask of painted pixels
-function xfStamp(cel,srcBuf,fillMask){
+/* RotSprite (Xenowhirl 2007, as in Aseprite): upscale the patch with Scale2x/EPX three times (8×,
+   no new colours), map the destination pixel centres into that big image with nearest sampling,
+   then drop single stray pixels that the source did not have. Dragging previews with plain
+   nearest; the RotSprite result replaces it when the finger lifts and on commit. */
+let rotSprite=(()=>{try{return localStorage.getItem('pxeditor-rotsprite')!=='0';}catch(_){return true;}})();
+function scale2x(src,w,h){const W2=w*2,out=new Uint32Array(W2*h*2);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const P=src[y*w+x];
+    const A=y>0?src[(y-1)*w+x]:P,B=x<w-1?src[y*w+x+1]:P,C=x>0?src[y*w+x-1]:P,D=y<h-1?src[(y+1)*w+x]:P;   // edge-clamp: never rounds the patch border
+    let e0=P,e1=P,e2=P,e3=P;
+    if(C===A&&C!==D&&A!==B)e0=A;if(A===B&&A!==C&&B!==D)e1=B;if(D===C&&D!==B&&C!==A)e2=C;if(B===D&&B!==A&&D!==C)e3=D;
+    const o=(y*2)*W2+x*2;out[o]=e0;out[o+1]=e1;out[o+W2]=e2;out[o+W2+1]=e3;}
+  return out;}
+function rsScaleFor(w,h){const n=w*h;return n*64<=12e6?8:n*16<=12e6?4:2;}   // keep the big buffer under ~48MB
+function rsBig(P){if(P.big)return P.big;const{srcW,srcH}=xf;let b=P.srcBuf,bw=srcW,bh=srcH;const S=rsScaleFor(srcW,srcH);
+  for(let k=1;k<S;k*=2){b=scale2x(b,bw,bh);bw*=2;bh*=2;}P.bigS=S;P.big=b;return b;}
+function xfStamp(cel,P,fillMask,hq,srcMap){
   const inv=inv3(xfHomography(xf.corners));if(!inv)return;
   let minx=W,miny=H,maxx=0,maxy=0;for(const p of xf.corners){minx=Math.min(minx,p.x);miny=Math.min(miny,p.y);maxx=Math.max(maxx,p.x);maxy=Math.max(maxy,p.y);}
   minx=Math.max(0,Math.floor(minx));miny=Math.max(0,Math.floor(miny));maxx=Math.min(W-1,Math.ceil(maxx));maxy=Math.min(H-1,Math.ceil(maxy));
-  const{srcW,srcH}=xf;
+  const{srcW,srcH}=xf;const buf=hq?rsBig(P):P.srcBuf,S=hq?P.bigS:1,bw=srcW*S,bh=srcH*S;
   for(let y=miny;y<=maxy;y++)for(let x=minx;x<=maxx;x++){const dx=x+0.5,dy=y+0.5;
     const wt=inv[6]*dx+inv[7]*dy+inv[8];if(!wt)continue;
     const u=(inv[0]*dx+inv[1]*dy+inv[2])/wt,v=(inv[3]*dx+inv[4]*dy+inv[5])/wt;
     if(u<0||v<0||u>=1||v>=1)continue;
-    const sx=Math.min(srcW-1,Math.max(0,Math.floor(u*srcW))),sy=Math.min(srcH-1,Math.max(0,Math.floor(v*srcH)));
-    const px=srcBuf[sy*srcW+sx];if(px){cel[y*W+x]=px;if(fillMask)fillMask[y*W+x]=1;}}
+    const sx=Math.min(bw-1,Math.max(0,Math.floor(u*bw))),sy=Math.min(bh-1,Math.max(0,Math.floor(v*bh)));
+    const px=buf[sy*bw+sx];if(px){const i=y*W+x;cel[i]=px;if(fillMask)fillMask[i]=1;if(srcMap)srcMap[i]=((sy/S)|0)*srcW+((sx/S)|0)+1;}}
 }
+// a stamped pixel with no same-coloured 8-neighbour is a rotation artefact — unless the source pixel
+// it came from was a deliberate lone dot (an eye, a highlight); replace it with the colour its four
+// orthogonal neighbours agree on
+function rsCleanup(cel,fillMask,srcMap,P){const{srcW,srcH}=xf,src=P.srcBuf;
+  const lone=(buf,bw,bh,x,y,c)=>{for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;
+    if(nx<0||ny<0||nx>=bw||ny>=bh)continue;if(buf[ny*bw+nx]===c)return false;}return true;};
+  const fixes=[];
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=y*W+x;if(!fillMask[i])continue;const c=cel[i];if(!lone(cel,W,H,x,y,c))continue;
+    const si=srcMap[i]-1;if(si<0)continue;if(lone(src,srcW,srcH,si%srcW,(si/srcW)|0,c))continue;
+    const nb=[];if(x>0)nb.push(cel[i-1]);if(x<W-1)nb.push(cel[i+1]);if(y>0)nb.push(cel[i-W]);if(y<H-1)nb.push(cel[i+W]);
+    if(nb.length===4&&nb.every(v=>v===nb[0]))fixes.push([i,nb[0]]);}
+  fixes.forEach(([i,v])=>{cel[i]=v;});return fixes.length;}
+function xfPaint(cel,P,nm,hq){
+  if(!hq){xfStamp(cel,P,nm,false,null);return;}
+  const fm=nm||selBuf(),sm=new Int32Array(W*H);xfStamp(cel,P,fm,true,sm);rsCleanup(cel,fm,sm,P);}
 function xfEach(fn){xf.parts.forEach(P=>{const L=layerById(P.lid);if(L)fn(celOf(L,xf.fi),P);});}
-function applyTransformRender(){xfEach((cel,P)=>{cel.set(P.base);xfStamp(cel,P.srcBuf,null);});render();}
+function applyTransformRender(final){xfEach((cel,P)=>{cel.set(P.base);xfPaint(cel,P,null,!!final&&rotSprite);});render();}
 function xfLocal(p){return {x:panX+p.x*zoom,y:panY+p.y*zoom};}
 function xfHandlePts(){const c=xf.corners.map(xfLocal);
   const mid=(p,q)=>({x:(p.x+q.x)/2,y:(p.y+q.y)/2});
@@ -2269,10 +2300,10 @@ function xfScaleEdge(start,e,P){
 // --- flip / quarter-turns from the long-press radial ---
 function xfFlip(horiz){if(!xf)return;const c=xf.corners;
   xf.corners=horiz?[c[1],c[0],c[3],c[2]]:[c[3],c[2],c[1],c[0]];
-  applyTransformRender();drawXfOverlay();toast(horiz?'左右反転':'上下反転');}
+  applyTransformRender(true);drawXfOverlay();toast(horiz?'左右反転':'上下反転');}
 function xfRotateQuarter(q){if(!xf)return;const c=xfCentroid(xf.corners),a=q*Math.PI/2,co=Math.cos(a),si=Math.sin(a);
   xf.corners=xf.corners.map(p=>{const dx=p.x-c.x,dy=p.y-c.y;return{x:c.x+dx*co-dy*si,y:c.y+dx*si+dy*co};});
-  applyTransformRender();drawXfOverlay();toast(q===2?'180°回転':(q===1?'90°回転（時計）':'90°回転（反時計）'));}
+  applyTransformRender(true);drawXfOverlay();toast(q===2?'180°回転':(q===1?'90°回転（時計）':'90°回転（反時計）'));}
 function openXfRadial(cx,cy){showRadial(cx,cy,[
   {icon:'↔',label:'左右反転',fn:()=>xfFlip(true)},
   {icon:'↕',label:'上下反転',fn:()=>xfFlip(false)},
@@ -2299,11 +2330,12 @@ function startXfDrag(hit,cx,cy){
     else if(hit.mode==='corner')xfScaleCorner(start,hit.idx,p);
     else if(hit.mode==='edge')xfScaleEdge(start,hit.idx,p);
     applyTransformRender();drawXfOverlay();};
-  function up(){clearTimeout(lt);document.removeEventListener('pointermove',move);
+  function up(){clearTimeout(lt);if(moved&&xf)applyTransformRender(true);   // finger up: show the real (RotSprite) result
+    document.removeEventListener('pointermove',move);
     document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);}
 function commitTransform(){if(!xf)return;const nm=selBuf();const ids=xf.parts.map(P=>P.lid);
-  xfEach((cel,P)=>{cel.set(P.base);xfStamp(cel,P.srcBuf,nm);});
+  xfEach((cel,P)=>{cel.set(P.base);xfPaint(cel,P,nm,rotSprite);});
   selection={mask:nm};computeSelBounds();endTransformUI();render();updateCelThumb(activeLayer,activeFrame);updateThumbsFor(ids,activeFrame);toast('変形を適用');}
 function cancelTransform(){if(!xf)return;if(undoStack.length)restore(undoStack.pop());redoStack=lastClearedRedo;updateUndoUI();endTransformUI();render();toast('変形を取消');}
 function endTransformUI(){xf=null;$('#xfBar').classList.remove('show');$('#xfOverlay').classList.remove('show');$('#xfBtn').classList.remove('on');
@@ -3274,6 +3306,9 @@ $('#xfCancel').onclick=cancelTransform;
 $('#cropOk').onclick=commitCrop;$('#cropCancel').onclick=cancelCrop;
 $('#cropShiftBtn').onclick=()=>{cropShift=!cropShift;updateCropBar();};
 $('#xfShiftBtn').onclick=()=>{xfShift=!xfShift;$('#xfShiftBtn').classList.toggle('on',xfShift);};
+$('#xfRsBtn').onclick=()=>{rotSprite=!rotSprite;try{localStorage.setItem('pxeditor-rotsprite',rotSprite?'1':'0');}catch(_){}
+  $('#xfRsBtn').classList.toggle('on',rotSprite);if(xf)applyTransformRender(true);toast(rotSprite?'RotSprite：輪郭を保って変形':'最近傍で変形');};
+$('#xfRsBtn').classList.toggle('on',rotSprite);
 $('#xfCtrlBtn').onclick=()=>{xfCtrl=!xfCtrl;$('#xfCtrlBtn').classList.toggle('on',xfCtrl);};
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
