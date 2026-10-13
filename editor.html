@@ -388,6 +388,13 @@
   .tl-lhead.active.sel{background:var(--panel3);box-shadow:inset 3px 0 0 var(--accent),inset -3px 0 0 var(--accent2);}
   .tl-lhead.group{background:var(--panel3);}
   .tl-lhead.group .lname{font-weight:700;}
+  /* folder = amber CSS icon (bigger, never confused with the lock); lock = grey when open, red when locked */
+  .fico{display:inline-block;width:22px;height:16px;margin-right:6px;position:relative;flex:none;}
+  .fico::before{content:"";position:absolute;left:0;top:0;width:10px;height:6px;background:#e3b341;border-radius:2px 2px 0 0;}
+  .fico::after{content:"";position:absolute;left:0;top:3px;width:22px;height:13px;background:#f5c542;border-radius:2px;}
+  .fico.closed::after{background:#d9a62e;}
+  .tl-lhead .lbtn.lock{opacity:.35;filter:grayscale(1);}
+  .tl-lhead .lbtn.lock.on{opacity:1;filter:sepia(1) saturate(6) hue-rotate(-30deg);background:#3a1d1d;}
   /* Photoshop-like hierarchy: one vertical guide per nesting level */
   .tl-lhead .tree{flex:none;align-self:stretch;
     background-image:repeating-linear-gradient(90deg,transparent 0 6px,var(--muted) 6px 7px,transparent 7px 14px);opacity:.5;}
@@ -1825,6 +1832,7 @@ stage.addEventListener('pointerdown',e=>{
   }
   // paint tools
   if(doc.layers[activeLayer].adj&&maskEdit!==doc.layers[activeLayer].id){toast('調整レイヤーには描けません（マスクをタップすると描けます）');return;}
+  if(doc.layers[activeLayer].group){toast('グループには描けません。中のレイヤーを選んでください');return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
   strokeIsPen=(e.pointerType==='pen');strokePressure=(strokeIsPen&&e.pressure>0)?e.pressure:1;
   pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];
@@ -2019,23 +2027,34 @@ function updateShapePreview(x,y){
 /* ---- Floating selection: the moved image lives in its own patch, so pixels that leave the
    canvas are kept and come back when moved in again (until the selection is dropped/edited) ---- */
 let floating=null, liftingMove=false;
-function cloneFloating(F){return Object.assign({},F,{buf:F.buf.slice(),fmask:F.fmask.slice(),base:F.base.slice(),orig:F.orig.slice(),origMask:F.origMask.slice()});}
+// Layers a move / nudge / delete acts on: the active image layer, or — with a group selected —
+// every visible, unlocked image layer inside it, moved together (like moving a Photoshop group).
+function moveTargets(){const L=doc.layers[activeLayer];if(!L)return [];
+  if(!L.group)return L.adj?[]:[L];
+  const ids=descendantIds(L.id);return doc.layers.filter(l=>ids.has(l.id)&&!l.group&&!l.adj&&l.visible&&!l.locked&&!effHidden(l));}
+function celOf(L,fi){const k=celKey(L.id,fi);let c=doc.cels.get(k);if(!c){c=newCel();doc.cels.set(k,c);}return c;}
+function updateThumbsFor(ids,fi){ids.forEach(id=>{const i=doc.layers.findIndex(l=>l.id===id);if(i>=0)updateCelThumb(i,fi);});}
+function cloneFloating(F){return Object.assign({},F,{fmask:F.fmask.slice(),origMask:F.origMask.slice(),
+  parts:F.parts.map(P=>({lid:P.lid,buf:P.buf.slice(),base:P.base.slice(),orig:P.orig.slice()}))});}
 function liftSelection(){
   const L=doc.layers[activeLayer];if(!L||!selection)return null;
   if(floating&&floating.lid===L.id&&floating.fi===activeFrame&&floating.W===W&&floating.H===H)return floating;   // keep the patch (off-canvas pixels intact)
   floating=null;computeSelBounds();const b=selection.bounds;if(b.x1<0)return null;
-  const cel=activeCel();const fw=b.x1-b.x0+1,fh=b.y1-b.y0+1;
-  const buf=new Uint32Array(fw*fh),fmask=new Uint8Array(fw*fh);
-  for(let y=0;y<fh;y++)for(let x=0;x<fw;x++){const si=(b.y0+y)*W+(b.x0+x);if(selection.mask[si]){fmask[y*fw+x]=1;buf[y*fw+x]=cel[si];}}
-  const orig=cel.slice(),base=cel.slice();for(let i=0;i<W*H;i++)if(selection.mask[i])base[i]=0;
-  floating={lid:L.id,fi:activeFrame,W,H,x:b.x0,y:b.y0,x0:b.x0,y0:b.y0,fw,fh,buf,fmask,base,orig,origMask:selection.mask.slice()};
+  const targets=moveTargets();if(!targets.length){toast(L.group?'グループ内に動かせるレイヤーがありません':'このレイヤーは動かせません');return null;}
+  const fw=b.x1-b.x0+1,fh=b.y1-b.y0+1,fmask=new Uint8Array(fw*fh);
+  for(let y=0;y<fh;y++)for(let x=0;x<fw;x++)if(selection.mask[(b.y0+y)*W+(b.x0+x)])fmask[y*fw+x]=1;
+  const parts=targets.map(T=>{const cel=celOf(T,activeFrame);const buf=new Uint32Array(fw*fh);
+    for(let y=0;y<fh;y++)for(let x=0;x<fw;x++){const k=y*fw+x;if(fmask[k])buf[k]=cel[(b.y0+y)*W+(b.x0+x)];}
+    const orig=cel.slice(),base=cel.slice();for(let i=0;i<W*H;i++)if(selection.mask[i])base[i]=0;return {lid:T.id,buf,base,orig};});
+  floating={lid:L.id,fi:activeFrame,W,H,x:b.x0,y:b.y0,x0:b.x0,y0:b.y0,fw,fh,fmask,parts,origMask:selection.mask.slice()};
   return floating;}
-// cel = base + patch stamped at its current (possibly off-canvas) position; selection = visible part of the patch
-function composeFloating(){const F=floating;if(!F)return;const cel=activeCel();cel.set(F.base);const nm=selBuf();
-  for(let y=0;y<F.fh;y++){const cy=F.y+y;if(cy<0||cy>=H)continue;
-    for(let x=0;x<F.fw;x++){const cx=F.x+x;if(cx<0||cx>=W)continue;const k=y*F.fw+x;if(!F.fmask[k])continue;
-      const di=cy*W+cx;nm[di]=1;const px=F.buf[k];if(px)cel[di]=px;}}
-  const dx=F.x-F.x0,dy=F.y-F.y0;if(fillOnMove&&(dx||dy))edgeExtendFill(cel,F.orig,F.origMask,dx,dy);
+// each part's cel = its base + its patch stamped at the current (possibly off-canvas) position; selection = visible part of the patch
+function composeFloating(){const F=floating;if(!F)return;const nm=selBuf();const dx=F.x-F.x0,dy=F.y-F.y0;
+  for(const P of F.parts){const L=layerById(P.lid);if(!L)continue;const cel=celOf(L,F.fi);cel.set(P.base);
+    for(let y=0;y<F.fh;y++){const cy=F.y+y;if(cy<0||cy>=H)continue;
+      for(let x=0;x<F.fw;x++){const cx=F.x+x;if(cx<0||cx>=W)continue;const k=y*F.fw+x;if(!F.fmask[k])continue;
+        const di=cy*W+cx;nm[di]=1;const px=P.buf[k];if(px)cel[di]=px;}}
+    if(fillOnMove&&(dx||dy))edgeExtendFill(cel,P.orig,F.origMask,dx,dy);}
   selection.mask=nm;computeSelBounds();}
 let moveMode='image';
 function beginMove(x,y){
@@ -2044,8 +2063,9 @@ function beginMove(x,y){
   if(selection){   // move the selected image as a floating patch (survives leaving the canvas)
     liftingMove=true;pushUndo();liftingMove=false;const F=liftSelection();if(!F)return;
     moving=true;moveData={float:true,fx:F.x,fy:F.y,ox:x,oy:y,dx:0,dy:0};return;}
-  pushUndo();moving=true;   // no selection: move the whole layer
-  const cel=activeCel();moveData={base:cel.slice(),buf:cel.slice(),ox:x,oy:y,dx:0,dy:0};
+  const targets=moveTargets();if(!targets.length){toast('動かせるレイヤーがありません');return;}
+  pushUndo();moving=true;   // no selection: move the whole layer (every visible layer of a group)
+  moveData={parts:targets.map(T=>{const cel=celOf(T,activeFrame);return {lid:T.id,cel,buf:cel.slice()};}),ox:x,oy:y,dx:0,dy:0};
 }
 function shiftMaskLive(){const{dx,dy,baseMask}=moveData;const nm=selBuf();
   for(let i=0;i<W*H;i++)if(baseMask[i]){const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))nm[ny*W+nx]=1;}
@@ -2054,14 +2074,16 @@ function doMove(e){
   const{x,y}=screenToPix(e.clientX,e.clientY);moveData.dx=x-moveData.ox;moveData.dy=y-moveData.oy;
   if(moveData.float){floating.x=moveData.fx+moveData.dx;floating.y=moveData.fy+moveData.dy;composeFloating();render();return;}
   if(moveData.baseMask){shiftMaskLive();render();return;}
-  const cel=activeCel();const{buf,dx,dy}=moveData;cel.fill(0);
-  for(let i=0;i<W*H;i++){if(buf[i]===0)continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=buf[i];}
+  const{dx,dy}=moveData;
+  for(const P of moveData.parts){const cel=P.cel,buf=P.buf;cel.fill(0);
+    for(let i=0;i<W*H;i++){if(buf[i]===0)continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=buf[i];}}
   render();
 }
 function endMove(cancel){
   moving=false;
   if(cancel){if(undoStack.length)restore(undoStack.pop());updateUndoUI();moveData=null;render();return;}
-  moveData=null;render();updateCelThumb(activeLayer,activeFrame);
+  const ids=moveData.parts?moveData.parts.map(P=>P.lid):(floating?floating.parts.map(P=>P.lid):[]);
+  moveData=null;render();updateCelThumb(activeLayer,activeFrame);updateThumbsFor(ids,activeFrame);
 }
 
 /* ---- Pixel clipboard (copy/paste a selection; Aseprite-style) ---- */
@@ -2070,12 +2092,14 @@ function copySelectionPixels(){
   if(!selection){toast('選択範囲がありません');return;}
   computeSelBounds();const{x0,y0,x1,y1}=selection.bounds;
   if(x1<0){toast('選択範囲が空です');return;}
-  const m=selection.mask,cel=activeCel(),w=x1-x0+1,h=y1-y0+1,data=new Uint32Array(w*h);
+  const AL=doc.layers[activeLayer];const cel=AL&&AL.group?compositeGroup(AL.id,activeFrame):activeCel();   // a group copies what it shows
+  const m=selection.mask,w=x1-x0+1,h=y1-y0+1,data=new Uint32Array(w*h);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])data[y*w+x]=cel[si];}
   pixClip={w,h,x:x0,y:y0,data};toast('コピーしました');
 }
 function pasteSelectionPixels(){
   if(!pixClip){toast('コピーされた画像がありません');return;}
+  if(doc.layers[activeLayer].group||doc.layers[activeLayer].adj){toast('グループ／調整レイヤーには貼り付けできません。中のレイヤーを選んでください');return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
   pushUndo();const{w,h,data}=pixClip;
   let px=pixClip.x,py=pixClip.y;               // paste back where it came from (Aseprite), clamped in
@@ -2116,6 +2140,7 @@ function solve2(ux,uy,vx,vy,dx,dy){const det=ux*vy-uy*vx;if(Math.abs(det)<1e-6)r
 function xfCentroid(c){return {x:(c[0].x+c[1].x+c[2].x+c[3].x)/4,y:(c[0].y+c[1].y+c[2].y+c[3].y)/4};}
 function beginTransform(){
   if(!selection){toast('選択範囲がありません');return;}
+  if(doc.layers[activeLayer].group||doc.layers[activeLayer].adj){toast('グループ／調整レイヤーは変形できません。中のレイヤーを選んでください');return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
   computeSelBounds();const{x0,y0,x1,y1}=selection.bounds;if(x1<0){toast('選択範囲が空です');return;}
   pushUndo();
@@ -2486,7 +2511,31 @@ function attachLayerOpacityScrub(el,L){
       document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
     document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);
   });}
-function drawCelThumb(ctx,layerId,fi){
+function thumbSize(){return {tw:Math.max(24,Math.min(120,Math.round(40*W/H))),th:40};}
+// A group's thumbnail is its live composite (visible children only, masks / opacity / adjustments
+// included), rendered straight at thumbnail resolution so it stays cheap on long animations.
+function compositeGroupThumb(parentId,fi,tw,th,map){
+  if(!map){map=new Int32Array(tw*th);for(let y=0;y<th;y++){const sy=Math.min(H-1,(y*H/th)|0);for(let x=0;x<tw;x++)map[y*tw+x]=sy*W+Math.min(W-1,(x*W/tw)|0);}}
+  const out=new Uint32Array(tw*th);
+  for(let li=0;li<doc.layers.length;li++){const L=doc.layers[li];if((L.parent||null)!==parentId||!L.visible)continue;
+    const mk=L.maskOn===false?null:getMask(L);
+    if(L.group){blendBufS(out,compositeGroupThumb(L.id,fi,tw,th,map),L.opacity,mk,null,map);continue;}
+    if(L.adj){const adjusted=out.slice();applyAdjustBuf(L.adj.type,L.adj.params,adjusted,null);const op=L.opacity;
+      for(let i=0;i<out.length;i++){const f=mk?op*mk[map[i]]/65025:op/255;if(f<=0)continue;const o=out[i],n=adjusted[i];if(f>=1){out[i]=n;continue;}
+        const or=o&255,og=(o>>8)&255,ob=(o>>16)&255,oa=(o>>>24)&255,nr=n&255,ng=(n>>8)&255,nb=(n>>16)&255;
+        out[i]=((oa<<24)|((ob+(nb-ob)*f|0)<<16)|((og+(ng-og)*f|0)<<8)|(or+(nr-or)*f|0))>>>0;}
+      continue;}
+    const cel=doc.cels.get(celKey(L.id,fi));if(!cel)continue;blendBufS(out,cel,L.opacity,mk,map,map);}
+  return out;}
+// blendBuf with index maps for src / mask (null = same resolution as dst)
+function blendBufS(dst,src,op,mk,srcMap,mkMap){
+  for(let i=0;i<dst.length;i++){const s=src[srcMap?srcMap[i]:i];const sa=(s>>>24)&255;if(!sa)continue;
+    const a=mk?Math.round(sa*op*mk[mkMap?mkMap[i]:i]/65025):Math.round(sa*op/255);if(!a)continue;dst[i]=blend(dst[i],s,a);}}
+function drawCelThumb(ctx,layerId,fi){const L=layerById(layerId),cv=ctx.canvas;
+  if(L&&L.group){const{tw,th}=thumbSize();if(cv.width!==tw||cv.height!==th){cv.width=tw;cv.height=th;}
+    ctx.clearRect(0,0,tw,th);const buf=compositeGroupThumb(L.id,fi,tw,th);
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(buf.buffer),tw,th),0,0);return;}
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
   ctx.clearRect(0,0,W,H);const cel=doc.cels.get(celKey(layerId,fi));if(!cel)return;
   ctx.putImageData(new ImageData(new Uint8ClampedArray(cel.slice().buffer),W,H),0,0);
 }
@@ -2571,8 +2620,8 @@ function refreshTimeline(){
       (isGroup?`<button class="lbtn collapse" title="開閉">${L.collapsed?'▸':'▾'}</button>`:'')+
       `<button class="lbtn eye" title="表示/非表示">${L.visible?'👁':'🚫'}</button>`+
       `<button class="lbtn opac" title="不透明度（押しながら左右）">◐</button>`+
-      `<button class="lbtn lock" title="ロック">${L.locked?'🔒':'🔓'}</button>`+
-      `<span class="lname" title="ダブルタップで名前変更">${isGroup?(L.collapsed?'📁 ':'📂 '):isAdj?'🎨 ':''}${L.name}</span>`;
+      `<button class="lbtn lock${L.locked?' on':''}" title="${L.locked?'ロック中（タップで解除）':'ロック'}">${L.locked?'🔒':'🔓'}</button>`+
+      `<span class="lname" title="ダブルタップで名前変更">${isGroup?'<span class="fico'+(L.collapsed?' closed':'')+'"></span>':isAdj?'🎨 ':''}${L.name}</span>`;
     head.querySelector('.grip').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();beginReorder('layer',head,e);});
     head.querySelector('.eye').onclick=e=>{e.stopPropagation();L.visible=!L.visible;refreshTimeline();render();};
     head.querySelector('.lock').onclick=e=>{e.stopPropagation();L.locked=!L.locked;refreshTimeline();};
@@ -2988,6 +3037,9 @@ function moveFrame(from,to){
 
 function updateCelThumb(li,fi){
   const cell=$(`#tlGrid .tl-cell[data-l="${li}"][data-f="${fi}"]`);
+  // every enclosing group shows a live composite, so its thumb for this frame changes too
+  let p=doc.layers[li]&&doc.layers[li].parent;while(p){const gi=doc.layers.findIndex(l=>l.id===p);
+    const gc=$(`#tlGrid .tl-cell[data-l="${gi}"][data-f="${fi}"] canvas.cthumb`);if(gc)drawCelThumb(gc.getContext('2d'),p,fi);const g=layerById(p);p=g?g.parent:null;}
   if(cell){const cv=cell.querySelector('canvas.cthumb');if(cv)drawCelThumb(cv.getContext('2d'),doc.layers[li].id,fi);
     if(maskEdit!==null&&doc.layers[li].id===maskEdit)   // the mask is shared by every frame of the layer
       $$(`#tlGrid .tl-cell[data-l="${li}"] canvas.mthumb`).forEach(mv=>drawMaskThumb(mv.getContext('2d'),maskEdit));}
@@ -3333,9 +3385,9 @@ function updateSelModVisible(){
 function deleteSelection(){
   if(!selection)return;
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
-  pushUndo();const cel=activeCel();
-  for(let i=0;i<W*H;i++)if(selection.mask[i])cel[i]=0;
-  render();updateCelThumb(activeLayer,activeFrame);toast('選択範囲を削除');
+  const targets=moveTargets();if(!targets.length){toast('削除できるレイヤーがありません');return;}
+  pushUndo();targets.forEach(T=>{const cel=celOf(T,activeFrame);for(let i=0;i<W*H;i++)if(selection.mask[i])cel[i]=0;});
+  render();updateCelThumb(activeLayer,activeFrame);updateThumbsFor(targets.map(T=>T.id),activeFrame);toast('選択範囲を削除');
 }
 function deleteOrClear(){if(selection)deleteSelection();else clearCel();}   // 🗑 / Delete: selection only, or the whole cel
 $('#selDel').onclick=deleteOrClear;
@@ -3350,7 +3402,7 @@ function nudgeStep(dx,dy,firstPush){
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');stopNudge();return;}
   if(firstPush){liftingMove=true;pushUndo();liftingMove=false;}
   const F=liftSelection();if(!F)return;
-  F.x+=dx;F.y+=dy;composeFloating();render();updateCelThumb(activeLayer,activeFrame);
+  F.x+=dx;F.y+=dy;composeFloating();render();updateCelThumb(activeLayer,activeFrame);updateThumbsFor(F.parts.map(P=>P.lid),activeFrame);
 }
 // Fill the vacated gap by CONTINUING the stationary background: when a selection
 // splits a connected image and is moved, each emptied gap pixel copies the nearest
