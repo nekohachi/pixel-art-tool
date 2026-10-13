@@ -1207,8 +1207,10 @@ function restore(s){
 }
 let lastClearedRedo=[];
 function pushUndo(){undoStack.push(snapshot());if(!liftingMove)floating=null;/* snapshot first so undo restores the floating patch */if(undoStack.length>HISTORY_MAX)undoStack.shift();lastClearedRedo=redoStack;redoStack=[];updateUndoUI();if(typeof scheduleAutosave==='function')scheduleAutosave();}
-function undo(){if(!undoStack.length)return;redoStack.push(snapshot());restore(undoStack.pop());updateUndoUI();toast('元に戻す');}
-function redo(){if(!redoStack.length)return;undoStack.push(snapshot());restore(redoStack.pop());updateUndoUI();toast('やり直し');}
+function undo(){if(xf){xfUndo();return;}   // while transforming, undo steps the box back (Photoshop)
+  if(!undoStack.length)return;redoStack.push(snapshot());restore(undoStack.pop());updateUndoUI();toast('元に戻す');}
+function redo(){if(xf){xfRedo();return;}
+  if(!redoStack.length)return;undoStack.push(snapshot());restore(redoStack.pop());updateUndoUI();toast('やり直し');}
 function updateUndoUI(){const u=undoStack.length?1:.4,r=redoStack.length?1:.4;
   $('#undoBtn').style.opacity=u;$('#redoBtn').style.opacity=r;
   const gu=$('#gUndoBtn'),gr=$('#gRedoBtn');if(gu)gu.style.opacity=u;if(gr)gr.style.opacity=r;}
@@ -2174,7 +2176,7 @@ function beginTransform(){
   const parts=targets.map(T=>{const cel=celOf(T,activeFrame);const srcBuf=new Uint32Array(w*h);   // one patch per layer, moved as one
     for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])srcBuf[y*w+x]=cel[si];}
     const base=cel.slice();for(let i=0;i<W*H;i++)if(m[i])base[i]=0;return {lid:T.id,srcBuf,base};});
-  xf={srcW:w,srcH:h,fi:activeFrame,parts,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}]};
+  xf={srcW:w,srcH:h,fi:activeFrame,parts,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}],hist:[],redo:[]};
   applyTransformRender(true);
   $('#xfBar').classList.add('show');$('#xfOverlay').classList.add('show');$('#xfBtn').classList.add('on');
   updateSelModVisible();drawXfOverlay();toast('変形：外側ドラッグで回転 / 長押しで反転・90°');
@@ -2297,11 +2299,18 @@ function xfScaleEdge(start,e,P){
   }
   if(fromC)nO={x:C.x-(nU.x+nV.x)/2,y:C.y-(nU.y+nV.y)/2};
   xf.corners=xfFromOUV(nO,nU,nV);}
+// --- in-transform history: every drag / flip / quarter-turn is one step for Ctrl+Z / Ctrl+Y ---
+function xfCopy(c){return c.map(p=>({x:p.x,y:p.y}));}
+function xfMark(){xf.hist.push(xfCopy(xf.corners));xf.redo=[];if(xf.hist.length>200)xf.hist.shift();}
+function xfUndo(){if(!xf)return;if(!xf.hist.length){toast('変形前の状態です');return;}
+  xf.redo.push(xfCopy(xf.corners));xf.corners=xf.hist.pop();applyTransformRender(true);drawXfOverlay();toast('変形を1段階戻す');}
+function xfRedo(){if(!xf)return;if(!xf.redo.length)return;
+  xf.hist.push(xfCopy(xf.corners));xf.corners=xf.redo.pop();applyTransformRender(true);drawXfOverlay();toast('変形をやり直し');}
 // --- flip / quarter-turns from the long-press radial ---
-function xfFlip(horiz){if(!xf)return;const c=xf.corners;
+function xfFlip(horiz){if(!xf)return;xfMark();const c=xf.corners;
   xf.corners=horiz?[c[1],c[0],c[3],c[2]]:[c[3],c[2],c[1],c[0]];
   applyTransformRender(true);drawXfOverlay();toast(horiz?'左右反転':'上下反転');}
-function xfRotateQuarter(q){if(!xf)return;const c=xfCentroid(xf.corners),a=q*Math.PI/2,co=Math.cos(a),si=Math.sin(a);
+function xfRotateQuarter(q){if(!xf)return;xfMark();const c=xfCentroid(xf.corners),a=q*Math.PI/2,co=Math.cos(a),si=Math.sin(a);
   xf.corners=xf.corners.map(p=>{const dx=p.x-c.x,dy=p.y-c.y;return{x:c.x+dx*co-dy*si,y:c.y+dx*si+dy*co};});
   applyTransformRender(true);drawXfOverlay();toast(q===2?'180°回転':(q===1?'90°回転（時計）':'90°回転（反時計）'));}
 function openXfRadial(cx,cy){showRadial(cx,cy,[
@@ -2320,7 +2329,7 @@ function startXfDrag(hit,cx,cy){
     xf.corners=start.map(q=>({x:q.x,y:q.y}));applyTransformRender();drawXfOverlay();
     up();openXfRadial(cx,cy);},430);
   const move=ev=>{
-    if(!moved&&Math.hypot(ev.clientX-cx,ev.clientY-cy)>10){moved=true;clearTimeout(lt);}
+    if(!moved&&Math.hypot(ev.clientX-cx,ev.clientY-cy)>10){moved=true;clearTimeout(lt);xf.hist.push(xfCopy(start));xf.redo=[];}   // one history step per drag
     const p=screenToPixF(ev.clientX,ev.clientY);
     if(hit.mode==='move'){const dx=p.x-p0.x,dy=p.y-p0.y;xf.corners=start.map(q=>({x:q.x+dx,y:q.y+dy}));}
     else if(hit.mode==='rotate'){let a=Math.atan2(p.y-cen.y,p.x-cen.x)-ang0;
