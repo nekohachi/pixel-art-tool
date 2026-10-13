@@ -1885,7 +1885,8 @@ stage.addEventListener('pointerdown',e=>{
 
   if(xf){   // free-transform active: single-pointer drives the handles
     const r=stage.getBoundingClientRect();const hit=xfHitTest(e.clientX-r.left,e.clientY-r.top);
-    if(hit)startXfDrag(hit,e.clientX,e.clientY);
+    const pp=screenToPix(e.clientX,e.clientY);
+    if(hit)startXfDrag(hit,e.clientX,e.clientY,hit.mode!=='corner'&&hit.mode!=='edge'&&!inBounds(pp.x,pp.y));
     return;
   }
   if(tool==='crop'){if(!crop)beginCrop();if(!crop)return;   // (blocked while transforming)
@@ -2418,6 +2419,17 @@ function xfFlip(horiz){if(!xf)return;xfMark();const c=xf.corners;
 function xfRotateQuarter(q){if(!xf)return;xfMark();const c=xfCentroid(xf.corners),a=q*Math.PI/2,co=Math.cos(a),si=Math.sin(a);
   xf.corners=xf.corners.map(p=>{const dx=p.x-c.x,dy=p.y-c.y;return{x:c.x+dx*co-dy*si,y:c.y+dx*si+dy*co};});
   applyTransformRender(true);drawXfOverlay();toast(q===2?'180°回転':(q===1?'90°回転（時計）':'90°回転（反時計）'));}
+// empty space of the timeline (no cell / header / tag under the finger): long-press → the same menu while transforming
+function bindTimelineXfLong(){const sc=document.querySelector('.tl-scroll');if(!sc)return;
+  sc.addEventListener('pointerdown',e=>{if(!xf||pointers.size)return;
+    if(e.target.closest('.tl-cell,.tl-lhead,.tl-head,.tl-corner,.tl-tagcell,.tl-fnum,.tl-colgrip,button,input'))return;
+    const sx=e.clientX,sy=e.clientY;
+    const t=setTimeout(()=>{if(!xf)return;justDragged=true;setTimeout(()=>justDragged=false,140);openXfRadial(sx,sy);cleanup();},430);
+    const mv=ev=>{if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){clearTimeout(t);cleanup();}};
+    const up=()=>{clearTimeout(t);cleanup();};
+    function cleanup(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
+    document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);});}
+bindTimelineXfLong();
 function openXfRadial(cx,cy){showRadial(cx,cy,[
   {icon:'↔',label:'左右反転',fn:()=>xfFlip(true)},
   {icon:'↕',label:'上下反転',fn:()=>xfFlip(false)},
@@ -2425,14 +2437,15 @@ function openXfRadial(cx,cy){showRadial(cx,cy,[
   {icon:'⤾',label:'180°',fn:()=>xfRotateQuarter(2)},
   {icon:'↺',label:'90°反時計',fn:()=>xfRotateQuarter(-1)},
 ]);}
-function startXfDrag(hit,cx,cy){
+function startXfDrag(hit,cx,cy,allowMenu){
   const start=xf.corners.map(p=>({x:p.x,y:p.y}));const p0=screenToPixF(cx,cy);
   const cen=xfCentroid(start);const ang0=Math.atan2(p0.y-cen.y,p0.x-cen.x);
   let moved=false;
-  // hold still on the canvas -> flip / quarter-turn menu (the drag is rolled back)
-  const lt=setTimeout(()=>{if(moved)return;
+  // hold still OUTSIDE the image -> flip / quarter-turn menu (the drag is rolled back). Inside the image a
+  // slow, careful nudge must never pop a menu, so no timer there (the timeline's empty space offers it too)
+  const lt=allowMenu?setTimeout(()=>{if(moved)return;
     xf.corners=start.map(q=>({x:q.x,y:q.y}));applyTransformRender();drawXfOverlay();
-    up();openXfRadial(cx,cy);},430);
+    up();openXfRadial(cx,cy);},430):null;
   const move=ev=>{
     if(!moved&&Math.hypot(ev.clientX-cx,ev.clientY-cy)>10){moved=true;clearTimeout(lt);xf.hist.push(xfCopy(start));xf.redo=[];}   // one history step per drag
     const p=screenToPixF(ev.clientX,ev.clientY);
