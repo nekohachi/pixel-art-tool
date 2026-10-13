@@ -2241,127 +2241,56 @@ function rsCleanup(cel,fillMask,srcMap,P){const{srcW,srcH}=xf,src=P.srcBuf;
   fixes.forEach(([i,v])=>{cel[i]=v;});return fixes.length;}
 function xfPaint(cel,P,nm,hq){
   if(!hq){xfStamp(cel,P,nm,false,null);return;}
-  if(xfLines&&lineArtTransform(cel,P,nm))return;   // experimental: strokes re-drawn as lines, falls back to RotSprite
-  const fm=nm||selBuf(),sm=new Int32Array(W*H);xfStamp(cel,P,fm,true,sm);rsCleanup(cel,fm,sm,P);}
+  const fm=nm||selBuf(),sm=new Int32Array(W*H);xfStamp(cel,P,fm,true,sm);rsCleanup(cel,fm,sm,P);rsGapFill(cel,fm,sm,P);rsLineClean(cel,fm,sm,P);rsGapFill(cel,fm,sm,P);}
+// RotSprite+: thin strokes can break when the rotated 1px band falls between two sample points.
+// A stroke pixel that became an end (≤1 same-colour neighbour) although its source pixel was
+// connected, and that has a partner of its colour two pixels away with nothing between, gets
+// bridged by the in-between pixel whose 8× neighbourhood holds the most of that colour.
+function rsGapFill(cel,fm,sm,P){const{srcW,srcH}=xf,src=P.srcBuf,big=rsBig(P),S=P.bigS,bw=srcW*S,bh=srcH*S;
+  const inv=inv3(xfHomography(xf.corners));if(!inv)return 0;
+  const same=(buf,w_,h_,x,y,c)=>{let n=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;
+    if(nx<0||ny<0||nx>=w_||ny>=h_)continue;if((buf[ny*w_+nx]>>>0)===c)n++;}return n;};
+  const score=(x,y,c)=>{const dx=x+0.5,dy=y+0.5,wt=inv[6]*dx+inv[7]*dy+inv[8];if(!wt)return -1;
+    const u=(inv[0]*dx+inv[1]*dy+inv[2])/wt,v=(inv[3]*dx+inv[4]*dy+inv[5])/wt;if(u<0||v<0||u>=1||v>=1)return -1;
+    const cx=Math.floor(u*bw),cy=Math.floor(v*bh);let n=0;const r=Math.max(1,S>>1);
+    for(let yy=cy-r;yy<=cy+r;yy++)for(let xx=cx-r;xx<=cx+r;xx++){if(xx<0||yy<0||xx>=bw||yy>=bh)continue;if((big[yy*bw+xx]>>>0)===c)n++;}return n;};
+  let added=0;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=y*W+x;if(!fm[i])continue;const c=cel[i]>>>0;if(!c)continue;
+    if(same(cel,W,H,x,y,c)>=2)continue;const si=sm[i]-1;if(si<0||same(src,srcW,srcH,si%srcW,(si/srcW)|0,c)<2)continue;
+    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){if(Math.max(Math.abs(dx),Math.abs(dy))!==2)continue;const px=x+dx,py=y+dy;
+      if(px<0||py<0||px>=W||py>=H||(cel[py*W+px]>>>0)!==c)continue;
+      // candidates adjacent to both ends
+      const cands=[];for(let ay=-1;ay<=1;ay++)for(let ax=-1;ax<=1;ax++){const mx=x+ax,my=y+ay;if(mx<0||my<0||mx>=W||my>=H)continue;
+        if(Math.abs(mx-px)<=1&&Math.abs(my-py)<=1&&!(mx===x&&my===y)&&!(mx===px&&my===py))cands.push([mx,my]);}
+      if(cands.some(([mx,my])=>(cel[my*W+mx]>>>0)===c))continue;   // already connected
+      let best=null,bs=-1;for(const cd of cands){const sc=score(cd[0],cd[1],c);if(sc>bs){bs=sc;best=cd;}}
+      if(best){const j=best[1]*W+best[0];cel[j]=c;fm[j]=1;sm[j]=sm[i];added++;}}}
+  return added;}
+// RotSprite+: a pixel-perfect pass on 1px strokes. A stroke pixel that forms an "L" (its two
+// same-coloured orthogonal neighbours are perpendicular and the diagonal between them is empty)
+// is the double-step artefact rotation leaves on thin lines — unless the source pixel it came
+// from was an L too (a deliberate corner). It is replaced by what the stroke covers there
+// (the majority of its other neighbours), which keeps the line 8-connected.
+function rsLineClean(cel,fm,sm,P){const{srcW,srcH}=xf,src=P.srcBuf;
+  const isL=(buf,bw,bh,x,y,c)=>{const at=(px,py)=>px>=0&&py>=0&&px<bw&&py<bh&&(buf[py*bw+px]>>>0)===c;
+    const u=at(x,y-1),d=at(x,y+1),l=at(x-1,y),r=at(x+1,y);if((u?1:0)+(d?1:0)+(l?1:0)+(r?1:0)!==2)return false;
+    if(u&&r)return !at(x+1,y-1);if(r&&d)return !at(x+1,y+1);if(d&&l)return !at(x-1,y+1);if(l&&u)return !at(x-1,y-1);return false;};
+  // a "bump": the pixel's only orthogonal neighbour is one side and both diagonals on that side are
+  // filled — a 1px wart on a straight run, not part of the line
+  const isBump=(buf,bw,bh,x,y,c)=>{const at=(px,py)=>px>=0&&py>=0&&px<bw&&py<bh&&(buf[py*bw+px]>>>0)===c;
+    const u=at(x,y-1),d=at(x,y+1),l=at(x-1,y),r=at(x+1,y);if((u?1:0)+(d?1:0)+(l?1:0)+(r?1:0)!==1)return false;
+    if(d)return at(x-1,y+1)&&at(x+1,y+1)&&!at(x-1,y-1)&&!at(x+1,y-1);if(u)return at(x-1,y-1)&&at(x+1,y-1)&&!at(x-1,y+1)&&!at(x+1,y+1);
+    if(r)return at(x+1,y-1)&&at(x+1,y+1)&&!at(x-1,y-1)&&!at(x-1,y+1);return at(x-1,y-1)&&at(x-1,y+1)&&!at(x+1,y-1)&&!at(x+1,y+1);};
+  // removals are applied one at a time and re-checked: two touching L-pixels at a bend must not both go
+  let n=0;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=y*W+x;if(!fm[i])continue;const c=cel[i]>>>0;if(!c)continue;
+    const L=isL(cel,W,H,x,y,c),Bp=!L&&isBump(cel,W,H,x,y,c);if(!L&&!Bp)continue;
+    const si=sm[i]-1;if(si<0)continue;const sx=si%srcW,sy=(si/srcW)|0;if(L?isL(src,srcW,srcH,sx,sy,c):isBump(src,srcW,srcH,sx,sy,c))continue;
+    const cnt=new Map();for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;
+      if(nx<0||ny<0||nx>=W||ny>=H)continue;const v=cel[ny*W+nx]>>>0;if(v===c)continue;cnt.set(v,(cnt.get(v)||0)+1);}
+    let best=0,bn=-1;cnt.forEach((k,v)=>{if(k>bn){bn=k;best=v;}});cel[i]=best;n++;}
+  return n;}
 
-/* ---- 線整形 (experimental) ----
-   Pixel-art strokes are recovered as curves and re-drawn after the transform with the same
-   rules the line / ellipse tools use, so a rotated outline looks drawn, not resampled:
-   1. split the patch into colour components; a component with no interior pixel (every pixel
-      touches another colour) is a stroke (1–2px lines, outlines, hatching), the rest is fill
-   2. fills: strokes are inpainted away, then RotSprite handles the fill image
-   3. strokes: skeleton (Zhang–Suen) → paths → corner-simplified → Catmull-Rom → transformed →
-      rasterised densely → pixel-perfect (L-corner) cleanup → stamped on top in their colour
-   4. fill that leaked outside a closed outline (reachable from the border where the source
-      was not) is cleared; lone fill pixels are tidied as in RotSprite
-   Returns false (caller uses RotSprite) for huge / dithered patches. */
-let xfLines=(()=>{try{return localStorage.getItem('pxeditor-xflines')==='1';}catch(_){return false;}})();
-function lineArtTransform(cel,P,nm){
-  const w=xf.srcW,h=xf.srcH,src=P.srcBuf,N=w*h;if(N>65536)return false;
-  // 1. components
-  const comp=new Int32Array(N).fill(-1),comps=[];
-  for(let i=0;i<N;i++){if(!src[i]||comp[i]>=0)continue;const c=src[i],id=comps.length,px=[],st=[i];comp[i]=id;
-    while(st.length){const j=st.pop();px.push(j);const x=j%w,y=(j/w)|0;
-      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=w||ny>=h)continue;
-        const k=ny*w+nx;if(comp[k]<0&&src[k]===c){comp[k]=id;st.push(k);}}}
-    comps.push({c,px});}
-  if(comps.length>2500)return false;
-  const isStroke=new Uint8Array(N),strokes=[];
-  for(const C of comps){if(C.px.length<2)continue;let interior=false;
-    for(const j of C.px){const x=j%w,y=(j/w)|0;if(x>0&&y>0&&x<w-1&&y<h-1&&src[j-1]===C.c&&src[j+1]===C.c&&src[j-w]===C.c&&src[j+w]===C.c){interior=true;break;}}
-    if(interior)continue;strokes.push(C);for(const j of C.px)isStroke[j]=1;}
-  if(!strokes.length)return false;
-  // 2. fill image: strokes inpainted from their neighbours (majority colour, transparent counts)
-  const fill=src.slice();let todo=[];for(let i=0;i<N;i++)if(isStroke[i]){fill[i]=0;todo.push(i);}
-  const filled=new Uint8Array(N);
-  for(let pass=0;pass<6&&todo.length;pass++){const next=[],snap=fill.slice(),fs=filled.slice();
-    for(const j of todo){const x=j%w,y=(j/w)|0,cnt=new Map();
-      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=w||ny>=h)continue;
-        const k=ny*w+nx;if(isStroke[k]&&!fs[k])continue;const v=snap[k];cnt.set(v,(cnt.get(v)||0)+1);}
-      let best=null,bn=0;cnt.forEach((n,v)=>{if(n>bn){bn=n;best=v;}});if(best===null)next.push(j);else{fill[j]=best;filled[j]=1;}}
-    todo=next;}
-  const fm=nm||selBuf(),sm=new Int32Array(W*H),Q={srcBuf:fill};xfStamp(cel,Q,fm,true,sm);
-  // 3. strokes
-  const Hm=xfHomography(xf.corners);
-  const map=(px,py)=>{const u=px/w,v=py/h,wt=Hm[6]*u+Hm[7]*v+Hm[8];return {x:(Hm[0]*u+Hm[1]*v+Hm[2])/wt,y:(Hm[3]*u+Hm[4]*v+Hm[5])/wt};};
-  const strokePix=new Uint8Array(W*H);
-  for(const S of strokes){const paths=strokePaths(S,w,h);if(!paths.length)continue;
-    const len=paths.reduce((a,p)=>a+p.pts.length,0);const width=Math.max(1,Math.min(2,Math.round(S.px.length/Math.max(1,len))));
-    for(const path of paths){
-      if(path.pts.length===1){const q=path.pts[0],d=map(q.x+0.5,q.y+0.5);const x=Math.floor(d.x),y=Math.floor(d.y);stampStroke(cel,x,y,S.c,1,fm,strokePix);continue;}
-      const pts=smoothPath(path.pts.map(q=>({x:q.x+0.5,y:q.y+0.5})),path.closed).map(q=>map(q.x,q.y));
-      for(const[x,y]of rasterClean(pts,path.closed))stampStroke(cel,x,y,S.c,width,fm,strokePix);}}
-  // 4. halo: colours that could not be reached from the border in the source must not be reachable now
-  const outside=new Set();{const seen=new Uint8Array(N),st=[];
-    for(let x=0;x<w;x++){st.push(x,(h-1)*w+x);}for(let y=0;y<h;y++){st.push(y*w,y*w+w-1);}
-    while(st.length){const j=st.pop();if(seen[j]||isStroke[j])continue;seen[j]=1;outside.add(src[j]>>>0);const x=j%w,y=(j/w)|0;
-      if(x>0)st.push(j-1);if(x<w-1)st.push(j+1);if(y>0)st.push(j-w);if(y<h-1)st.push(j+w);}}
-  {const seen=new Uint8Array(W*H),st=[];
-    for(let i=0;i<W*H;i++)if(!fm[i])st.push(i);for(let x=0;x<W;x++){st.push(x,(H-1)*W+x);}for(let y=0;y<H;y++){st.push(y*W,y*W+W-1);}
-    while(st.length){const j=st.pop();if(seen[j]||strokePix[j])continue;seen[j]=1;
-      if(fm[j]&&cel[j]&&!outside.has(cel[j]>>>0)){cel[j]=0;}
-      const x=j%W,y=(j/W)|0;if(x>0)st.push(j-1);if(x<W-1)st.push(j+1);if(y>0)st.push(j-W);if(y<H-1)st.push(j+W);}}
-  // 5. tidy lone fill pixels (not strokes)
-  const fo=new Uint8Array(W*H);for(let i=0;i<W*H;i++)fo[i]=fm[i]&&!strokePix[i]?1:0;rsCleanup(cel,fo,sm,Q);
-  return true;}
-function stampStroke(cel,x,y,c,width,fm,sp){for(let dy=0;dy<width;dy++)for(let dx=0;dx<width;dx++){const px=x+dx,py=y+dy;
-  if(px<0||py<0||px>=W||py>=H)continue;const i=py*W+px;cel[i]=c;fm[i]=1;sp[i]=1;}}
-// skeleton of one stroke component → list of pixel paths ({pts:[{x,y}], closed})
-function strokePaths(S,w,h){let x0=w,y0=h,x1=-1,y1=-1;for(const j of S.px){const x=j%w,y=(j/w)|0;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
-  const bw=x1-x0+3,bh=y1-y0+3,m=new Uint8Array(bw*bh);for(const j of S.px)m[(((j/w)|0)-y0+1)*bw+(j%w)-x0+1]=1;
-  thinMask(m,bw,bh);
-  const on=i=>m[i]===1,nb=i=>{const x=i%bw,y=(i/bw)|0,out=[];for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;
-    const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=bw||ny>=bh)continue;const k=ny*bw+nx;if(on(k))out.push(k);}return out;};
-  const used=new Uint8Array(bw*bh),paths=[];const toPt=i=>({x:(i%bw)+x0-1,y:((i/bw)|0)+y0-1});
-  const walk=start=>{const pts=[start];used[start]=1;let cur=start,hx=0,hy=0;
-    for(;;){const cand=nb(cur).filter(k=>!used[k]);if(!cand.length){const back=nb(cur).includes(start)&&pts.length>3;return {pts,closed:back};}
-      let best=cand[0],bs=-9;for(const k of cand){const dx=(k%bw)-(cur%bw),dy=((k/bw)|0)-((cur/bw)|0);const sc=dx*hx+dy*hy-(dx&&dy?0.3:0);if(sc>bs){bs=sc;best=k;}}
-      hx=(best%bw)-(cur%bw);hy=((best/bw)|0)-((cur/bw)|0);used[best]=1;pts.push(best);cur=best;}};
-  const order=[];for(let i=0;i<bw*bh;i++)if(on(i))order.push(i);order.sort((a,b)=>nb(a).length-nb(b).length);   // endpoints first
-  for(const i of order){if(used[i])continue;const pth=walk(i);
-    if(!pth.closed&&pth.pts.length>1){const pre=nb(pth.pts[0]).find(k=>used[k]&&!pth.pts.includes(k));if(pre!==undefined)pth.pts.unshift(pre);}
-    paths.push({pts:pth.pts.map(toPt),closed:pth.closed});}
-  // thinning leaves 1–3px spurs at corners of the original stroke: drop them when a real path exists
-  const longest=paths.reduce((m,p)=>Math.max(m,p.pts.length),0);
-  return longest>4?paths.filter(p=>p.closed||p.pts.length>3):paths;}
-function thinMask(m,bw,bh){let changed=true;const at=(x,y)=>m[y*bw+x];
-  while(changed){changed=false;for(let step=0;step<2;step++){const del=[];
-    for(let y=1;y<bh-1;y++)for(let x=1;x<bw-1;x++){if(!at(x,y))continue;
-      const p2=at(x,y-1),p3=at(x+1,y-1),p4=at(x+1,y),p5=at(x+1,y+1),p6=at(x,y+1),p7=at(x-1,y+1),p8=at(x-1,y),p9=at(x-1,y-1);
-      const B=p2+p3+p4+p5+p6+p7+p8+p9;if(B<2||B>6)continue;
-      const q=[p2,p3,p4,p5,p6,p7,p8,p9,p2];let A=0;for(let k=0;k<8;k++)if(!q[k]&&q[k+1])A++;if(A!==1)continue;
-      if(step===0){if(p2*p4*p6||p4*p6*p8)continue;}else{if(p2*p4*p8||p2*p6*p8)continue;}
-      del.push(y*bw+x);}
-    if(del.length){changed=true;for(const d of del)m[d]=0;}}}}
-// pixel-centre path → corner-simplified polyline → smooth dense points (Catmull-Rom through the corners)
-function smoothPath(pts,closed){const tol=0.75;
-  const simp=(a,b,out)=>{let far=-1,fd=0;const A=pts[a],B=pts[b],dx=B.x-A.x,dy=B.y-A.y,L=Math.hypot(dx,dy)||1;
-    for(let i=a+1;i<b;i++){const P=pts[i];const d=Math.abs((P.x-A.x)*dy-(P.y-A.y)*dx)/L;if(d>fd){fd=d;far=i;}}
-    if(far>=0&&fd>tol){simp(a,far,out);simp(far,b,out);}else out.push(b);};
-  let v=[];if(closed){const far=pts.reduce((bi,p,i)=>Math.hypot(p.x-pts[0].x,p.y-pts[0].y)>Math.hypot(pts[bi].x-pts[0].x,pts[bi].y-pts[0].y)?i:bi,0);
-    v=[pts[0]];const o1=[];simp(0,far,o1);v=v.concat(o1.map(i=>pts[i]));const o2=[];simp(far,pts.length-1,o2);v=v.concat(o2.slice(0,-1).map(i=>pts[i]));}
-  else{v=[pts[0]];const o=[];simp(0,pts.length-1,o);v=v.concat(o.map(i=>pts[i]));}
-  if(v.length<=2&&!closed)return v;
-  const n=v.length,out=[];const P=i=>v[closed?((i%n)+n)%n:Math.max(0,Math.min(n-1,i))];
-  const segs=closed?n:n-1;
-  for(let i=0;i<segs;i++){const p0=P(i-1),p1=P(i),p2=P(i+1),p3=P(i+2);const L=Math.hypot(p2.x-p1.x,p2.y-p1.y),steps=Math.max(2,Math.ceil(L*4));
-    for(let k=0;k<steps;k++){const t=k/steps,t2=t*t,t3=t2*t;
-      out.push({x:0.5*((2*p1.x)+(-p0.x+p2.x)*t+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
-                y:0.5*((2*p1.y)+(-p0.y+p2.y)*t+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3)});}}
-  if(!closed)out.push(v[n-1]);return out;}
-// dense float points → 8-connected 1px pixel chain without L-corner doubles (pixel-perfect)
-function rasterClean(pts,closed){const px=[];let lx=null,ly=null;
-  const add=(x,y)=>{if(x===lx&&y===ly)return;if(lx!==null&&(Math.abs(x-lx)>1||Math.abs(y-ly)>1)){   // bridge gaps with a short Bresenham
-      let ax=lx,ay=ly;const dx=Math.abs(x-ax),dy=Math.abs(y-ay),sx=ax<x?1:-1,sy=ay<y?1:-1;let err=dx-dy;
-      while(!(ax===x&&ay===y)){const e2=2*err;if(e2>-dy){err-=dy;ax+=sx;}if(e2<dx){err+=dx;ay+=sy;}if(!(ax===x&&ay===y)){px.push([ax,ay]);}}}
-    px.push([x,y]);lx=x;ly=y;};
-  for(const p of pts)add(Math.floor(p.x),Math.floor(p.y));
-  if(closed&&px.length>1){const f=px[0],l=px[px.length-1];if(f[0]===l[0]&&f[1]===l[1])px.pop();}
-  // pixel-perfect: drop the corner pixel of every L (a, b, c with a and c diagonal neighbours)
-  let changed=true;while(changed&&px.length>2){changed=false;const n=px.length;
-    for(let i=0;i<n;i++){if(!closed&&(i===0||i===n-1))continue;const a=px[(i-1+n)%n],b=px[i],c=px[(i+1)%n];
-      if(Math.abs(a[0]-c[0])===1&&Math.abs(a[1]-c[1])===1&&(b[0]===a[0]||b[1]===a[1])&&(b[0]===c[0]||b[1]===c[1])){px.splice(i,1);changed=true;break;}}}
-  return px;}
 function xfEach(fn){xf.parts.forEach(P=>{const L=layerById(P.lid);if(L)fn(celOf(L,xf.fi),P);});}
 function applyTransformRender(final){xfEach((cel,P)=>{cel.set(P.base);xfPaint(cel,P,null,!!final&&rotSprite);});render();}
 function xfLocal(p){return {x:panX+p.x*zoom,y:panY+p.y*zoom};}
@@ -3446,12 +3375,9 @@ $('#xfCancel').onclick=cancelTransform;
 $('#cropOk').onclick=commitCrop;$('#cropCancel').onclick=cancelCrop;
 $('#cropShiftBtn').onclick=()=>{cropShift=!cropShift;updateCropBar();};
 $('#xfShiftBtn').onclick=()=>{xfShift=!xfShift;$('#xfShiftBtn').classList.toggle('on',xfShift);};
-function xfModeLabel(){const b=$('#xfRsBtn');if(!b)return;b.textContent=xfLines?'線整形β':rotSprite?'RotSprite':'最近傍';b.classList.toggle('on',rotSprite||xfLines);}
-$('#xfRsBtn').onclick=()=>{   // cycles: RotSprite → 線整形β（実験） → 最近傍
-  if(rotSprite&&!xfLines){xfLines=true;}else if(xfLines){xfLines=false;rotSprite=false;}else{rotSprite=true;}
-  try{localStorage.setItem('pxeditor-rotsprite',rotSprite?'1':'0');localStorage.setItem('pxeditor-xflines',xfLines?'1':'0');}catch(_){}
-  xfModeLabel();if(xf)applyTransformRender(true);toast(xfLines?'線整形β：線を描き直して変形（実験）':rotSprite?'RotSprite：輪郭を保って変形':'最近傍で変形');};
-if(xfLines)rotSprite=true;xfModeLabel();
+$('#xfRsBtn').onclick=()=>{rotSprite=!rotSprite;try{localStorage.setItem('pxeditor-rotsprite',rotSprite?'1':'0');}catch(_){}
+  $('#xfRsBtn').classList.toggle('on',rotSprite);if(xf)applyTransformRender(true);toast(rotSprite?'RotSprite：輪郭を保って変形':'最近傍で変形');};
+$('#xfRsBtn').classList.toggle('on',rotSprite);
 $('#xfCtrlBtn').onclick=()=>{xfCtrl=!xfCtrl;$('#xfCtrlBtn').classList.toggle('on',xfCtrl);};
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
@@ -3620,7 +3546,11 @@ function deleteOrClear(){if(selection)deleteSelection();else clearCel();}   // �
 $('#selDel').onclick=deleteOrClear;
 // Nudge the selected content (and marquee) by 1px. A hold coalesces into
 // one undo step (firstPush only on press).
+// while transforming, nudging moves the transform box (rotation and all), like Photoshop
+function xfNudge(dx,dy,firstPush){if(!xf)return;if(firstPush)xfMark();
+  xf.corners=xf.corners.map(p=>({x:p.x+dx,y:p.y+dy}));applyTransformRender(true);drawXfOverlay();}
 function nudgeStep(dx,dy,firstPush){
+  if(xf){xfNudge(dx,dy,firstPush);return;}
   if(!selection)return;
   if(moveMode==='sel'){   // marquee-only nudge: shift the selection outline, leave pixels
     floating=null;if(firstPush)pushUndo();const mask=selection.mask,nm=selBuf();
@@ -3870,7 +3800,7 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();altSelMenuAt=0;if(selection){deselect();toast('選択を解除');}return;}
   if(k==='escape'){deselect();return;}
   if(selection&&k.startsWith('arrow')){const d={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]}[k];
-    if(d){e.preventDefault();nudgeStep(d[0],d[1],!e.repeat);return;}}
+    if(d){e.preventDefault();if(xf)xfNudge(d[0],d[1],!e.repeat);else nudgeStep(d[0],d[1],!e.repeat);return;}}
   if(!selection&&k.startsWith('arrow')){e.preventDefault();   // no selection: ←→ frames, ↑↓ layers
     if(k==='arrowleft')prevFrameWrap();else if(k==='arrowright')nextFrameWrap();
     else if(k==='arrowup')gotoLayer(activeLayer+1);else if(k==='arrowdown')gotoLayer(activeLayer-1);return;}

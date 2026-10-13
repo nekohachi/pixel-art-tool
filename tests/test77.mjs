@@ -47,7 +47,7 @@ ok('thin line at 20°: RotSprite leaves no isolated fragments and keeps the line
 const Q=await page.evaluate(()=>{newDoc(16,16);const c=getCel(0,0);for(let i=0;i<256;i++)c[i]=((i*37)&1)?T.K:(((i*53)&3)?T.R:0);const before=c.slice();
   T.selAll();beginTransform();xfRotateQuarter(1);xfRotateQuarter(1);xfRotateQuarter(1);xfRotateQuarter(1);commitTransform();
   const same=getCel(0,0).every((v,i)=>v===before[i]);
-  xfLines=false;rotSprite=true;xfModeLabel();$('#xfRsBtn').click();$('#xfRsBtn').click();const off=!rotSprite&&!xfLines&&localStorage.getItem('pxeditor-rotsprite')==='0';$('#xfRsBtn').click();
+  rotSprite=true;$('#xfRsBtn').click();const off=!rotSprite&&localStorage.getItem('pxeditor-rotsprite')==='0';$('#xfRsBtn').click();
   return {same,off,on:rotSprite};});
 ok('four quarter turns with RotSprite return the exact original; toggle persists',Q.same&&Q.off&&Q.on);
 
