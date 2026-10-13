@@ -395,6 +395,12 @@
   .fico.closed::after{background:#d9a62e;}
   .tl-lhead .lbtn.lock{opacity:.35;filter:grayscale(1);}
   .tl-lhead .lbtn.lock.on{opacity:1;filter:sepia(1) saturate(6) hue-rotate(-30deg);background:#3a1d1d;}
+  .tl-lhead .lbtn.lock.alpha{opacity:1;filter:none;color:#5ab0ff;background:#1b2838;}
+  /* clipped: indented ↳ ; pass-through group / linked layer: small badge ; colour label: band at the right edge */
+  .tl-lhead.clip .lname::before{content:"↳";color:var(--accent);margin-right:4px;font-weight:700;}
+  .tl-lhead.pass .lname::after{content:"通過";font-size:9px;color:var(--muted);margin-left:6px;border:1px solid var(--border);border-radius:3px;padding:0 3px;}
+  .tl-lhead.linked .lname::after{content:"🔗";font-size:10px;margin-left:5px;}
+  .tl-lhead::after{content:"";position:absolute;right:0;top:0;bottom:0;width:5px;background:var(--lbl,transparent);pointer-events:none;}
   /* Photoshop-like hierarchy: one vertical guide per nesting level */
   .tl-lhead .tree{flex:none;align-self:stretch;
     background-image:repeating-linear-gradient(90deg,transparent 0 6px,var(--muted) 6px 7px,transparent 7px 14px);opacity:.5;}
@@ -1013,8 +1019,14 @@ const uid=()=>nextId++;
 const MAXBRUSH=32;
 function newCel(){return new Uint32Array(W*H);}
 function celKey(l,f){return l+':'+f;}
+// a "linked" layer (全フレーム共通) keeps ONE cel under <id>:link that every frame shows
+function celKeyFor(L,fi){return L.linked?L.id+':link':celKey(L.id,fi);}
+function celKeysOf(L){return L.linked?[L.id+':link']:doc.frames.map((f,fi)=>celKey(L.id,fi));}
+function setLinked(L,on){if(!!L.linked===!!on)return;
+  if(on){const cur=doc.cels.get(celKey(L.id,activeFrame))||newCel();celKeysOf(L).forEach(k=>doc.cels.delete(k));L.linked=true;doc.cels.set(L.id+':link',cur);}
+  else{const sh=doc.cels.get(L.id+':link');L.linked=false;doc.frames.forEach((f,fi)=>{if(sh)doc.cels.set(celKey(L.id,fi),sh.slice());});doc.cels.delete(L.id+':link');}}
 function getCel(layerIdx,frameIdx){
-  const id=doc.layers[layerIdx].id, k=celKey(id,frameIdx);
+  const k=celKeyFor(doc.layers[layerIdx],frameIdx);
   let c=doc.cels.get(k); if(!c){c=newCel();doc.cels.set(k,c);} return c;
 }
 // while editing a layer mask, every paint op targets the grey mask buffer instead of the cel
@@ -1062,12 +1074,12 @@ function toggleMask(li){const L=doc.layers[li];if(!L||!getMask(L))return;L.maskO
 function applyMask(li){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;
   if(L.adj){toast('調整レイヤーのマスクは焼き込めません（削除のみ）');return;}pushUndo();
   if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
-  if(L.maskOn!==false)doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));if(!c)return;
+  if(L.maskOn!==false)celKeysOf(L).forEach(k=>{const c=doc.cels.get(k);if(!c)return;
     for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);
       c[i]=na?((na<<24)|(p&0xffffff))>>>0:0;}});
   setMask(L,null);delete L.maskOn;refreshTimeline();render();toast('マスクを適用');}
 function applyMaskSilent(L){const mk=getMask(L);if(!mk)return;if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
-  if(L.maskOn!==false)doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));if(!c)return;
+  if(L.maskOn!==false)celKeysOf(L).forEach(k=>{const c=doc.cels.get(k);if(!c)return;
     for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);c[i]=na?((na<<24)|(p&0xffffff))>>>0:0;}});
   setMask(L,null);delete L.maskOn;}
 function deleteMask(li){const L=doc.layers[li];if(!L||!getMask(L))return;pushUndo();
@@ -1243,38 +1255,45 @@ function groupOpacity(L){let m=1,p=L.parent;while(p){const g=layerById(p);if(!g)
 // buffer is blended in with the group's opacity. So an adjustment layer inside a group only
 // transforms what is below it *inside that group* (Photoshop's non-pass-through behaviour),
 // and group opacity applies to the group as a whole rather than to each child separately.
+// Layers composite as a tree: every (non pass-through) group renders its children into its own
+// buffer, then that buffer is blended in with the group's opacity. So an adjustment layer inside
+// a group only transforms what is below it inside that group, and group opacity applies to the
+// group as a whole. A pass-through group instead paints its children straight into the parent.
+// A clipped layer (clip) only shows where the nearest non-clipped layer below it is opaque.
+// The same routine renders thumbnails through an index map (map[i] = full-res pixel index).
 function compositeFrame(frameIdx,ctxTarget){
   const out=compositeGroup(null,frameIdx);
   ctxTarget.putImageData(new ImageData(new Uint8ClampedArray(out.buffer),W,H),0,0);
 }
-function compositeGroup(parentId,frameIdx){
-  const out=new Uint32Array(W*H);
+function compositeGroup(parentId,fi){const out=new Uint32Array(W*H);compositeScope(parentId,fi,out,1,null,null);return out;}
+function compositeScope(parentId,fi,out,opMul,map,clipIn){
+  let clipBase=clipIn||null;   // {buf,map}: alpha source for clipped layers
   for(let li=0;li<doc.layers.length;li++){
-    const L=doc.layers[li];if((L.parent||null)!==parentId)continue;   // direct children only, bottom→top
-    if(!L.visible)continue;
-    const mk=L.maskOn===false?null:getMask(L);   // mask: 255 = full effect / shown, 0 = none
-    if(L.group){const sub=compositeGroup(L.id,frameIdx);blendBuf(out,sub,L.opacity,mk);continue;}
-    if(L.adj){   // non-destructive adjustment of everything below it in this scope, through its mask
-      const adjusted=out.slice();applyAdjustBuf(L.adj.type,L.adj.params,adjusted,null);
-      const op=L.opacity;
-      if(op>=255&&!mk){out.set(adjusted);continue;}
-      for(let i=0;i<out.length;i++){const f=mk?op*mk[i]/65025:op/255;if(f<=0)continue;
-        const o=out[i],n=adjusted[i];if(f>=1){out[i]=n;continue;}
-        const or=o&255,og=(o>>8)&255,ob=(o>>16)&255,oa=(o>>>24)&255;
-        const nr=n&255,ng=(n>>8)&255,nb=(n>>16)&255;
+    const L=doc.layers[li];if((L.parent||null)!==parentId||!L.visible)continue;
+    const mk=L.maskOn===false?null:getMask(L);const cb=L.clip?clipBase:null;
+    if(L.group){
+      if(L.passThrough){compositeScope(L.id,fi,out,opMul*L.opacity/255,map,clipBase);continue;}
+      const sub=new Uint32Array(out.length);compositeScope(L.id,fi,sub,1,map,null);
+      blendBufS(out,sub,L.opacity*opMul,mk,null,map,cb);if(!L.clip)clipBase={buf:sub,map:null};continue;}
+    if(L.adj){   // non-destructive adjustment of everything below it in this scope, through mask / clip
+      const adjusted=out.slice();applyAdjustBuf(L.adj.type,L.adj.params,adjusted,null);const op=L.opacity*opMul;
+      for(let i=0;i<out.length;i++){let f=mk?op*mk[map?map[i]:i]/65025:op/255;
+        if(cb){const ca=(cb.buf[cb.map?cb.map[i]:i]>>>24)&255;if(!ca)continue;f*=ca/255;}
+        if(f<=0)continue;const o=out[i],n=adjusted[i];if(f>=1){out[i]=n;continue;}
+        const or=o&255,og=(o>>8)&255,ob=(o>>16)&255,oa=(o>>>24)&255,nr=n&255,ng=(n>>8)&255,nb=(n>>16)&255;
         out[i]=((oa<<24)|((ob+(nb-ob)*f|0)<<16)|((og+(ng-og)*f|0)<<8)|(or+(nr-or)*f|0))>>>0;}
-      continue;
-    }
-    const cel=doc.cels.get(celKey(L.id,frameIdx));if(!cel)continue;
-    blendBuf(out,cel,L.opacity,mk);
+      continue;}
+    const cel=doc.cels.get(celKeyFor(L,fi));if(!cel)continue;
+    blendBufS(out,cel,L.opacity*opMul,mk,map,map,cb);if(!L.clip)clipBase={buf:cel,map};
   }
-  return out;
 }
-// src over dst at opacity (0..255), optionally through a mask
-function blendBuf(dst,src,op,mk){
-  for(let i=0;i<dst.length;i++){const s=src[i];const sa=(s>>>24)&255;if(!sa)continue;
-    const a=mk?Math.round(sa*op*mk[i]/65025):Math.round(sa*op/255);if(!a)continue;
-    dst[i]=blend(dst[i],s,a);}
+// src over dst at opacity (0..255, may be fractional), through an optional mask and clip base;
+// srcMap / mkMap are index maps (null = same resolution as dst)
+function blendBufS(dst,src,op,mk,srcMap,mkMap,cb){
+  for(let i=0;i<dst.length;i++){const s=src[srcMap?srcMap[i]:i];const sa=(s>>>24)&255;if(!sa)continue;
+    let a=mk?sa*op*mk[mkMap?mkMap[i]:i]/65025:sa*op/255;
+    if(cb){const ca=(cb.buf[cb.map?cb.map[i]:i]>>>24)&255;if(!ca)continue;a=a*ca/255;}
+    a=Math.round(a);if(!a)continue;dst[i]=blend(dst[i],s,a);}
 }
 // render() = recomposite then paint (use after any pixel/layer/frame change).
 // renderView() = paint only, reusing the cached composite (use for pan/zoom/
@@ -1566,10 +1585,15 @@ function inBounds(x,y){return x>=0&&y>=0&&x<W&&y<H;}
 function clampX(x){return Math.max(0,Math.min(W-1,x));}
 function clampY(y){return Math.max(0,Math.min(H-1,y));}
 function withOpacity(px,op){if(op>=255)return px;const a=Math.round(alphaOf(px)*op/255);return ((px&0x00ffffff)|(a<<24))>>>0;}
-function setPix(cel,x,y,px){if(!inBounds(x,y)||!inSelection(x,y))return;cel[y*W+x]=px;}
-function blendPlot(cel,x,y,px){if(!inBounds(x,y)||!inSelection(x,y))return;cel[y*W+x]=blend(cel[y*W+x],px,alphaOf(px));}
+// 透明部分を保護: paint only where the layer already has pixels, and keep their alpha
+function alphaLockActive(){if(maskEdit!==null)return false;const L=doc.layers[activeLayer];return !!(L&&L.alphaLock);}
+function setPix(cel,x,y,px){if(!inBounds(x,y)||!inSelection(x,y))return;const i=y*W+x;
+  if(alphaLockActive()){const oa=cel[i]>>>24;if(!oa)return;cel[i]=((oa<<24)|(px&0xffffff))>>>0;return;}cel[i]=px;}
+function blendPlot(cel,x,y,px){if(!inBounds(x,y)||!inSelection(x,y))return;const i=y*W+x;
+  if(alphaLockActive()){const oa=cel[i]>>>24;if(!oa)return;cel[i]=((oa<<24)|(blend(cel[i],px,alphaOf(px))&0xffffff))>>>0;return;}
+  cel[i]=blend(cel[i],px,alphaOf(px));}
 function plot(cel,x,y,px,erase){
-  if(erase){setPix(cel,x,y,0);if(mirrorX)setPix(cel,W-1-x,y,0);return;}
+  if(erase){if(alphaLockActive())return;setPix(cel,x,y,0);if(mirrorX)setPix(cel,W-1-x,y,0);return;}
   if(opacity>=255){setPix(cel,x,y,px);if(mirrorX)setPix(cel,W-1-x,y,px);}
   else{blendPlot(cel,x,y,px);if(mirrorX)blendPlot(cel,W-1-x,y,px);}
 }
@@ -1603,7 +1627,8 @@ function lineTo(cel,x0,y0,x1,y1,erase){
   }
 }
 function floodFill(cel,x,y){
-  if(!inBounds(x,y))return;const target=cel[y*W+x];const repl=withOpacity(color,opacity);
+  if(!inBounds(x,y))return;const target=cel[y*W+x];let repl=withOpacity(color,opacity);
+  if(alphaLockActive()){if(!(target>>>24))return;repl=(((target>>>24)<<24)|(repl&0xffffff))>>>0;}   // keep the alpha
   if(target===repl)return;const stack=[[x,y]];
   while(stack.length){const[cx,cy]=stack.pop();if(!inBounds(cx,cy)||!inSelection(cx,cy))continue;
     if(cel[cy*W+cx]!==target)continue;cel[cy*W+cx]=repl;stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);}
@@ -1726,7 +1751,7 @@ function commitShapeLayer(sh){
   rerenderShapeLayer();refreshTimeline();render();openShapeEditor();
 }
 function rerenderShapeLayer(){const L=doc.layers[activeLayer];if(!L||!L.shape)return;
-  const cel=newCel();rasterizeShape(cel,L.shape);doc.cels.set(celKey(L.id,activeFrame),cel);
+  const cel=newCel();rasterizeShape(cel,L.shape);doc.cels.set(celKeyFor(L,activeFrame),cel);
   render();updateCelThumb(activeLayer,activeFrame);}
 
 /* ---- Gradient fill (linear / radial): current colour → transparent ---- */
@@ -2032,7 +2057,7 @@ let floating=null, liftingMove=false;
 function moveTargets(){const L=doc.layers[activeLayer];if(!L)return [];
   if(!L.group)return L.adj?[]:[L];
   const ids=descendantIds(L.id);return doc.layers.filter(l=>ids.has(l.id)&&!l.group&&!l.adj&&l.visible&&!l.locked&&!effHidden(l));}
-function celOf(L,fi){const k=celKey(L.id,fi);let c=doc.cels.get(k);if(!c){c=newCel();doc.cels.set(k,c);}return c;}
+function celOf(L,fi){const k=celKeyFor(L,fi);let c=doc.cels.get(k);if(!c){c=newCel();doc.cels.set(k,c);}return c;}
 function updateThumbsFor(ids,fi){ids.forEach(id=>{const i=doc.layers.findIndex(l=>l.id===id);if(i>=0)updateCelThumb(i,fi);});}
 function cloneFloating(F){return Object.assign({},F,{fmask:F.fmask.slice(),origMask:F.origMask.slice(),
   parts:F.parts.map(P=>({lid:P.lid,buf:P.buf.slice(),base:P.base.slice(),orig:P.orig.slice()}))});}
@@ -2140,15 +2165,15 @@ function solve2(ux,uy,vx,vy,dx,dy){const det=ux*vy-uy*vx;if(Math.abs(det)<1e-6)r
 function xfCentroid(c){return {x:(c[0].x+c[1].x+c[2].x+c[3].x)/4,y:(c[0].y+c[1].y+c[2].y+c[3].y)/4};}
 function beginTransform(){
   if(!selection){toast('選択範囲がありません');return;}
-  if(doc.layers[activeLayer].group||doc.layers[activeLayer].adj){toast('グループ／調整レイヤーは変形できません。中のレイヤーを選んでください');return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
+  const targets=moveTargets();if(!targets.length){toast(doc.layers[activeLayer].group?'グループ内に変形できるレイヤーがありません':'このレイヤーは変形できません');return;}
   computeSelBounds();const{x0,y0,x1,y1}=selection.bounds;if(x1<0){toast('選択範囲が空です');return;}
   pushUndo();
-  const w=x1-x0+1,h=y1-y0+1,cel=activeCel(),m=selection.mask;
-  const srcBuf=new Uint32Array(w*h);
-  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])srcBuf[y*w+x]=cel[si];}
-  const base=cel.slice();for(let i=0;i<W*H;i++)if(m[i])base[i]=0;   // cut the floating selection
-  xf={srcW:w,srcH:h,srcBuf,base,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}]};
+  const w=x1-x0+1,h=y1-y0+1,m=selection.mask;
+  const parts=targets.map(T=>{const cel=celOf(T,activeFrame);const srcBuf=new Uint32Array(w*h);   // one patch per layer, moved as one
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])srcBuf[y*w+x]=cel[si];}
+    const base=cel.slice();for(let i=0;i<W*H;i++)if(m[i])base[i]=0;return {lid:T.id,srcBuf,base};});
+  xf={srcW:w,srcH:h,fi:activeFrame,parts,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}]};
   applyTransformRender();
   $('#xfBar').classList.add('show');$('#xfOverlay').classList.add('show');$('#xfBtn').classList.add('on');
   updateSelModVisible();drawXfOverlay();toast('変形：外側ドラッグで回転 / 長押しで反転・90°');
@@ -2166,11 +2191,11 @@ function inv3(m){const[a,b,c,d,e,f,g,h,i]=m;
   const A=e*i-f*h,B=-(d*i-f*g),C=d*h-e*g;const det=a*A+b*B+c*C;if(Math.abs(det)<1e-12)return null;const id=1/det;
   return [A*id,(c*h-b*i)*id,(b*f-c*e)*id, B*id,(a*i-c*g)*id,(c*d-a*f)*id, C*id,(b*g-a*h)*id,(a*e-b*d)*id];}
 // paint the floating buffer through the current quad onto the cut base; returns mask of painted pixels
-function xfStamp(cel,fillMask){
+function xfStamp(cel,srcBuf,fillMask){
   const inv=inv3(xfHomography(xf.corners));if(!inv)return;
   let minx=W,miny=H,maxx=0,maxy=0;for(const p of xf.corners){minx=Math.min(minx,p.x);miny=Math.min(miny,p.y);maxx=Math.max(maxx,p.x);maxy=Math.max(maxy,p.y);}
   minx=Math.max(0,Math.floor(minx));miny=Math.max(0,Math.floor(miny));maxx=Math.min(W-1,Math.ceil(maxx));maxy=Math.min(H-1,Math.ceil(maxy));
-  const{srcW,srcH,srcBuf}=xf;
+  const{srcW,srcH}=xf;
   for(let y=miny;y<=maxy;y++)for(let x=minx;x<=maxx;x++){const dx=x+0.5,dy=y+0.5;
     const wt=inv[6]*dx+inv[7]*dy+inv[8];if(!wt)continue;
     const u=(inv[0]*dx+inv[1]*dy+inv[2])/wt,v=(inv[3]*dx+inv[4]*dy+inv[5])/wt;
@@ -2178,7 +2203,8 @@ function xfStamp(cel,fillMask){
     const sx=Math.min(srcW-1,Math.max(0,Math.floor(u*srcW))),sy=Math.min(srcH-1,Math.max(0,Math.floor(v*srcH)));
     const px=srcBuf[sy*srcW+sx];if(px){cel[y*W+x]=px;if(fillMask)fillMask[y*W+x]=1;}}
 }
-function applyTransformRender(){const cel=activeCel();cel.set(xf.base);xfStamp(cel,null);render();}
+function xfEach(fn){xf.parts.forEach(P=>{const L=layerById(P.lid);if(L)fn(celOf(L,xf.fi),P);});}
+function applyTransformRender(){xfEach((cel,P)=>{cel.set(P.base);xfStamp(cel,P.srcBuf,null);});render();}
 function xfLocal(p){return {x:panX+p.x*zoom,y:panY+p.y*zoom};}
 function xfHandlePts(){const c=xf.corners.map(xfLocal);
   const mid=(p,q)=>({x:(p.x+q.x)/2,y:(p.y+q.y)/2});
@@ -2276,8 +2302,9 @@ function startXfDrag(hit,cx,cy){
   function up(){clearTimeout(lt);document.removeEventListener('pointermove',move);
     document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);}
-function commitTransform(){if(!xf)return;const cel=activeCel();cel.set(xf.base);const nm=selBuf();xfStamp(cel,nm);
-  selection={mask:nm};computeSelBounds();endTransformUI();render();updateCelThumb(activeLayer,activeFrame);toast('変形を適用');}
+function commitTransform(){if(!xf)return;const nm=selBuf();const ids=xf.parts.map(P=>P.lid);
+  xfEach((cel,P)=>{cel.set(P.base);xfStamp(cel,P.srcBuf,nm);});
+  selection={mask:nm};computeSelBounds();endTransformUI();render();updateCelThumb(activeLayer,activeFrame);updateThumbsFor(ids,activeFrame);toast('変形を適用');}
 function cancelTransform(){if(!xf)return;if(undoStack.length)restore(undoStack.pop());redoStack=lastClearedRedo;updateUndoUI();endTransformUI();render();toast('変形を取消');}
 function endTransformUI(){xf=null;$('#xfBar').classList.remove('show');$('#xfOverlay').classList.remove('show');$('#xfBtn').classList.remove('on');
   const cv=$('#xfOverlay');cv.getContext('2d').clearRect(0,0,cv.width,cv.height);updateSelModVisible();}
@@ -2514,29 +2541,15 @@ function attachLayerOpacityScrub(el,L){
 function thumbSize(){return {tw:Math.max(24,Math.min(120,Math.round(40*W/H))),th:40};}
 // A group's thumbnail is its live composite (visible children only, masks / opacity / adjustments
 // included), rendered straight at thumbnail resolution so it stays cheap on long animations.
-function compositeGroupThumb(parentId,fi,tw,th,map){
-  if(!map){map=new Int32Array(tw*th);for(let y=0;y<th;y++){const sy=Math.min(H-1,(y*H/th)|0);for(let x=0;x<tw;x++)map[y*tw+x]=sy*W+Math.min(W-1,(x*W/tw)|0);}}
-  const out=new Uint32Array(tw*th);
-  for(let li=0;li<doc.layers.length;li++){const L=doc.layers[li];if((L.parent||null)!==parentId||!L.visible)continue;
-    const mk=L.maskOn===false?null:getMask(L);
-    if(L.group){blendBufS(out,compositeGroupThumb(L.id,fi,tw,th,map),L.opacity,mk,null,map);continue;}
-    if(L.adj){const adjusted=out.slice();applyAdjustBuf(L.adj.type,L.adj.params,adjusted,null);const op=L.opacity;
-      for(let i=0;i<out.length;i++){const f=mk?op*mk[map[i]]/65025:op/255;if(f<=0)continue;const o=out[i],n=adjusted[i];if(f>=1){out[i]=n;continue;}
-        const or=o&255,og=(o>>8)&255,ob=(o>>16)&255,oa=(o>>>24)&255,nr=n&255,ng=(n>>8)&255,nb=(n>>16)&255;
-        out[i]=((oa<<24)|((ob+(nb-ob)*f|0)<<16)|((og+(ng-og)*f|0)<<8)|(or+(nr-or)*f|0))>>>0;}
-      continue;}
-    const cel=doc.cels.get(celKey(L.id,fi));if(!cel)continue;blendBufS(out,cel,L.opacity,mk,map,map);}
-  return out;}
-// blendBuf with index maps for src / mask (null = same resolution as dst)
-function blendBufS(dst,src,op,mk,srcMap,mkMap){
-  for(let i=0;i<dst.length;i++){const s=src[srcMap?srcMap[i]:i];const sa=(s>>>24)&255;if(!sa)continue;
-    const a=mk?Math.round(sa*op*mk[mkMap?mkMap[i]:i]/65025):Math.round(sa*op/255);if(!a)continue;dst[i]=blend(dst[i],s,a);}}
+function compositeGroupThumb(parentId,fi,tw,th){
+  const map=new Int32Array(tw*th);for(let y=0;y<th;y++){const sy=Math.min(H-1,(y*H/th)|0);for(let x=0;x<tw;x++)map[y*tw+x]=sy*W+Math.min(W-1,(x*W/tw)|0);}
+  const out=new Uint32Array(tw*th);compositeScope(parentId,fi,out,1,map,null);return out;}
 function drawCelThumb(ctx,layerId,fi){const L=layerById(layerId),cv=ctx.canvas;
   if(L&&L.group){const{tw,th}=thumbSize();if(cv.width!==tw||cv.height!==th){cv.width=tw;cv.height=th;}
     ctx.clearRect(0,0,tw,th);const buf=compositeGroupThumb(L.id,fi,tw,th);
     ctx.putImageData(new ImageData(new Uint8ClampedArray(buf.buffer),tw,th),0,0);return;}
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
-  ctx.clearRect(0,0,W,H);const cel=doc.cels.get(celKey(layerId,fi));if(!cel)return;
+  ctx.clearRect(0,0,W,H);const cel=doc.cels.get(L?celKeyFor(L,fi):celKey(layerId,fi));if(!cel)return;
   ctx.putImageData(new ImageData(new Uint8ClampedArray(cel.slice().buffer),W,H),0,0);
 }
 // Layer-name column width (finger/mouse resizable via the corner grip)
@@ -2615,16 +2628,20 @@ function refreshTimeline(){
     const isGroup=!!L.group,depth=layerDepth(L),isChild=depth>0,isAdj=!!L.adj;
     const row=document.createElement('div');row.className='tl-row';
     const head=document.createElement('div');
-    head.className='tl-lhead'+(li===activeLayer?' active':'')+(selLayers.has(li)?' sel':'')+(isChild?' child':'')+(isGroup?' group':'');head.dataset.li=li;
+    head.className='tl-lhead'+(li===activeLayer?' active':'')+(selLayers.has(li)?' sel':'')+(isChild?' child':'')+(isGroup?' group':'')
+      +(L.clip?' clip':'')+(L.passThrough?' pass':'')+(L.linked?' linked':'');head.dataset.li=li;
+    if(L.color)head.style.setProperty('--lbl',L.color);
     head.innerHTML=`<span class="tree" style="width:${depth*14}px"></span><span class="grip" title="ドラッグで並べ替え">⠿</span>`+
       (isGroup?`<button class="lbtn collapse" title="開閉">${L.collapsed?'▸':'▾'}</button>`:'')+
       `<button class="lbtn eye" title="表示/非表示">${L.visible?'👁':'🚫'}</button>`+
       `<button class="lbtn opac" title="不透明度（押しながら左右）">◐</button>`+
-      `<button class="lbtn lock${L.locked?' on':''}" title="${L.locked?'ロック中（タップで解除）':'ロック'}">${L.locked?'🔒':'🔓'}</button>`+
+      `<button class="lbtn lock${L.locked?' on':''}${L.alphaLock?' alpha':''}" title="${L.locked?'ロック中（タップで解除）':'ロック'}／長押し：透明部分を保護">${L.locked?'🔒':L.alphaLock?'◪':'🔓'}</button>`+
       `<span class="lname" title="ダブルタップで名前変更">${isGroup?'<span class="fico'+(L.collapsed?' closed':'')+'"></span>':isAdj?'🎨 ':''}${L.name}</span>`;
     head.querySelector('.grip').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();beginReorder('layer',head,e);});
     head.querySelector('.eye').onclick=e=>{e.stopPropagation();L.visible=!L.visible;refreshTimeline();render();};
-    head.querySelector('.lock').onclick=e=>{e.stopPropagation();L.locked=!L.locked;refreshTimeline();};
+    bindLongPress(head.querySelector('.lock'),()=>{L.locked=!L.locked;refreshTimeline();},
+      ()=>[{icon:L.locked?'🔓':'🔒',label:L.locked?'ロック解除':'ロック',fn:()=>{L.locked=!L.locked;refreshTimeline();}},
+           {icon:'◪',label:L.alphaLock?'保護解除':'透明保護',fn:()=>toggleAlphaLock(li)}]);
     const cb=head.querySelector('.collapse');if(cb)cb.onclick=e=>{e.stopPropagation();L.collapsed=!L.collapsed;refreshTimeline();};
     attachLayerOpacityScrub(head.querySelector('.opac'),L);   // opacity now lives on its own button
     const ln=head.querySelector('.lname');
@@ -2689,22 +2706,22 @@ function bindTimelineItem(el,kind,idx){
 }
 // Photoshop-style "load selection from transparency": Ctrl-click a cel (tablet: hold/lock ＋ or − and tap)
 function loadCelSelection(li,fi,mode){const L=doc.layers[li];if(!L||L.group||L.adj){toast('画像のあるレイヤーで使えます');return;}
-  const c=doc.cels.get(celKey(L.id,fi));const shp=selBuf();let n=0;
+  const c=doc.cels.get(celKeyFor(L,fi));const shp=selBuf();let n=0;
   if(c)for(let i=0;i<W*H;i++)if(c[i]>>>24){shp[i]=1;n++;}
   if(!n&&mode!=='subtract'){toast('このセルに画像がありません');return;}
   pushUndo();applyShape(shp,mode);if(selection)computeSelBounds();
   render();updateSelModVisible();toast(mode==='add'?'画像の範囲を追加':mode==='subtract'?'画像の範囲を除外':'画像の範囲を選択');}
 /* ---- Cel (layer×frame) clipboard: copy / paste / clear exactly ONE cel ---- */
 let celClip=null;   // {W,H,data} — shared across tabs
-function copyCel(li,fi){const L=doc.layers[li];if(!L)return;const c=doc.cels.get(celKey(L.id,fi));
+function copyCel(li,fi){const L=doc.layers[li];if(!L)return;const c=doc.cels.get(celKeyFor(L,fi));
   celClip={W,H,data:c?c.slice():new Uint32Array(W*H)};toast('セルをコピー');}
 function pasteCel(li,fi){if(!celClip){toast('コピーされたセルがありません');return;}
   const L=doc.layers[li];if(!L||L.group||L.adj){toast('このレイヤーには貼り付けできません');return;}
   if(L.locked){toast('レイヤーがロックされています');return;}
-  pushUndo();const cel=newCel();blitClip(cel,celClip.data,celClip.W,celClip.H);doc.cels.set(celKey(L.id,fi),cel);
+  pushUndo();const cel=newCel();blitClip(cel,celClip.data,celClip.W,celClip.H);doc.cels.set(celKeyFor(L,fi),cel);
   render();updateCelThumb(li,fi);toast('セルに貼り付け');}
 function clearCelAt(li,fi){const L=doc.layers[li];if(!L)return;if(L.locked){toast('レイヤーがロックされています');return;}
-  pushUndo();doc.cels.set(celKey(L.id,fi),newCel());render();updateCelThumb(li,fi);toast('セルを消去');}
+  pushUndo();doc.cels.set(celKeyFor(L,fi),newCel());render();updateCelThumb(li,fi);toast('セルを消去');}
 function openCelRadial(li,fi,cx,cy){showRadial(cx,cy,[
   {icon:'📋',label:'コピー',fn:()=>copyCel(li,fi)},
   {icon:'📥',label:'貼付',fn:()=>pasteCel(li,fi)},
@@ -2764,9 +2781,9 @@ function openRadial(kind,idx,cx,cy){
       {icon:'📥',label:'貼付',fn:pasteLayers},
       {icon:'⬇',label:'結合',fn:mergeLayersSel},
       {icon:'◐',label:'マスク',fn:()=>addLayerMask(idx)},
+      {icon:'⋯',label:'その他',fn:()=>openLayerMoreRadial(idx,cx,cy)},
     ];
     if(selLayers.size>=2)items.splice(2,0,{icon:'🗂',label:'グループ化',fn:groupLayersSel});
-    const L=doc.layers[idx];if(L&&L.group)items.push({icon:'📂',label:'解除',fn:()=>ungroupLayer(idx)});
     showRadial(cx,cy,items,refreshTimeline);return;
   }
   items = [
@@ -2779,6 +2796,32 @@ function openRadial(kind,idx,cx,cy){
   ];
   showRadial(cx,cy,items,refreshTimeline);
 }
+// second ring of the layer menu: per-layer switches that don't fit the main ring
+function openLayerMoreRadial(idx,cx,cy){const L=doc.layers[idx];if(!L)return;const items=[];
+  items.push({icon:'📸',label:'結合コピー',fn:stampVisible});
+  if(!L.group)items.push({icon:'⤵',label:L.clip?'クリップ解除':'下にクリップ',fn:()=>toggleClip(idx)});
+  else items.push({icon:'⇅',label:L.passThrough?'通過OFF':'通過ON',fn:()=>{pushUndo();L.passThrough=!L.passThrough;refreshTimeline();render();toast(L.passThrough?'通過：グループ内の調整が下にも効く':'通過OFF');}});
+  if(!L.group&&!L.adj)items.push({icon:'🔗',label:L.linked?'共通解除':'全F共通',fn:()=>toggleLinked(idx)});
+  items.push({icon:'🏷',label:'色ラベル',fn:()=>openLabelRadial(idx,cx,cy)});
+  if(L.group)items.push({icon:'📂',label:'解除',fn:()=>ungroupLayer(idx)});
+  showRadial(cx,cy,items,refreshTimeline);}
+const LABEL_COLORS=['#e0596b','#f0883e','#ffcd75','#41c98a','#5b8cff','#b07cff','#9aa3b2'];
+function openLabelRadial(idx,cx,cy){const L=doc.layers[idx];if(!L)return;
+  const items=LABEL_COLORS.map(c=>({icon:'<span style="color:'+c+'">●</span>',label:'',fn:()=>{L.color=c;refreshTimeline();}}));
+  items.push({icon:'✕',label:'なし',fn:()=>{delete L.color;refreshTimeline();}});
+  showRadial(cx,cy,items,refreshTimeline);}
+function toggleClip(idx){const L=doc.layers[idx];if(!L||L.group)return;pushUndo();L.clip=!L.clip;refreshTimeline();render();
+  toast(L.clip?'下のレイヤーでクリップ':'クリップ解除');}
+function toggleLinked(idx){const L=doc.layers[idx];if(!L||L.group||L.adj)return;pushUndo();setLinked(L,!L.linked);refreshTimeline();render();
+  toast(L.linked?'全フレーム共通のセルにしました（今のフレームの絵を使用）':'フレームごとのセルに戻しました');}
+function toggleAlphaLock(idx){const L=doc.layers[idx];if(!L||L.group||L.adj)return;L.alphaLock=!L.alphaLock;refreshTimeline();
+  toast(L.alphaLock?'透明部分を保護：描いた部分にだけ塗れます':'透明部分の保護を解除');}
+// 表示中のレイヤーを結合コピー: a new layer holding what is currently visible (every frame)
+function stampVisible(){pushUndo();const cur=doc.layers[activeLayer];
+  const nl={id:uid(),name:'結合コピー',visible:true,opacity:255,locked:false};if(cur&&cur.parent)nl.parent=cur.parent;
+  doc.layers.splice(activeLayer+1,0,nl);
+  doc.frames.forEach((f,fi)=>doc.cels.set(celKey(nl.id,fi),compositeGroup(null,fi)));
+  activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();toast('表示中のレイヤーを結合コピーしました');}
 /* ---- Animation tags (named frame ranges, loop / ping-pong playback) ---- */
 const TAG_COLORS=['#e0596b','#ffcd75','#41c98a','#5b8cff','#b13e53','#38b764','#41a6f6','#a7f070'];
 function createTagFromSel(){const fs=[...selFrames].sort((a,b)=>a-b);if(!fs.length)return;
@@ -2800,7 +2843,7 @@ function deleteTag(ti){if(!doc.tags[ti])return;doc.tags.splice(ti,1);
 function playTag(ti,dir){if(!doc.tags[ti])return;doc.tags[ti].dir=dir;activeTag=ti;
   if(playing)stopPlay();startPlayback();refreshTimeline();}
 function showRadial(px,py,items,afterClose){
-  const n=items.length, R=94, pad=R+46;
+  const n=items.length, R=Math.max(94,Math.round(n*70/(2*Math.PI))+6), pad=R+46;
   // clamp the menu centre so every item stays on-screen (even near an edge)
   const cx=Math.max(pad,Math.min(innerWidth-pad,px));
   const cy=Math.max(pad,Math.min(innerHeight-pad,py));
@@ -2830,10 +2873,11 @@ function showRadial(px,py,items,afterClose){
   // not a scroll — so touchmove is cancelled (non-passive) and read directly, and touchend closes.
   // Without this iOS turns a sideways slide into a scroll, fires pointercancel and the item is lost.
   const tmove=ev=>{ev.preventDefault();const t=ev.touches[0];if(t)pick(t.clientX,t.clientY);};
-  const finish=()=>{if(done)return;done=true;
+  const finish=ev=>{if(done)return;done=true;
+    if(hi<0&&ev&&ev.clientX!=null)pick(ev.clientX,ev.clientY);   // a plain tap on an item (menus opened from a menu)
     document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);
     document.removeEventListener('pointercancel',onCancel);document.removeEventListener('touchmove',tmove);
-    document.removeEventListener('touchend',finish);document.removeEventListener('touchcancel',finish);
+    document.removeEventListener('touchend',tend);document.removeEventListener('touchcancel',tend);
     wrap.remove();guard.remove();
     justDragged=true;setTimeout(()=>justDragged=false,220);   // the click that follows the release must not re-target a cel
     if(hi>=0)items[hi].fn();
@@ -2842,7 +2886,8 @@ function showRadial(px,py,items,afterClose){
   // listeners keep tracking the finger and touchend / the next release finishes it.
   const onCancel=()=>{};
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',finish);document.addEventListener('pointercancel',onCancel);
-  document.addEventListener('touchmove',tmove,{passive:false});document.addEventListener('touchend',finish);document.addEventListener('touchcancel',finish);
+  const tend=ev=>{const t=ev.changedTouches&&ev.changedTouches[0];finish(t?{clientX:t.clientX,clientY:t.clientY}:null);};
+  document.addEventListener('touchmove',tmove,{passive:false});document.addEventListener('touchend',tend);document.addEventListener('touchcancel',tend);
   setHi(-1);
 }
 
@@ -2852,7 +2897,8 @@ function blitClip(dst,src,sw,sh){if(sw===W&&sh===H){dst.set(src);return;}
 function dupLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);pushUndo();
   idxs.forEach(li=>{const src=doc.layers[li];const nl={id:uid(),name:src.name+' コピー',visible:true,opacity:src.opacity,locked:false};
     if(src.adj)nl.adj=JSON.parse(JSON.stringify(src.adj));if(src.parent)nl.parent=src.parent;
-    doc.layers.splice(li+1,0,nl);doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});
+    ['linked','clip','alphaLock','color','passThrough','group','collapsed'].forEach(k=>{if(src[k]!==undefined)nl[k]=src[k];});
+    doc.layers.splice(li+1,0,nl);celKeysOf(src).forEach((k,i)=>{const c=doc.cels.get(k);if(c)doc.cels.set(src.linked?nl.id+':link':celKey(nl.id,i),c.slice());});
     const mk=getMask(src);if(mk){setMask(nl,mk.slice());if(src.maskOn===false)nl.maskOn=false;}});
   activeLayer=Math.min(activeLayer+1,doc.layers.length-1);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを複製');}
 function deleteLayersSel(){
@@ -2862,7 +2908,7 @@ function deleteLayersSel(){
   const remaining=doc.layers.filter(l=>!ids.has(l.id));
   if(!remaining.some(l=>!l.group&&!l.adj)){toast('全レイヤーは削除できません');return;}
   pushUndo();
-  doc.layers.filter(l=>ids.has(l.id)).forEach(L=>{doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));setMask(L,null);});
+  doc.layers.filter(l=>ids.has(l.id)).forEach(L=>{celKeysOf(L).forEach(k=>doc.cels.delete(k));setMask(L,null);});
   doc.layers=remaining;
   activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤー削除');}
 /* ---- Layer groups (single level: a group header + its contiguous children) ---- */
@@ -2888,7 +2934,7 @@ function ungroupLayer(idx){const g=doc.layers[idx];if(!g||!g.group)return;pushUn
   doc.layers.splice(idx,1);activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('グループ解除');}
 function copyLayersSel(){const idxs=[...selLayers].sort((a,b)=>a-b);
   layerClip=idxs.map(li=>{const L=doc.layers[li];return {name:L.name,opacity:L.opacity,visible:L.visible,locked:L.locked,W,H,
-    cels:doc.frames.map((f,fi)=>{const c=doc.cels.get(celKey(L.id,fi));return c?c.slice():null;})};});
+    cels:doc.frames.map((f,fi)=>{const c=doc.cels.get(celKeyFor(L,fi));return c?c.slice():null;})};});
   toast(idxs.length+'レイヤーをコピー');}
 function pasteLayers(){if(!layerClip||!layerClip.length){toast('コピーされたレイヤーがありません');return;}
   pushUndo();const at=activeLayer;
@@ -2899,6 +2945,7 @@ function pasteLayers(){if(!layerClip||!layerClip.length){toast('コピーされ�
 function mergeLayersSel(){let idxs=[...selLayers].sort((a,b)=>a-b);
   if(idxs.length<2){if(activeLayer===0){toast('下にレイヤーがありません');return;}idxs=[activeLayer-1,activeLayer];}
   pushUndo();const bottom=idxs[0],bot=doc.layers[bottom];
+  idxs.forEach(i=>setLinked(doc.layers[i],false));   // a merge works frame by frame: unlink first
   if(getMask(bot))applyMaskSilent(bot);   // masks are baked in by a merge (as in Photoshop)
   doc.frames.forEach((f,fi)=>{let bcel=doc.cels.get(celKey(bot.id,fi));
     for(let k=1;k<idxs.length;k++){const top=doc.layers[idxs[k]];const tc=doc.cels.get(celKey(top.id,fi));if(!tc)continue;
@@ -2911,7 +2958,7 @@ function mergeLayersSel(){let idxs=[...selLayers].sort((a,b)=>a-b);
 
 /* ---- Multi-aware frame ops ---- */
 function insertFrameAt(pos,fc){const nm=new Map();
-  doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);nm.set(f>=pos?(lid+':'+(f+1)):k,v);});doc.cels=nm;
+  doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);nm.set(!isNaN(f)&&f>=pos?(lid+':'+(f+1)):k,v);});doc.cels=nm;
   doc.frames.splice(pos,0,{id:uid(),duration:fc?fc.duration:125});
   if(fc)doc.layers.forEach((L,li)=>{const src=fc.cels[li];if(src){const cel=newCel();blitClip(cel,src,fc.W,fc.H);doc.cels.set(celKey(L.id,pos),cel);}});}
 function dupFramesSel(){const idxs=[...selFrames].sort((a,b)=>b-a);pushUndo();
@@ -3031,6 +3078,7 @@ function moveFrame(from,to){
   const [m]=order.splice(from,1);order.splice(to,0,m);
   const newCels=new Map();
   doc.layers.forEach(L=>order.forEach((oldIdx,ni)=>{const c=doc.cels.get(L.id+':'+oldIdx);if(c)newCels.set(L.id+':'+ni,c);}));
+  doc.cels.forEach((v,k)=>{if(k.endsWith(':link'))newCels.set(k,v);});   // shared cels are frame-independent
   doc.cels=newCels;doc.frames=order.map(oi=>doc.frames[oi]);
   activeFrame=to;refreshTimeline();render();toast('フレームを移動');
 }
@@ -3059,13 +3107,14 @@ function addLayer(){pushUndo();doc.layers.splice(activeLayer+1,0,{id:uid(),name:
 function dupLayerFn(){pushUndo();const src=doc.layers[activeLayer];
   const nl={id:uid(),name:src.name+' コピー',visible:true,opacity:src.opacity,locked:false};
   doc.layers.splice(activeLayer+1,0,nl);
-  doc.frames.forEach((f,fi)=>{const c=doc.cels.get(celKey(src.id,fi));if(c)doc.cels.set(celKey(nl.id,fi),c.slice());});
+  ['linked','clip','alphaLock','color','passThrough'].forEach(k=>{if(src[k]!==undefined)nl[k]=src[k];});
+  celKeysOf(src).forEach((k,i)=>{const c=doc.cels.get(k);if(c)doc.cels.set(src.linked?nl.id+':link':celKey(nl.id,i),c.slice());});
   activeLayer++;refreshTimeline();render();}
 function delLayerFn(){if(doc.layers.length<=1){toast('最後のレイヤーは削除できません');return;}
-  pushUndo();const L=doc.layers[activeLayer];doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));
+  pushUndo();const L=doc.layers[activeLayer];celKeysOf(L).forEach(k=>doc.cels.delete(k));
   doc.layers.splice(activeLayer,1);activeLayer=Math.max(0,activeLayer-1);refreshTimeline();render();}
 function mergeLayerFn(){if(activeLayer===0){toast('下にレイヤーがありません');return;}
-  pushUndo();const top=doc.layers[activeLayer],bot=doc.layers[activeLayer-1];
+  pushUndo();const top=doc.layers[activeLayer],bot=doc.layers[activeLayer-1];setLinked(top,false);setLinked(bot,false);
   doc.frames.forEach((f,fi)=>{const tc=doc.cels.get(celKey(top.id,fi));if(!tc)return;
     let bcel=doc.cels.get(celKey(bot.id,fi));if(!bcel){bcel=newCel();doc.cels.set(celKey(bot.id,fi),bcel);}
     for(let i=0;i<tc.length;i++){const s=tc[i];const sa=Math.round(((s>>>24)&255)*top.opacity/255);if(sa)bcel[i]=blend(bcel[i],s,sa);}
@@ -3075,9 +3124,9 @@ function mergeLayerFn(){if(activeLayer===0){toast('下にレイヤーがあり�
 /* Frame ops */
 function reindexAfterDelete(delIdx){const nm=new Map();
   doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);
-    if(f<delIdx)nm.set(k,v);else if(f>delIdx)nm.set(lid+':'+(f-1),v);});doc.cels=nm;}
+    if(isNaN(f)||f<delIdx)nm.set(k,v);else if(f>delIdx)nm.set(lid+':'+(f-1),v);});doc.cels=nm;}
 function duplicateFrame(fi){pushUndo();const src=doc.frames[fi];const nm=new Map();
-  doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);if(f<=fi)nm.set(k,v);else nm.set(lid+':'+(f+1),v);});
+  doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);if(isNaN(f)||f<=fi)nm.set(k,v);else nm.set(lid+':'+(f+1),v);});
   doc.layers.forEach(L=>{const c=nm.get(celKey(L.id,fi));if(c)nm.set(celKey(L.id,fi+1),c.slice());});
   doc.cels=nm;doc.frames.splice(fi+1,0,{id:uid(),duration:src.duration});activeFrame=fi+1;refreshTimeline();render();}
 function deleteFrame(fi){if(doc.frames.length<=1){toast('最後のフレームは削除不可');return;}
@@ -3633,6 +3682,7 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&k==='c'&&selection){e.preventDefault();copySelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='v'&&pixClip){e.preventDefault();pasteSelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='s'){e.preventDefault();saveProjectOverwrite();return;}
+  if((e.ctrlKey||e.metaKey)&&e.shiftKey&&(k==='e'||e.code==='KeyE')){e.preventDefault();stampVisible();return;}   // 表示レイヤーを結合コピー
   // Photoshop selection shortcuts: Ctrl+T 変形 / Shift+Ctrl+I 反転 / Alt+S, D (Select menu → Deselect) 解除
   const code=e.code||'';   // Option+S / +D type ß / ∂ on macOS, so match the physical key too
   if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(k==='t'||code==='KeyT')){e.preventDefault();if(!xf)beginTransform();return;}
@@ -4339,7 +4389,7 @@ async function exportAse(){
   // compress every cel's raw RGBA (our Uint32Array bytes are already R,G,B,A in memory)
   const comp=new Map();
   for(const L of doc.layers)for(let f=0;f<nF;f++){
-    const c=doc.cels.get(celKey(L.id,f));
+    const c=doc.cels.get(celKeyFor(L,f));
     const raw=c?new Uint8Array(c.buffer):new Uint8Array(W*H*4);
     comp.set(L.id+':'+f,await deflateZlib(raw));
   }

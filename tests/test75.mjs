@@ -68,11 +68,11 @@ const Dc=await page.evaluate(()=>{T.setup();activeLayer=T.gi();T.rect(2,2,2,2);c
 ok('copy from a group takes its composite; delete clears only visible children',Dc.clip&&Dc.red&&Dc.green&&Dc.blue);
 
 const Gd=await page.evaluate(()=>{T.setup();activeLayer=T.gi();T.rect(1,1,2,2);const n=doc.cels.size;
-  beginTransform();const noXf=!xf;pixClip={w:1,h:1,x:0,y:0,data:new Uint32Array([T.R])};pasteSelectionPixels();
+  beginTransform();const grpXf=!!xf&&xf.parts.length===2;cancelTransform();pixClip={w:1,h:1,x:0,y:0,data:new Uint32Array([T.R])};pasteSelectionPixels();
   setTool('pencil');const c=T.C(0,0);stage.dispatchEvent(new PointerEvent('pointerdown',{pointerId:2,pointerType:'mouse',isPrimary:true,button:0,buttons:1,clientX:c.x,clientY:c.y,bubbles:true}));
   stage.dispatchEvent(new PointerEvent('pointerup',{pointerId:2,pointerType:'mouse',isPrimary:true,button:0,buttons:0,clientX:c.x,clientY:c.y,bubbles:true}));
-  return {noXf,noGroupCel:!doc.cels.has(celKey(doc.layers[T.gi()].id,0)),same:doc.cels.size===n};});
-ok('transform / paste / paint on a group are refused and never create a stray group cel',Gd.noXf&&Gd.noGroupCel&&Gd.same);
+  return {grpXf,noGroupCel:!doc.cels.has(celKey(doc.layers[T.gi()].id,0)),same:doc.cels.size===n};});
+ok('transform on a group targets its children; paste / paint on a group are refused and never create a stray group cel',Gd.grpXf&&Gd.noGroupCel&&Gd.same);
 
 console.log('ERRORS:',errors.length?JSON.stringify(errors):'none');
 await b.close();server.close();process.exit(errors.length||fails?1:0);
