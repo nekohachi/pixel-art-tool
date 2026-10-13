@@ -27,7 +27,7 @@ ok('with a mask present the same item becomes マスク編集 and enters mask ed
 
 // Ctrl+click on the mask thumb → selection from the mask; Shift+Ctrl adds; tablet lock ＋ works too
 await page.waitForTimeout(300);   // the radial's post-release click guard (220ms)
-const B=await page.evaluate(()=>{const mv=()=>$('#tlGrid .tl-cell[data-l="0"][data-f="0"] canvas.mthumb');
+const B=await page.evaluate(()=>{const mv=()=>$('#tlGrid .tl-cell[data-l="0"][data-f="1"] canvas.mthumb');activeFrame=1;selFrames=new Set([1]);refreshTimeline();
   selection=null;mv().dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
   const out={sel:!!selection&&selection.mask[0]===1&&selection.mask[40]===0,notEditing:maskEdit===null};
   selection={mask:selBuf()};selection.mask[63]=1;computeSelBounds();mv().dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true,shiftKey:true}));

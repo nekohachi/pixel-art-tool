@@ -68,11 +68,12 @@ const Lb=await page.evaluate(()=>new Promise(res=>{newDoc(8,8);openLabelRadial(0
 ok('色ラベル: tapping a colour in the sub-menu labels the row (band shown)',Lb.n===8&&Lb.color===Lb.expect&&Lb.band===Lb.expect&&Lb.closed);
 
 // 7) group transform moves every visible child
-const Gt=await page.evaluate(()=>{newDoc(8,8);addLayer();getCel(1,0)[2*8+1]=T.R;addLayer();getCel(2,0)[5*8+1]=T.B;selLayers=new Set([1,2]);groupLayersSel();
+// (the box hugs the opaque pixels of all children: red at x=1, blue at x=6 → box x 1..6, so a flip swaps them)
+const Gt=await page.evaluate(()=>{newDoc(8,8);addLayer();getCel(1,0)[2*8+1]=T.R;addLayer();getCel(2,0)[5*8+6]=T.B;selLayers=new Set([1,2]);groupLayersSel();
   selection={mask:selBuf()};for(let i=0;i<64;i++)selection.mask[i]=1;computeSelBounds();beginTransform();const parts=xf?xf.parts.length:0;
   xfFlip(true);commitTransform();const r=doc.layers.find(l=>l.name==='レイヤー 2'),bl=doc.layers.find(l=>l.name==='レイヤー 3');
   const rc=doc.cels.get(celKey(r.id,0)),bc=doc.cels.get(celKey(bl.id,0));
-  return {parts,red:(rc[2*8+6]>>>0)===T.R&&rc[2*8+1]===0,blue:(bc[5*8+6]>>>0)===T.B,noGroupCel:!doc.cels.has(celKey(doc.layers[activeLayer].id,0))};});
+  return {parts,red:(rc[2*8+6]>>>0)===T.R&&rc[2*8+1]===0,blue:(bc[5*8+1]>>>0)===T.B&&bc[5*8+6]===0,noGroupCel:!doc.cels.has(celKey(doc.layers[activeLayer].id,0))};});
 ok('Ctrl+T on a group transforms every visible child together (flip moved both pixels)',Gt.parts===2&&Gt.red&&Gt.blue&&Gt.noGroupCel);
 
 // 8) menus: main ring has その他; sub ring lists the new switches; lock long-press offers 透明保護

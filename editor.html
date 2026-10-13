@@ -1031,75 +1031,125 @@ function getCel(layerIdx,frameIdx){
   let c=doc.cels.get(k); if(!c){c=newCel();doc.cels.set(k,c);} return c;
 }
 // while editing a layer mask, every paint op targets the grey mask buffer instead of the cel
-function activeCel(){if(maskEdit!==null&&maskBuf&&doc.layers[activeLayer]&&doc.layers[activeLayer].id===maskEdit)return maskBuf;
+function activeCel(){if(maskEdit!==null&&maskBuf&&doc.layers[activeLayer]&&doc.layers[activeLayer].id===maskEdit&&maskEditFi===activeFrame)return maskBuf;
   return getCel(activeLayer,activeFrame);}
 
-/* ================= Layer masks (Photoshop-style, one per layer, all frames) ================= */
-// doc.masks: Map layerId -> Uint8Array(W*H), 255 = visible. Stored beside the cels, never inside the layer JSON.
-let maskEdit=null, maskBuf=null;   // layer id being painted + its grey Uint32 working buffer
+/* ================= Layer masks (Photoshop-style, one per layer×frame) ================= */
+// doc.masks: Map "layerId:frame" -> Uint8Array(W*H), 255 = visible. Stored beside the cels, never inside the layer JSON.
+// A mask belongs to one cel (layer × frame). The layer menu operates on every frame at once; the cel /
+// mask-thumb menus on that frame only. Old projects (one mask per layer) are copied to every frame on load.
+let maskEdit=null, maskEditFi=0, maskBuf=null;   // layer id + frame being painted, and its grey Uint32 working buffer
 // keys are always strings: layer ids are numbers in memory but come back as strings from JSON / snapshots
-function getMask(L){return (doc.masks&&L)?(doc.masks.get(String(L.id))||null):null;}
-function setMask(L,m){if(!doc.masks)doc.masks=new Map();if(m)doc.masks.set(String(L.id),m);else doc.masks.delete(String(L.id));}
+function maskKey(L,fi){return String(L.id)+':'+fi;}
+function getMask(L,fi){if(fi===undefined)fi=activeFrame;return (doc.masks&&L)?(doc.masks.get(maskKey(L,fi))||null):null;}
+function setMask(L,fi,m){if(arguments.length<3){m=fi;fi=activeFrame;}if(!doc.masks)doc.masks=new Map();
+  if(m)doc.masks.set(maskKey(L,fi),m);else doc.masks.delete(maskKey(L,fi));}
+function maskFramesOf(L){const out=[];if(!doc.masks||!L)return out;const pre=String(L.id)+':';
+  doc.masks.forEach((v,k)=>{if(k.startsWith(pre)){const f=+k.slice(pre.length);if(f>=0&&f<doc.frames.length)out.push(f);}});return out.sort((a,b)=>a-b);}
+function layerHasMask(L){return maskFramesOf(L).length>0;}
+function clearMasks(L){maskFramesOf(L).forEach(fi=>setMask(L,fi,null));}
+// old projects stored one mask per layer under the bare layer id: spread it over every frame
+function migrateMasks(d){if(!d||!d.masks||!d.frames)return;const nm=new Map();let moved=false;
+  d.masks.forEach((v,k)=>{if(String(k).indexOf(':')>=0){nm.set(String(k),v);return;}moved=true;d.frames.forEach((f,fi)=>nm.set(k+':'+fi,fi?v.slice():v));});
+  if(moved)d.masks=nm;}
+// frame insert / delete / reorder: masks follow their frame like cels do. fn(oldFi) -> newFi, or -1 to drop
+function remapMasks(fn){if(!doc.masks||!doc.masks.size)return;const nm=new Map();
+  doc.masks.forEach((v,k)=>{const i=k.lastIndexOf(':');const f=+k.slice(i+1);if(isNaN(f)){nm.set(k,v);return;}
+    const nf=fn(f);if(nf>=0)nm.set(k.slice(0,i+1)+nf,v);});doc.masks=nm;}
 function grey32(v){return ((255<<24)|(v<<16)|(v<<8)|v)>>>0;}
-function maskBufFromMask(){const L=doc.layers.find(l=>l.id===maskEdit);const mk=L&&getMask(L);
+function maskBufFromMask(){const L=doc.layers.find(l=>l.id===maskEdit);const mk=L&&getMask(L,maskEditFi);
   if(!mk){maskEdit=null;maskBuf=null;return;}
   maskBuf=new Uint32Array(W*H);for(let i=0;i<W*H;i++)maskBuf[i]=grey32(mk[i]);}
 // paint → mask: luminance × alpha (white / any colour = show, black or erased = hide, greys = partial)
-function syncMaskFromBuf(){if(maskEdit===null||!maskBuf)return;const L=doc.layers.find(l=>l.id===maskEdit);const mk=L&&getMask(L);
+function syncMaskFromBuf(){if(maskEdit===null||!maskBuf)return;const L=doc.layers.find(l=>l.id===maskEdit);const mk=L&&getMask(L,maskEditFi);
   if(!mk||maskBuf.length!==mk.length){maskEdit=null;maskBuf=null;return;}
   for(let i=0;i<mk.length;i++){const p=maskBuf[i],a=p>>>24;if(!a){mk[i]=0;maskBuf[i]=grey32(0);continue;}
     const v=Math.round((0.299*(p&255)+0.587*((p>>8)&255)+0.114*((p>>16)&255))*a/255);mk[i]=v;maskBuf[i]=grey32(v);}}
-function enterMaskEdit(li){const L=doc.layers[li];if(!L||!getMask(L))return;
+function enterMaskEdit(li,fi){const L=doc.layers[li];if(fi===undefined)fi=activeFrame;if(!L||!getMask(L,fi))return;
   if(maskEdit!==null)syncMaskFromBuf();
-  activeLayer=li;selLayers=new Set([li]);maskEdit=L.id;maskBufFromMask();
-  refreshTimeline();render();toast('マスク編集：描く＝表示 / 消す・黒＝隠す');}
+  activeLayer=li;selLayers=new Set([li]);activeFrame=fi;selFrames=new Set([fi]);maskEdit=L.id;maskEditFi=fi;maskBufFromMask();
+  refreshTimeline();render();toast('マスク編集（フレーム '+(fi+1)+'）：描く＝表示 / 消す・黒＝隠す');}
 function exitMaskEdit(){if(maskEdit===null)return;syncMaskFromBuf();maskEdit=null;maskBuf=null;refreshTimeline();render();}
-// keep the edit state honest after any structural change (layer gone, other layer picked, mask removed)
+// keep the edit state honest after any structural change (layer gone, other layer picked, mask removed,
+// frame changed: follow the frame when it has a mask of its own, otherwise leave mask editing)
 function checkMaskEdit(){if(maskEdit===null)return;const L=doc.layers[activeLayer];
-  if(!L||L.id!==maskEdit||!getMask(L)){maskEdit=null;maskBuf=null;}}
-function addLayerMask(li){const L=doc.layers[li];if(!L)return;
+  if(!L||L.id!==maskEdit){maskEdit=null;maskBuf=null;return;}
+  if(activeFrame!==maskEditFi){if(getMask(L,maskEditFi))syncMaskFromBuf();
+    if(getMask(L,activeFrame)){maskEditFi=activeFrame;maskBufFromMask();return;}maskEdit=null;maskBuf=null;return;}
+  if(!getMask(L,activeFrame)){maskEdit=null;maskBuf=null;}}
+function newMaskFromSel(){const m=new Uint8Array(W*H);if(selection){const sm=selection.mask;for(let i=0;i<W*H;i++)m[i]=sm[i]?255:0;}else m.fill(255);return m;}
+// cel (layer × frame) menu: a mask for this frame only
+function addCelMask(li,fi){const L=doc.layers[li];if(!L)return;
   if(L.group){toast('グループにはマスクを付けられません');return;}
-  if(getMask(L)){enterMaskEdit(li);return;}
-  pushUndo();const m=new Uint8Array(W*H);const fromSel=!!selection;
-  if(fromSel){const sm=selection.mask;for(let i=0;i<W*H;i++)m[i]=sm[i]?255:0;}else m.fill(255);
-  setMask(L,m);selection=null;refreshTimeline();render();updateSelModVisible();toast(fromSel?'マスクを追加（選択範囲を表示）':'マスクを追加');}
-function maskFromSelection(li){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;
+  if(getMask(L,fi)){enterMaskEdit(li,fi);return;}
+  pushUndo();const fromSel=!!selection;setMask(L,fi,newMaskFromSel());selection=null;
+  activeLayer=li;selLayers=new Set([li]);activeFrame=fi;selFrames=new Set([fi]);
+  refreshTimeline();render();updateSelModVisible();toast(fromSel?'フレーム '+(fi+1)+' にマスクを追加（選択範囲を表示）':'フレーム '+(fi+1)+' にマスクを追加');}
+// layer menu: masks for every frame (frames that already have one keep it)
+function addLayerMask(li,cx,cy){const L=doc.layers[li];if(!L)return;
+  if(L.group){toast('グループにはマスクを付けられません');return;}
+  if(layerHasMask(L)&&cx!==undefined){openLayerMaskRadial(li,cx,cy);return;}
+  const missing=doc.frames.map((f,fi)=>fi).filter(fi=>!getMask(L,fi));
+  if(!missing.length){enterMaskEdit(li,activeFrame);return;}
+  pushUndo();const fromSel=!!selection;const base=newMaskFromSel();missing.forEach((fi,i)=>setMask(L,fi,i?base.slice():base));selection=null;
+  refreshTimeline();render();updateSelModVisible();toast(fromSel?'全フレームにマスクを追加（選択範囲を表示）':'全フレームにマスクを追加');}
+function maskFromSelection(li,fi){const L=doc.layers[li];if(fi===undefined)fi=activeFrame;const mk=L&&getMask(L,fi);if(!mk)return;
   pushUndo();if(selection){const sm=selection.mask;for(let i=0;i<W*H;i++)mk[i]=sm[i]?255:0;}else mk.fill(255);
-  if(maskEdit===L.id)maskBufFromMask();refreshTimeline();render();toast(selection?'選択範囲をマスクに反映':'マスクを全表示にリセット');}
-function loadMaskSelection(li,mode){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;
+  if(maskEdit===L.id&&maskEditFi===fi)maskBufFromMask();refreshTimeline();render();toast(selection?'選択範囲をマスクに反映':'マスクを全表示にリセット');}
+function maskFromSelectionAll(li){const L=doc.layers[li];if(!L||!layerHasMask(L))return;pushUndo();
+  maskFramesOf(L).forEach(fi=>{const mk=getMask(L,fi);if(selection){const sm=selection.mask;for(let i=0;i<W*H;i++)mk[i]=sm[i]?255:0;}else mk.fill(255);});
+  if(maskEdit===L.id)maskBufFromMask();refreshTimeline();render();toast(selection?'選択範囲を全フレームのマスクに反映':'全フレームのマスクを全表示にリセット');}
+function loadMaskSelection(li,fi,mode){const L=doc.layers[li];if(typeof fi==='string'){mode=fi;fi=undefined;}if(fi===undefined)fi=activeFrame;
+  const mk=L&&getMask(L,fi);if(!mk){toast('このフレームにマスクがありません');return;}
   const shp=selBuf();let n=0;for(let i=0;i<W*H;i++)if(mk[i]>127){shp[i]=1;n++;}
   if(!n){toast('マスクに表示部分がありません');return;}
   pushUndo();applyShape(shp,mode||'replace');if(selection)computeSelBounds();render();updateSelModVisible();toast('マスクを選択範囲に読込');}
-function toggleMask(li){const L=doc.layers[li];if(!L||!getMask(L))return;L.maskOn=L.maskOn===false;refreshTimeline();render();
-  toast(L.maskOn===false?'マスクを無効化':'マスクを有効化');}
-function applyMask(li){const L=doc.layers[li];const mk=L&&getMask(L);if(!mk)return;
+function toggleMask(li){const L=doc.layers[li];if(!L||!layerHasMask(L))return;L.maskOn=L.maskOn===false;refreshTimeline();render();
+  toast(L.maskOn===false?'マスクを無効化（全フレーム）':'マスクを有効化（全フレーム）');}
+// bake one frame's mask into its cel. A linked (全F共通) layer has one cel, so the bake shows on every frame
+function bakeMaskInto(L,fi){const mk=getMask(L,fi);if(!mk)return;
+  if(L.maskOn!==false){const c=doc.cels.get(celKeyFor(L,fi));if(c)for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);
+      c[i]=na?((na<<24)|(p&0xffffff))>>>0:0;}}
+  setMask(L,fi,null);if(maskEdit===L.id&&maskEditFi===fi){maskEdit=null;maskBuf=null;}}
+function applyMask(li,fi){const L=doc.layers[li];if(fi===undefined)fi=activeFrame;if(!L||!getMask(L,fi))return;
   if(L.adj){toast('調整レイヤーのマスクは焼き込めません（削除のみ）');return;}pushUndo();
+  bakeMaskInto(L,fi);if(!layerHasMask(L))delete L.maskOn;refreshTimeline();render();toast('マスクを適用（フレーム '+(fi+1)+'）');}
+function applyMaskAll(li){const L=doc.layers[li];if(!L||!layerHasMask(L))return;
+  if(L.adj){toast('調整レイヤーのマスクは焼き込めません（削除のみ）');return;}pushUndo();
+  applyMaskSilent(L);refreshTimeline();render();toast('全フレームのマスクを適用');}
+function applyMaskSilent(L){if(!layerHasMask(L))return;maskFramesOf(L).forEach(fi=>bakeMaskInto(L,fi));delete L.maskOn;}
+function deleteMask(li,fi){const L=doc.layers[li];if(fi===undefined)fi=activeFrame;if(!L||!getMask(L,fi))return;pushUndo();
+  if(maskEdit===L.id&&maskEditFi===fi){maskEdit=null;maskBuf=null;}
+  setMask(L,fi,null);if(!layerHasMask(L))delete L.maskOn;refreshTimeline();render();toast('マスクを削除（フレーム '+(fi+1)+'）');}
+function deleteMaskAll(li){const L=doc.layers[li];if(!L||!layerHasMask(L))return;pushUndo();
   if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
-  if(L.maskOn!==false)celKeysOf(L).forEach(k=>{const c=doc.cels.get(k);if(!c)return;
-    for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);
-      c[i]=na?((na<<24)|(p&0xffffff))>>>0:0;}});
-  setMask(L,null);delete L.maskOn;refreshTimeline();render();toast('マスクを適用');}
-function applyMaskSilent(L){const mk=getMask(L);if(!mk)return;if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
-  if(L.maskOn!==false)celKeysOf(L).forEach(k=>{const c=doc.cels.get(k);if(!c)return;
-    for(let i=0;i<c.length;i++){const p=c[i],a=p>>>24;if(!a)continue;const na=Math.round(a*mk[i]/255);c[i]=na?((na<<24)|(p&0xffffff))>>>0:0;}});
-  setMask(L,null);delete L.maskOn;}
-function deleteMask(li){const L=doc.layers[li];if(!L||!getMask(L))return;pushUndo();
-  if(maskEdit===L.id){maskEdit=null;maskBuf=null;}
-  setMask(L,null);delete L.maskOn;refreshTimeline();render();toast('マスクを削除');}
-function openMaskRadial(li,cx,cy){const L=doc.layers[li];if(!L)return;
+  clearMasks(L);delete L.maskOn;refreshTimeline();render();toast('全フレームのマスクを削除');}
+// long-press on a mask thumb: this frame only
+function openMaskRadial(li,fi,cx,cy){const L=doc.layers[li];if(!L)return;
   showRadial(cx,cy,[
-    {icon:'⬚',label:'選択読込',fn:()=>loadMaskSelection(li)},
-    {icon:'◐',label:'選択から',fn:()=>maskFromSelection(li)},
+    {icon:'⬚',label:'選択読込',fn:()=>loadMaskSelection(li,fi)},
+    {icon:'◐',label:'選択から',fn:()=>maskFromSelection(li,fi)},
     {icon:L.maskOn===false?'👁':'🚫',label:L.maskOn===false?'有効':'無効',fn:()=>toggleMask(li)},
-    {icon:'✓',label:'適用',fn:()=>applyMask(li)},
-    {icon:'🗑',label:'削除',fn:()=>deleteMask(li)},
+    {icon:'✓',label:'適用',fn:()=>applyMask(li,fi)},
+    {icon:'🗑',label:'削除',fn:()=>deleteMask(li,fi)},
   ]);}
-function drawMaskThumb(ctx,layerId){const L=doc.layers.find(l=>l.id===layerId);const mk=L&&getMask(L);
+// layer menu → マスク on a layer that already has masks: every frame at once
+function openLayerMaskRadial(li,cx,cy){const L=doc.layers[li];if(!L)return;
+  const missing=doc.frames.length-maskFramesOf(L).length;const items=[
+    {icon:'✎',label:'編集',fn:()=>{if(getMask(L,activeFrame))enterMaskEdit(li,activeFrame);else addCelMask(li,activeFrame);}},
+    {icon:'◐',label:'選択から全F',fn:()=>maskFromSelectionAll(li)},
+    {icon:L.maskOn===false?'👁':'🚫',label:L.maskOn===false?'有効':'無効',fn:()=>toggleMask(li)},
+    {icon:'✓',label:'適用 全F',fn:()=>applyMaskAll(li)},
+    {icon:'🗑',label:'削除 全F',fn:()=>deleteMaskAll(li)},
+  ];
+  if(missing)items.splice(1,0,{icon:'＋',label:'全Fに追加',fn:()=>addLayerMask(li)});
+  showRadial(cx,cy,items,refreshTimeline);}
+function drawMaskThumb(ctx,layerId,fi){const L=doc.layers.find(l=>l.id===layerId);const mk=L&&getMask(L,fi);
   ctx.clearRect(0,0,W,H);if(!mk)return;const u=new Uint32Array(W*H);for(let i=0;i<u.length;i++)u[i]=grey32(mk[i]);
   ctx.putImageData(new ImageData(new Uint8ClampedArray(u.buffer),W,H),0,0);}
-function bindMaskLong(mv,li){mv.addEventListener('pointerdown',e=>{e.stopPropagation();
+function bindMaskLong(mv,li,fi){mv.addEventListener('pointerdown',e=>{e.stopPropagation();
   const sx=e.clientX,sy=e.clientY;
-  const t=setTimeout(()=>{justDragged=true;setTimeout(()=>justDragged=false,140);openMaskRadial(li,sx,sy);cleanup();},430);
+  const t=setTimeout(()=>{justDragged=true;setTimeout(()=>justDragged=false,140);openMaskRadial(li,fi,sx,sy);cleanup();},430);
   const mvh=ev=>{if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>10){clearTimeout(t);cleanup();}};
   const up=()=>{clearTimeout(t);cleanup();};
   function cleanup(){document.removeEventListener('pointermove',mvh);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);}
@@ -1125,7 +1175,7 @@ function bundleFromGlobals(name){return {doc,W,H,activeLayer,activeFrame,undoSta
   selection,palette,activeSwatch,zoom,panX,panY,projHandle,name};}
 function loadBundle(s){
   if(playing)stopPlay();activeTag=null;floating=null;maskEdit=null;maskBuf=null;if(crop)endCropUI();
-  doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
+  migrateMasks(s.doc);doc=s.doc;W=s.W;H=s.H;activeLayer=s.activeLayer;activeFrame=s.activeFrame;
   undoStack=s.undoStack;redoStack=s.redoStack;selection=s.selection;
   palette=s.palette;activeSwatch=s.activeSwatch;zoom=s.zoom;panX=s.panX;panY=s.panY;projHandle=s.projHandle||null;
   selLayers=new Set([activeLayer]);selFrames=new Set([activeFrame]);
@@ -1273,7 +1323,7 @@ function compositeScope(parentId,fi,out,opMul,map,clipIn){
   let clipBase=clipIn||null;   // {buf,map}: alpha source for clipped layers
   for(let li=0;li<doc.layers.length;li++){
     const L=doc.layers[li];if((L.parent||null)!==parentId||!L.visible)continue;
-    const mk=L.maskOn===false?null:getMask(L);const cb=L.clip?clipBase:null;
+    const mk=L.maskOn===false?null:getMask(L,fi);const cb=L.clip?clipBase:null;
     if(L.group){
       if(L.passThrough){compositeScope(L.id,fi,out,opMul*L.opacity/255,map,clipBase);continue;}
       const sub=new Uint32Array(out.length);compositeScope(L.id,fi,sub,1,map,null);
@@ -1317,7 +1367,7 @@ function paintView(){
   if(compDirty){compositeFrame(activeFrame,cctx);compDirty=false;}
   vctx.imageSmoothingEnabled=false;
   vctx.drawImage(comp,0,0,W,H,panX,panY,W*zoom,H*zoom);
-  if(maskEdit!==null){const L=doc.layers[activeLayer];const mk=L&&L.id===maskEdit&&getMask(L);
+  if(maskEdit!==null&&maskEditFi===activeFrame){const L=doc.layers[activeLayer];const mk=L&&L.id===maskEdit&&getMask(L,activeFrame);
     if(mk){const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;const u=new Uint32Array(W*H);
       for(let i=0;i<u.length;i++){const hid=255-mk[i];if(hid)u[i]=(((hid*0.55|0)<<24)|0x0000ff)>>>0;}   // red tint = hidden
       tmp.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(u.buffer),W,H),0,0);
@@ -2674,7 +2724,7 @@ function refreshTimeline(){
   grid.style.setProperty('--lcolw',layerColW+'px');
   // cel thumbs keep the canvas aspect (40px tall); a mask thumb sits beside the cel when any layer has one
   const thW=Math.max(24,Math.min(120,Math.round(40*W/H)));
-  const anyMask=doc.layers.some(L=>!!getMask(L));
+  const anyMask=doc.layers.some(L=>layerHasMask(L));
   grid.style.setProperty('--thw',thW+'px');grid.style.setProperty('--celw',(anyMask?thW*2+9:thW+6)+'px');
   const hrow=document.createElement('div');hrow.className='tl-row tl-head';
   const corner=document.createElement('div');corner.className='tl-corner';
@@ -2753,17 +2803,16 @@ function refreshTimeline(){
       cell.dataset.l=li;cell.dataset.f=fi;
       const cv=document.createElement('canvas');cv.width=W;cv.height=H;cv.className='cthumb';cell.appendChild(cv);
       drawCelThumb(cv.getContext('2d'),L.id,fi);
-      const mk=getMask(L);
+      const mk=getMask(L,fi);
       if(mk){const mv=document.createElement('canvas');mv.width=W;mv.height=H;
-        mv.className='mthumb'+(maskEdit===L.id?' editing':'')+(L.maskOn===false?' off':'');
-        mv.title='マスク（タップで編集 / 長押しでメニュー / Ctrl+クリックで選択範囲に）';drawMaskThumb(mv.getContext('2d'),L.id);
+        mv.className='mthumb'+(maskEdit===L.id&&maskEditFi===fi?' editing':'')+(L.maskOn===false?' off':'');
+        mv.title='このフレームのマスク（タップで編集 / 長押しでメニュー / Ctrl+クリックで選択範囲に）';drawMaskThumb(mv.getContext('2d'),L.id,fi);
         mv.onclick=ev=>{ev.stopPropagation();if(justDragged)return;
           const hold=selModeNow();   // Ctrl-click (tablet: ＋/− held or locked) loads the mask as a selection
           const mode=(ev.ctrlKey||ev.metaKey)?(ev.altKey?'subtract':ev.shiftKey?'add':'replace'):(hold!=='replace'?hold:null);
-          if(mode){loadMaskSelection(li,mode);return;}
-          activeFrame=fi;selFrames=new Set([fi]);
-          if(maskEdit===L.id){activeLayer=li;exitMaskEdit();}else enterMaskEdit(li);};
-        bindMaskLong(mv,li);cell.appendChild(mv);}
+          if(mode){loadMaskSelection(li,fi,mode);return;}
+          if(maskEdit===L.id&&maskEditFi===fi){activeLayer=li;activeFrame=fi;selFrames=new Set([fi]);exitMaskEdit();}else enterMaskEdit(li,fi);};
+        bindMaskLong(mv,li,fi);cell.appendChild(mv);}
       cell.onclick=ev=>{if(justDragged)return;
         const hold=selModeNow();   // tablet: ＋/− held or tap-locked
         const mode=(ev.ctrlKey||ev.metaKey)?(ev.altKey?'subtract':ev.shiftKey?'add':'replace'):(hold!=='replace'?hold:null);
@@ -2822,11 +2871,11 @@ function pasteCel(li,fi){if(!celClip){toast('コピーされたセルがあり�
   render();updateCelThumb(li,fi);toast('セルに貼り付け');}
 function clearCelAt(li,fi){const L=doc.layers[li];if(!L)return;if(L.locked){toast('レイヤーがロックされています');return;}
   pushUndo();doc.cels.set(celKeyFor(L,fi),newCel());render();updateCelThumb(li,fi);toast('セルを消去');}
-function openCelRadial(li,fi,cx,cy){const L=doc.layers[li];const hasMask=!!(L&&getMask(L));showRadial(cx,cy,[
+function openCelRadial(li,fi,cx,cy){const L=doc.layers[li];const hasMask=!!(L&&getMask(L,fi));showRadial(cx,cy,[
   {icon:'📋',label:'コピー',fn:()=>copyCel(li,fi)},
   {icon:'📥',label:'貼付',fn:()=>pasteCel(li,fi)},
   {icon:'🗑',label:'消去',fn:()=>clearCelAt(li,fi)},
-  {icon:'◐',label:hasMask?'マスク編集':'マスク',fn:()=>{activeFrame=fi;selFrames=new Set([fi]);if(hasMask)enterMaskEdit(li);else addLayerMask(li);}},
+  {icon:'◐',label:hasMask?'マスク編集':'マスク',fn:()=>{if(hasMask)enterMaskEdit(li,fi);else addCelMask(li,fi);}},   // this frame only
 ],refreshTimeline);}   // full rebuild only once the finger is up
 // Long-press a preview cell -> cel radial (copy / paste / clear that layer×frame only)
 function bindCellLong(cell,li,fi){cell.addEventListener('pointerdown',e=>{
@@ -2881,7 +2930,7 @@ function openRadial(kind,idx,cx,cy){
       {icon:'📋',label:'コピー',fn:copyLayersSel},
       {icon:'📥',label:'貼付',fn:pasteLayers},
       {icon:'⬇',label:'結合',fn:mergeLayersSel},
-      {icon:'◐',label:'マスク',fn:()=>addLayerMask(idx)},
+      {icon:'◐',label:'マスク',fn:()=>addLayerMask(idx,cx,cy)},   // every frame; existing masks → all-frame menu
       {icon:'⋯',label:'その他',fn:()=>openLayerMoreRadial(idx,cx,cy)},
     ];
     if(selLayers.size>=2)items.splice(2,0,{icon:'🗂',label:'グループ化',fn:groupLayersSel});
@@ -3000,7 +3049,7 @@ function dupLayersSel(){const idxs=[...selLayers].sort((a,b)=>b-a);pushUndo();
     if(src.adj)nl.adj=JSON.parse(JSON.stringify(src.adj));if(src.parent)nl.parent=src.parent;
     ['linked','clip','alphaLock','color','passThrough','group','collapsed'].forEach(k=>{if(src[k]!==undefined)nl[k]=src[k];});
     doc.layers.splice(li+1,0,nl);celKeysOf(src).forEach((k,i)=>{const c=doc.cels.get(k);if(c)doc.cels.set(src.linked?nl.id+':link':celKey(nl.id,i),c.slice());});
-    const mk=getMask(src);if(mk){setMask(nl,mk.slice());if(src.maskOn===false)nl.maskOn=false;}});
+    maskFramesOf(src).forEach(fi=>setMask(nl,fi,getMask(src,fi).slice()));if(src.maskOn===false&&layerHasMask(src))nl.maskOn=false;});
   activeLayer=Math.min(activeLayer+1,doc.layers.length-1);selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤーを複製');}
 function deleteLayersSel(){
   const ids=new Set();
@@ -3009,7 +3058,7 @@ function deleteLayersSel(){
   const remaining=doc.layers.filter(l=>!ids.has(l.id));
   if(!remaining.some(l=>!l.group&&!l.adj)){toast('全レイヤーは削除できません');return;}
   pushUndo();
-  doc.layers.filter(l=>ids.has(l.id)).forEach(L=>{celKeysOf(L).forEach(k=>doc.cels.delete(k));setMask(L,null);});
+  doc.layers.filter(l=>ids.has(l.id)).forEach(L=>{celKeysOf(L).forEach(k=>doc.cels.delete(k));clearMasks(L);});
   doc.layers=remaining;
   activeLayer=Math.max(0,Math.min(activeLayer,doc.layers.length-1));selLayers=new Set([activeLayer]);refreshTimeline();render();toast('レイヤー削除');}
 /* ---- Layer groups (single level: a group header + its contiguous children) ---- */
@@ -3047,23 +3096,26 @@ function mergeLayersSel(){let idxs=[...selLayers].sort((a,b)=>a-b);
   if(idxs.length<2){if(activeLayer===0){toast('下にレイヤーがありません');return;}idxs=[activeLayer-1,activeLayer];}
   pushUndo();const bottom=idxs[0],bot=doc.layers[bottom];
   idxs.forEach(i=>setLinked(doc.layers[i],false));   // a merge works frame by frame: unlink first
-  if(getMask(bot))applyMaskSilent(bot);   // masks are baked in by a merge (as in Photoshop)
+  if(layerHasMask(bot))applyMaskSilent(bot);   // masks are baked in by a merge (as in Photoshop)
   doc.frames.forEach((f,fi)=>{let bcel=doc.cels.get(celKey(bot.id,fi));
     for(let k=1;k<idxs.length;k++){const top=doc.layers[idxs[k]];const tc=doc.cels.get(celKey(top.id,fi));if(!tc)continue;
-      const mk=top.maskOn===false?null:getMask(top);
+      const mk=top.maskOn===false?null:getMask(top,fi);
       if(!bcel){bcel=newCel();doc.cels.set(celKey(bot.id,fi),bcel);}
       for(let i=0;i<tc.length;i++){const s=tc[i];const sa=Math.round(((s>>>24)&255)*top.opacity/255*(mk?mk[i]/255:1));if(sa)bcel[i]=blend(bcel[i],s,sa);}}});
-  idxs.slice(1).forEach(li=>setMask(doc.layers[li],null));
+  idxs.slice(1).forEach(li=>clearMasks(doc.layers[li]));
   idxs.slice(1).sort((a,b)=>b-a).forEach(li=>{const L=doc.layers[li];doc.frames.forEach((f,fi)=>doc.cels.delete(celKey(L.id,fi)));doc.layers.splice(li,1);});
   activeLayer=bottom;selLayers=new Set([bottom]);refreshTimeline();render();toast('レイヤーを結合');}
 
 /* ---- Multi-aware frame ops ---- */
 function insertFrameAt(pos,fc){const nm=new Map();
   doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);nm.set(!isNaN(f)&&f>=pos?(lid+':'+(f+1)):k,v);});doc.cels=nm;
+  remapMasks(f=>f>=pos?f+1:f);
   doc.frames.splice(pos,0,{id:uid(),duration:fc?fc.duration:125});
-  if(fc)doc.layers.forEach((L,li)=>{const src=fc.cels[li];if(src){const cel=newCel();blitClip(cel,src,fc.W,fc.H);doc.cels.set(celKey(L.id,pos),cel);}});}
+  if(fc)doc.layers.forEach((L,li)=>{const src=fc.cels[li];if(src){const cel=newCel();blitClip(cel,src,fc.W,fc.H);doc.cels.set(celKey(L.id,pos),cel);}
+    const mk=fc.masks&&fc.masks[li];if(mk&&mk.length===W*H)setMask(L,pos,mk.slice());});}
 function dupFramesSel(){const idxs=[...selFrames].sort((a,b)=>b-a);pushUndo();
-  idxs.forEach(fi=>{const fc={duration:doc.frames[fi].duration,W,H,cels:doc.layers.map(L=>{const c=doc.cels.get(celKey(L.id,fi));return c?c.slice():null;})};insertFrameAt(fi+1,fc);});
+  idxs.forEach(fi=>{const fc={duration:doc.frames[fi].duration,W,H,cels:doc.layers.map(L=>{const c=doc.cels.get(celKey(L.id,fi));return c?c.slice():null;}),
+    masks:doc.layers.map(L=>getMask(L,fi))};insertFrameAt(fi+1,fc);});
   activeFrame=Math.min(activeFrame+1,doc.frames.length-1);selFrames=new Set([activeFrame]);refreshTimeline();render();toast('フレームを複製');}
 function deleteFramesSel(){const idxs=[...selFrames].sort((a,b)=>b-a);
   if(idxs.length>=doc.frames.length){toast('全フレームは削除できません');return;}
@@ -3180,6 +3232,7 @@ function moveFrame(from,to){
   const newCels=new Map();
   doc.layers.forEach(L=>order.forEach((oldIdx,ni)=>{const c=doc.cels.get(L.id+':'+oldIdx);if(c)newCels.set(L.id+':'+ni,c);}));
   doc.cels.forEach((v,k)=>{if(k.endsWith(':link'))newCels.set(k,v);});   // shared cels are frame-independent
+  const back=[];order.forEach((oldIdx,ni)=>back[oldIdx]=ni);remapMasks(f=>back[f]===undefined?-1:back[f]);
   doc.cels=newCels;doc.frames=order.map(oi=>doc.frames[oi]);
   activeFrame=to;refreshTimeline();render();toast('フレームを移動');
 }
@@ -3190,8 +3243,7 @@ function updateCelThumb(li,fi){
   let p=doc.layers[li]&&doc.layers[li].parent;while(p){const gi=doc.layers.findIndex(l=>l.id===p);
     const gc=$(`#tlGrid .tl-cell[data-l="${gi}"][data-f="${fi}"] canvas.cthumb`);if(gc)drawCelThumb(gc.getContext('2d'),p,fi);const g=layerById(p);p=g?g.parent:null;}
   if(cell){const cv=cell.querySelector('canvas.cthumb');if(cv)drawCelThumb(cv.getContext('2d'),doc.layers[li].id,fi);
-    if(maskEdit!==null&&doc.layers[li].id===maskEdit)   // the mask is shared by every frame of the layer
-      $$(`#tlGrid .tl-cell[data-l="${li}"] canvas.mthumb`).forEach(mv=>drawMaskThumb(mv.getContext('2d'),maskEdit));}
+    if(maskEdit!==null&&doc.layers[li].id===maskEdit&&maskEditFi===fi){const mv=cell.querySelector('canvas.mthumb');if(mv)drawMaskThumb(mv.getContext('2d'),maskEdit,fi);}}
 }
 let thumbT;
 function updateCelThumbThrottled(){if(thumbT)return;thumbT=setTimeout(()=>{thumbT=null;updateCelThumb(activeLayer,activeFrame);},120);}
@@ -3225,10 +3277,12 @@ function mergeLayerFn(){if(activeLayer===0){toast('下にレイヤーがあり�
 /* Frame ops */
 function reindexAfterDelete(delIdx){const nm=new Map();
   doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);
-    if(isNaN(f)||f<delIdx)nm.set(k,v);else if(f>delIdx)nm.set(lid+':'+(f-1),v);});doc.cels=nm;}
+    if(isNaN(f)||f<delIdx)nm.set(k,v);else if(f>delIdx)nm.set(lid+':'+(f-1),v);});doc.cels=nm;
+  remapMasks(f=>f<delIdx?f:f>delIdx?f-1:-1);}
 function duplicateFrame(fi){pushUndo();const src=doc.frames[fi];const nm=new Map();
   doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);if(isNaN(f)||f<=fi)nm.set(k,v);else nm.set(lid+':'+(f+1),v);});
   doc.layers.forEach(L=>{const c=nm.get(celKey(L.id,fi));if(c)nm.set(celKey(L.id,fi+1),c.slice());});
+  remapMasks(f=>f<=fi?f:f+1);doc.layers.forEach(L=>{const m=getMask(L,fi);if(m)setMask(L,fi+1,m.slice());});
   doc.cels=nm;doc.frames.splice(fi+1,0,{id:uid(),duration:src.duration});activeFrame=fi+1;refreshTimeline();render();}
 function deleteFrame(fi){if(doc.frames.length<=1){toast('最後のフレームは削除不可');return;}
   pushUndo();doc.layers.forEach(L=>doc.cels.delete(celKey(L.id,fi)));reindexAfterDelete(fi);
@@ -3461,8 +3515,8 @@ function addAdjustLayer(type){adjLayerType=type;pushUndo();
   if(cur&&cur.parent)nl.parent=cur.parent;   // stays inside the group it was created in → affects only that group
   doc.layers.splice(activeLayer+1,0,nl);
   let msg='調整レイヤーを追加';
-  if(selection){const m=new Uint8Array(W*H);const sm=selection.mask;for(let i=0;i<W*H;i++)m[i]=sm[i]?255:0;   // selection → mask
-    setMask(nl,m);selection=null;msg='調整レイヤーを追加（選択範囲をマスクに）';}
+  if(selection){const m=newMaskFromSel();   // selection → mask on every frame
+    doc.frames.forEach((f,fi)=>setMask(nl,fi,fi?m.slice():m));selection=null;msg='調整レイヤーを追加（選択範囲をマスクに）';}
   activeLayer++;selLayers=new Set([activeLayer]);refreshTimeline();render();updateSelModVisible();toast(msg);}
 function adjustLayerRadial(){return Object.keys(ADJUSTS).map(t=>({icon:adjIcon(t),label:ADJUSTS[t],fn:()=>addAdjustLayer(t)}));}
 // show the cut-in bound to the active adjustment layer (single selection only)
@@ -4643,7 +4697,7 @@ async function loadProjectFile(file,handle){try{const u8=new Uint8Array(await fi
     applyProject(await parseProjectBytes(u8),file.name,handle);}catch(err){projLoadError(err);}}
 function applyProject(d,name,handle){
     W=d.W;H=d.H;
-    doc={layers:d.layers,frames:d.frames,cels:d.cels,tags:d.tags||null,masks:d.masks||new Map()};
+    doc={layers:d.layers,frames:d.frames,cels:d.cels,tags:d.tags||null,masks:d.masks||new Map()};migrateMasks(doc);
     palette=d.palette||DEFAULT_PAL.slice();
     maskEdit=null;maskBuf=null;
     doc.convert=d.convert||null;$('#mReconvert').style.display=doc.convert?'':'none';
