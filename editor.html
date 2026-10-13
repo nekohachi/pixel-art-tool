@@ -2692,8 +2692,12 @@ function refreshTimeline(){
       const mk=getMask(L);
       if(mk){const mv=document.createElement('canvas');mv.width=W;mv.height=H;
         mv.className='mthumb'+(maskEdit===L.id?' editing':'')+(L.maskOn===false?' off':'');
-        mv.title='マスク（タップで編集 / 長押しでメニュー）';drawMaskThumb(mv.getContext('2d'),L.id);
-        mv.onclick=ev=>{ev.stopPropagation();if(justDragged)return;activeFrame=fi;selFrames=new Set([fi]);
+        mv.title='マスク（タップで編集 / 長押しでメニュー / Ctrl+クリックで選択範囲に）';drawMaskThumb(mv.getContext('2d'),L.id);
+        mv.onclick=ev=>{ev.stopPropagation();if(justDragged)return;
+          const hold=selModeNow();   // Ctrl-click (tablet: ＋/− held or locked) loads the mask as a selection
+          const mode=(ev.ctrlKey||ev.metaKey)?(ev.altKey?'subtract':ev.shiftKey?'add':'replace'):(hold!=='replace'?hold:null);
+          if(mode){loadMaskSelection(li,mode);return;}
+          activeFrame=fi;selFrames=new Set([fi]);
           if(maskEdit===L.id){activeLayer=li;exitMaskEdit();}else enterMaskEdit(li);};
         bindMaskLong(mv,li);cell.appendChild(mv);}
       cell.onclick=ev=>{if(justDragged)return;
@@ -2754,10 +2758,11 @@ function pasteCel(li,fi){if(!celClip){toast('コピーされたセルがあり�
   render();updateCelThumb(li,fi);toast('セルに貼り付け');}
 function clearCelAt(li,fi){const L=doc.layers[li];if(!L)return;if(L.locked){toast('レイヤーがロックされています');return;}
   pushUndo();doc.cels.set(celKeyFor(L,fi),newCel());render();updateCelThumb(li,fi);toast('セルを消去');}
-function openCelRadial(li,fi,cx,cy){showRadial(cx,cy,[
+function openCelRadial(li,fi,cx,cy){const L=doc.layers[li];const hasMask=!!(L&&getMask(L));showRadial(cx,cy,[
   {icon:'📋',label:'コピー',fn:()=>copyCel(li,fi)},
   {icon:'📥',label:'貼付',fn:()=>pasteCel(li,fi)},
   {icon:'🗑',label:'消去',fn:()=>clearCelAt(li,fi)},
+  {icon:'◐',label:hasMask?'マスク編集':'マスク',fn:()=>{activeFrame=fi;selFrames=new Set([fi]);if(hasMask)enterMaskEdit(li);else addLayerMask(li);}},
 ],refreshTimeline);}   // full rebuild only once the finger is up
 // Long-press a preview cell -> cel radial (copy / paste / clear that layer×frame only)
 function bindCellLong(cell,li,fi){cell.addEventListener('pointerdown',e=>{
