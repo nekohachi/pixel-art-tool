@@ -27,7 +27,7 @@ const A=await page.evaluate(()=>new Promise(res=>{newDoc(8,8);addFrame();addFram
     cell.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x0,clientY:y0-120}));   // the click iOS sends after the release
     setTimeout(()=>{out.closed=!document.querySelector('.radial');out.copied=!!celClip&&(celClip.data[0]>>>0)===(packHex('#ff0000',255)>>>0);
       out.rebuilt=!document.contains(cell)&&!!$('#tlGrid .tl-cell[data-l="0"][data-f="1"]');out.afAfter=activeFrame;res(out);},60);},480);}));
-ok('cel long-press opens the 3-item radial with the pressed cell still in the DOM, highlighted',A.menu&&A.items===3&&A.stillInDom&&A.active&&A.af===1);
+ok('cel long-press opens the 4-item radial with the pressed cell still in the DOM, highlighted',A.menu&&A.items===4&&A.stillInDom&&A.active&&A.af===1);
 ok('sliding up highlights コピー; release copies that cel',A.hi&&A.closed&&A.copied);
 ok('timeline is rebuilt only after the finger lifts; the trailing click does not re-target',A.rebuilt&&A.afAfter===1);
 
