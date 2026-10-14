@@ -1021,6 +1021,14 @@ const MAXBRUSH=32;
 function newCel(){return new Uint32Array(W*H);}
 function celKey(l,f){return l+':'+f;}
 // a "linked" layer (全フレーム共通) keeps ONE cel under <id>:link that every frame shows
+/* Copy-on-write pixel store. A history snapshot does not copy the cels: it keeps references and marks
+   them shared (_shared). CelMap.get() hands out a private copy the first time a shared cel is asked for,
+   so writers never touch history; peek() is for read-only paths (compositing, thumbnails). Before this,
+   every stroke copied every cel of every frame (a 24-frame 512² project = 120MB per stroke). */
+class CelMap extends Map{
+  get(k){const v=super.get(k);if(v!==undefined&&v._shared){const c=v.slice();super.set(k,c);return c;}return v;}
+  peek(k){return super.get(k);}}
+function shareAll(m){if(m)m.forEach(v=>{v._shared=true;});return m;}
 function celKeyFor(L,fi){return L.linked?L.id+':link':celKey(L.id,fi);}
 function celKeysOf(L){return L.linked?[L.id+':link']:doc.frames.map((f,fi)=>celKey(L.id,fi));}
 function setLinked(L,on){if(!!L.linked===!!on)return;
@@ -1041,7 +1049,9 @@ function activeCel(){if(maskEdit!==null&&maskBuf&&doc.layers[activeLayer]&&doc.l
 let maskEdit=null, maskEditFi=0, maskBuf=null;   // layer id + frame being painted, and its grey Uint32 working buffer
 // keys are always strings: layer ids are numbers in memory but come back as strings from JSON / snapshots
 function maskKey(L,fi){return String(L.id)+':'+fi;}
-function getMask(L,fi){if(fi===undefined)fi=activeFrame;return (doc.masks&&L)?(doc.masks.get(maskKey(L,fi))||null):null;}
+function getMask(L,fi){if(fi===undefined)fi=activeFrame;if(!doc.masks||!L)return null;const k=maskKey(L,fi);let m=doc.masks.get(k);
+  if(m&&m._shared){m=m.slice();doc.masks.set(k,m);}return m||null;}   // writable (copy-on-write)
+function peekMask(L,fi){return (doc.masks&&L)?(doc.masks.get(maskKey(L,fi))||null):null;}   // read-only
 function setMask(L,fi,m){if(arguments.length<3){m=fi;fi=activeFrame;}if(!doc.masks)doc.masks=new Map();
   if(m)doc.masks.set(maskKey(L,fi),m);else doc.masks.delete(maskKey(L,fi));}
 function maskFramesOf(L){const out=[];if(!doc.masks||!L)return out;const pre=String(L.id)+':';
@@ -1144,9 +1154,10 @@ function openLayerMaskRadial(li,cx,cy){const L=doc.layers[li];if(!L)return;
   ];
   if(missing)items.splice(1,0,{icon:'＋',label:'全Fに追加',fn:()=>addLayerMask(li)});
   showRadial(cx,cy,items,refreshTimeline);}
-function drawMaskThumb(ctx,layerId,fi){const L=doc.layers.find(l=>l.id===layerId);const mk=L&&getMask(L,fi);
-  ctx.clearRect(0,0,W,H);if(!mk)return;const u=new Uint32Array(W*H);for(let i=0;i<u.length;i++)u[i]=grey32(mk[i]);
-  ctx.putImageData(new ImageData(new Uint8ClampedArray(u.buffer),W,H),0,0);}
+function drawMaskThumb(ctx,layerId,fi){const L=doc.layers.find(l=>l.id===layerId);const mk=L&&peekMask(L,fi);const cv=ctx.canvas;
+  const{tw,th,map}=thumbMap();if(cv.width!==tw||cv.height!==th){cv.width=tw;cv.height=th;}
+  ctx.clearRect(0,0,tw,th);if(!mk)return;const u=new Uint32Array(tw*th);for(let i=0;i<u.length;i++)u[i]=grey32(mk[map[i]]);
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(u.buffer),tw,th),0,0);}
 function bindMaskLong(mv,li,fi){mv.addEventListener('pointerdown',e=>{e.stopPropagation();
   const sx=e.clientX,sy=e.clientY;
   const t=setTimeout(()=>{justDragged=true;setTimeout(()=>justDragged=false,140);openMaskRadial(li,fi,sx,sy);cleanup();},430);
@@ -1158,7 +1169,7 @@ function bindMaskLong(mv,li,fi){mv.addEventListener('pointerdown',e=>{e.stopProp
 function newDoc(w,h){
   W=w;H=h;
   doc={layers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
-       frames:[{id:uid(),duration:125}], cels:new Map()};
+       frames:[{id:uid(),duration:125}], cels:new CelMap()};
   activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;maskEdit=null;maskBuf=null;if(crop)endCropUI();
   selLayers=new Set([0]);selFrames=new Set([0]);
   $('#docsize').textContent=W+'×'+H;
@@ -1213,7 +1224,7 @@ function newDocTab(w,h,name){if(convBackup)cancelConverter();
   if(docTabs.length)saveCurrentTab();
   W=w;H=h;
   doc={layers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
-       frames:[{id:uid(),duration:125}], cels:new Map()};
+       frames:[{id:uid(),duration:125}], cels:new CelMap()};
   activeLayer=0;activeFrame=0;undoStack=[];redoStack=[];selection=null;
   selLayers=new Set([0]);selFrames=new Set([0]);
   palette=DEFAULT_PAL.slice();activeSwatch=18;projHandle=null;floating=null;
@@ -1232,8 +1243,8 @@ function setHistoryMax(n){HISTORY_MAX=Math.max(50,Math.min(1000,Math.round(n)));
   while(undoStack.length>HISTORY_MAX)undoStack.shift();while(redoStack.length>HISTORY_MAX)redoStack.shift();
   try{localStorage.setItem('pxeditor-histmax',HISTORY_MAX);}catch(_){}updateUndoUI();}
 function snapshot(){
-  const cels={};doc.cels.forEach((v,k)=>{cels[k]=v.slice();});
-  const masks={};if(doc.masks)doc.masks.forEach((v,k)=>{masks[k]=v.slice();});
+  const cels={};doc.cels.forEach((v,k)=>{v._shared=true;cels[k]=v;});   // shared, not copied (see CelMap)
+  const masks={};if(doc.masks)doc.masks.forEach((v,k)=>{v._shared=true;masks[k]=v;});
   return {W,H,masks,layers:JSON.parse(JSON.stringify(doc.layers)),
     frames:JSON.parse(JSON.stringify(doc.frames)),cels,activeLayer,activeFrame,
     sel:selection?selection.mask.slice():null, convert:doc.convert||null,
@@ -1243,8 +1254,8 @@ function restore(s){
   W=s.W;H=s.H;
   doc.layers=JSON.parse(JSON.stringify(s.layers));
   doc.frames=JSON.parse(JSON.stringify(s.frames));
-  doc.cels=new Map();for(const k in s.cels)doc.cels.set(k,s.cels[k].slice());
-  doc.masks=new Map();if(s.masks)for(const k in s.masks)doc.masks.set(k,s.masks[k].slice());
+  doc.cels=new CelMap();for(const k in s.cels){const v=s.cels[k];v._shared=true;doc.cels.set(k,v);}   // still owned by history → copy-on-write
+  doc.masks=new Map();if(s.masks)for(const k in s.masks){const v=s.masks[k];v._shared=true;doc.masks.set(k,v);}
   activeLayer=Math.min(s.activeLayer,doc.layers.length-1);
   if(maskEdit!==null){checkMaskEdit();if(maskEdit!==null)maskBufFromMask();}
   activeFrame=Math.min(s.activeFrame,doc.frames.length-1);
@@ -1323,7 +1334,7 @@ function compositeScope(parentId,fi,out,opMul,map,clipIn){
   let clipBase=clipIn||null;   // {buf,map}: alpha source for clipped layers
   for(let li=0;li<doc.layers.length;li++){
     const L=doc.layers[li];if((L.parent||null)!==parentId||!L.visible)continue;
-    const mk=L.maskOn===false?null:getMask(L,fi);const cb=L.clip?clipBase:null;
+    const mk=L.maskOn===false?null:peekMask(L,fi);const cb=L.clip?clipBase:null;
     if(L.group){
       if(L.passThrough){compositeScope(L.id,fi,out,opMul*L.opacity/255,map,clipBase);continue;}
       const sub=new Uint32Array(out.length);compositeScope(L.id,fi,sub,1,map,null);
@@ -1336,13 +1347,15 @@ function compositeScope(parentId,fi,out,opMul,map,clipIn){
         const or=o&255,og=(o>>8)&255,ob=(o>>16)&255,oa=(o>>>24)&255,nr=n&255,ng=(n>>8)&255,nb=(n>>16)&255;
         out[i]=((oa<<24)|((ob+(nb-ob)*f|0)<<16)|((og+(ng-og)*f|0)<<8)|(or+(nr-or)*f|0))>>>0;}
       continue;}
-    const cel=doc.cels.get(celKeyFor(L,fi));if(!cel)continue;
+    const cel=doc.cels.peek(celKeyFor(L,fi));if(!cel)continue;
     blendBufS(out,cel,L.opacity*opMul,mk,map,map,cb);if(!L.clip)clipBase={buf:cel,map};
   }
 }
 // src over dst at opacity (0..255, may be fractional), through an optional mask and clip base;
 // srcMap / mkMap are index maps (null = same resolution as dst)
 function blendBufS(dst,src,op,mk,srcMap,mkMap,cb){
+  if(!mk&&!cb&&!srcMap&&op>=255){   // the common case: opaque pixels are copied, nothing else is touched
+    for(let i=0;i<dst.length;i++){const s=src[i];const sa=s>>>24;if(!sa)continue;dst[i]=sa===255?s:blend(dst[i],s,sa);}return;}
   for(let i=0;i<dst.length;i++){const s=src[srcMap?srcMap[i]:i];const sa=(s>>>24)&255;if(!sa)continue;
     let a=mk?sa*op*mk[mkMap?mkMap[i]:i]/65025:sa*op/255;
     if(cb){const ca=(cb.buf[cb.map?cb.map[i]:i]>>>24)&255;if(!ca)continue;a=a*ca/255;}
@@ -1353,6 +1366,10 @@ function blendBufS(dst,src,op,mk,srcMap,mkMap,cb){
 // selection animation) so view changes stay O(1) on big canvases.
 let compDirty=true;
 function render(){if(maskEdit!==null)syncMaskFromBuf();compDirty=true;paintView();}
+// renderSoon(): same as render() but coalesced to one recomposite per animation frame. Used on pointermove,
+// where a pen can report 120–240 events a second — recompositing every layer for each one is wasted work.
+let renderQueued=false;
+function renderSoon(){if(renderQueued)return;renderQueued=true;requestAnimationFrame(()=>{renderQueued=false;render();});}
 function renderView(){paintView();}
 function paintView(){
   const rect=stage.getBoundingClientRect();
@@ -1367,7 +1384,7 @@ function paintView(){
   if(compDirty){compositeFrame(activeFrame,cctx);compDirty=false;}
   vctx.imageSmoothingEnabled=false;
   vctx.drawImage(comp,0,0,W,H,panX,panY,W*zoom,H*zoom);
-  if(maskEdit!==null&&maskEditFi===activeFrame){const L=doc.layers[activeLayer];const mk=L&&L.id===maskEdit&&getMask(L,activeFrame);
+  if(maskEdit!==null&&maskEditFi===activeFrame){const L=doc.layers[activeLayer];const mk=L&&L.id===maskEdit&&peekMask(L,activeFrame);
     if(mk){const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;const u=new Uint32Array(W*H);
       for(let i=0;i<u.length;i++){const hid=255-mk[i];if(hid)u[i]=(((hid*0.55|0)<<24)|0x0000ff)>>>0;}   // red tint = hidden
       tmp.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(u.buffer),W,H),0,0);
@@ -2013,9 +2030,9 @@ stage.addEventListener('pointermove',e=>{
   if(!drawing)return;
   if(holdTimer&&holdStart&&Math.hypot(e.clientX-holdStart.cx,e.clientY-holdStart.cy)>6)clearHold(); // moved => it's a stroke
   const{x,y}=screenToPix(e.clientX,e.clientY);
-  if(tool==='select'){dragCur={x:clampX(x),y:clampY(y)};render();return;}
+  if(tool==='select'){dragCur={x:clampX(x),y:clampY(y)};renderSoon();return;}
   if(tool==='lasso'){const p={x,y};const last=lassoPts[lassoPts.length-1];   // raw coords (may be off-canvas)
-    if(!last||last.x!==p.x||last.y!==p.y)lassoPts.push(p);render();return;}
+    if(!last||last.x!==p.x||last.y!==p.y)lassoPts.push(p);renderSoon();return;}
   if(tool==='quick'){const cx=clampX(x),cy=clampY(y);
     if(!qLast||qLast.x!==cx||qLast.y!==cy){qLast={x:cx,y:cy};quickFlood(cx,cy,quickSubtract);render();}return;}
   if(SHAPE.includes(tool)){updateShapePreview(x,y);return;}
@@ -2026,8 +2043,8 @@ stage.addEventListener('pointermove',e=>{
     cel.set(penLine.base);
     if(penLine.mode==='snap'){const L=snapCleanLine(penLine.x0,penLine.y0,x,y);penLine.cur={x:L.x,y:L.y,ratio:L.ratio};cleanLineTo(cel,L,erase);}
     else{penLine.cur={x,y};lineTo(cel,penLine.x0,penLine.y0,x,y,erase);}
-    render();updateCelThumbThrottled();return;}
-  lineTo(cel,lastPix.x,lastPix.y,x,y,erase);lastPix={x,y};render();updateCelThumbThrottled();
+    renderSoon();updateCelThumbThrottled();return;}
+  lineTo(cel,lastPix.x,lastPix.y,x,y,erase);lastPix={x,y};renderSoon();updateCelThumbThrottled();
 });
 // hide the hover cursor when the pen/mouse leaves the canvas
 stage.addEventListener('pointerleave',()=>{if(!drawing)bc.style.display='none';});
@@ -2151,12 +2168,12 @@ function shiftMaskLive(){const{dx,dy,baseMask}=moveData;const nm=selBuf();
   selection.mask=nm;computeSelBounds();}
 function doMove(e){
   const{x,y}=screenToPix(e.clientX,e.clientY);moveData.dx=x-moveData.ox;moveData.dy=y-moveData.oy;
-  if(moveData.float){floating.x=moveData.fx+moveData.dx;floating.y=moveData.fy+moveData.dy;composeFloating();render();return;}
-  if(moveData.baseMask){shiftMaskLive();render();return;}
+  if(moveData.float){floating.x=moveData.fx+moveData.dx;floating.y=moveData.fy+moveData.dy;composeFloating();renderSoon();return;}
+  if(moveData.baseMask){shiftMaskLive();renderSoon();return;}
   const{dx,dy}=moveData;
   for(const P of moveData.parts){const cel=P.cel,buf=P.buf;cel.fill(0);
     for(let i=0;i<W*H;i++){if(buf[i]===0)continue;const sx=i%W,sy=(i/W)|0,nx=sx+dx,ny=sy+dy;if(inBounds(nx,ny))cel[ny*W+nx]=buf[i];}}
-  render();
+  renderSoon();
 }
 function endMove(cancel){
   moving=false;
@@ -2700,16 +2717,22 @@ function attachLayerOpacityScrub(el,L){
 function thumbSize(){return {tw:Math.max(24,Math.min(120,Math.round(40*W/H))),th:40};}
 // A group's thumbnail is its live composite (visible children only, masks / opacity / adjustments
 // included), rendered straight at thumbnail resolution so it stays cheap on long animations.
-function compositeGroupThumb(parentId,fi,tw,th){
+// thumbnail-resolution index map (cached per canvas size): thumb pixel → nearest source pixel
+let thumbMapCache=null;
+function thumbMap(){const{tw,th}=thumbSize();if(thumbMapCache&&thumbMapCache.W===W&&thumbMapCache.H===H)return thumbMapCache;
   const map=new Int32Array(tw*th);for(let y=0;y<th;y++){const sy=Math.min(H-1,(y*H/th)|0);for(let x=0;x<tw;x++)map[y*tw+x]=sy*W+Math.min(W-1,(x*W/tw)|0);}
-  const out=new Uint32Array(tw*th);compositeScope(parentId,fi,out,1,map,null);return out;}
-function drawCelThumb(ctx,layerId,fi){const L=layerById(layerId),cv=ctx.canvas;
-  if(L&&L.group){const{tw,th}=thumbSize();if(cv.width!==tw||cv.height!==th){cv.width=tw;cv.height=th;}
-    ctx.clearRect(0,0,tw,th);const buf=compositeGroupThumb(L.id,fi,tw,th);
-    ctx.putImageData(new ImageData(new Uint8ClampedArray(buf.buffer),tw,th),0,0);return;}
-  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
-  ctx.clearRect(0,0,W,H);const cel=doc.cels.get(L?celKeyFor(L,fi):celKey(layerId,fi));if(!cel)return;
-  ctx.putImageData(new ImageData(new Uint8ClampedArray(cel.slice().buffer),W,H),0,0);
+  return thumbMapCache={W,H,tw,th,map};}
+function compositeGroupThumb(parentId,fi,tw,th){
+  const out=new Uint32Array(tw*th);compositeScope(parentId,fi,out,1,thumbMap().map,null);return out;}
+// Every thumb (cel, group, mask) is drawn straight at thumbnail size. A full-size canvas per cel used to
+// cost W×H×4 bytes each — 120 cels of 512² were 125MB of canvas memory, rebuilt on every timeline refresh.
+function drawCelThumb(ctx,layerId,fi){const L=layerById(layerId),cv=ctx.canvas;const{tw,th,map}=thumbMap();
+  if(cv.width!==tw||cv.height!==th){cv.width=tw;cv.height=th;}
+  ctx.clearRect(0,0,tw,th);let buf;
+  if(L&&L.group)buf=compositeGroupThumb(L.id,fi,tw,th);
+  else{const cel=doc.cels.peek(L?celKeyFor(L,fi):celKey(layerId,fi));if(!cel)return;
+    buf=new Uint32Array(tw*th);for(let i=0;i<buf.length;i++)buf[i]=cel[map[i]];}
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(buf.buffer),tw,th),0,0);
 }
 // Layer-name column width (finger/mouse resizable via the corner grip)
 let layerColW=(()=>{try{return Math.max(70,Math.min(320,+localStorage.getItem('pxeditor-lcolw')||118));}catch(_){return 118;}})();
@@ -2737,7 +2760,7 @@ function refreshTimeline(){
   grid.style.setProperty('--lcolw',layerColW+'px');
   // cel thumbs keep the canvas aspect (40px tall); a mask thumb sits beside the cel when any layer has one
   const thW=Math.max(24,Math.min(120,Math.round(40*W/H)));
-  const anyMask=doc.layers.some(L=>layerHasMask(L));
+  const anyMask=!!(doc.masks&&doc.masks.size)&&doc.layers.some(L=>layerHasMask(L));
   grid.style.setProperty('--thw',thW+'px');grid.style.setProperty('--celw',(anyMask?thW*2+9:thW+6)+'px');
   const hrow=document.createElement('div');hrow.className='tl-row tl-head';
   const corner=document.createElement('div');corner.className='tl-corner';
@@ -2814,10 +2837,10 @@ function refreshTimeline(){
       const cell=document.createElement('div');
       cell.className='tl-cell'+(li===activeLayer&&fi===activeFrame?' active':'')+((selLayers.has(li)&&selFrames.has(fi))?' sel':'');
       cell.dataset.l=li;cell.dataset.f=fi;
-      const cv=document.createElement('canvas');cv.width=W;cv.height=H;cv.className='cthumb';cell.appendChild(cv);
+      const cv=document.createElement('canvas');cv.className='cthumb';cell.appendChild(cv);
       drawCelThumb(cv.getContext('2d'),L.id,fi);
-      const mk=getMask(L,fi);
-      if(mk){const mv=document.createElement('canvas');mv.width=W;mv.height=H;
+      const mk=peekMask(L,fi);
+      if(mk){const mv=document.createElement('canvas');
         mv.className='mthumb'+(maskEdit===L.id&&maskEditFi===fi?' editing':'')+(L.maskOn===false?' off':'');
         mv.title='このフレームのマスク（タップで編集 / 長押しでメニュー / Ctrl+クリックで選択範囲に）';drawMaskThumb(mv.getContext('2d'),L.id,fi);
         mv.onclick=ev=>{ev.stopPropagation();if(justDragged)return;
@@ -3120,7 +3143,7 @@ function mergeLayersSel(){let idxs=[...selLayers].sort((a,b)=>a-b);
   activeLayer=bottom;selLayers=new Set([bottom]);refreshTimeline();render();toast('レイヤーを結合');}
 
 /* ---- Multi-aware frame ops ---- */
-function insertFrameAt(pos,fc){const nm=new Map();
+function insertFrameAt(pos,fc){const nm=new CelMap();
   doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);nm.set(!isNaN(f)&&f>=pos?(lid+':'+(f+1)):k,v);});doc.cels=nm;
   remapMasks(f=>f>=pos?f+1:f);
   doc.frames.splice(pos,0,{id:uid(),duration:fc?fc.duration:125});
@@ -3242,7 +3265,7 @@ function moveFrame(from,to){
   pushUndo();
   const order=doc.frames.map((_,i)=>i);
   const [m]=order.splice(from,1);order.splice(to,0,m);
-  const newCels=new Map();
+  const newCels=new CelMap();
   doc.layers.forEach(L=>order.forEach((oldIdx,ni)=>{const c=doc.cels.get(L.id+':'+oldIdx);if(c)newCels.set(L.id+':'+ni,c);}));
   doc.cels.forEach((v,k)=>{if(k.endsWith(':link'))newCels.set(k,v);});   // shared cels are frame-independent
   const back=[];order.forEach((oldIdx,ni)=>back[oldIdx]=ni);remapMasks(f=>back[f]===undefined?-1:back[f]);
@@ -3288,11 +3311,11 @@ function mergeLayerFn(){if(activeLayer===0){toast('下にレイヤーがあり�
   doc.layers.splice(activeLayer,1);activeLayer--;refreshTimeline();render();}
 
 /* Frame ops */
-function reindexAfterDelete(delIdx){const nm=new Map();
+function reindexAfterDelete(delIdx){const nm=new CelMap();
   doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);
     if(isNaN(f)||f<delIdx)nm.set(k,v);else if(f>delIdx)nm.set(lid+':'+(f-1),v);});doc.cels=nm;
   remapMasks(f=>f<delIdx?f:f>delIdx?f-1:-1);}
-function duplicateFrame(fi){pushUndo();const src=doc.frames[fi];const nm=new Map();
+function duplicateFrame(fi){pushUndo();const src=doc.frames[fi];const nm=new CelMap();
   doc.cels.forEach((v,k)=>{const[lid,f]=k.split(':').map(Number);if(isNaN(f)||f<=fi)nm.set(k,v);else nm.set(lid+':'+(f+1),v);});
   doc.layers.forEach(L=>{const c=nm.get(celKey(L.id,fi));if(c)nm.set(celKey(L.id,fi+1),c.slice());});
   remapMasks(f=>f<=fi?f:f+1);doc.layers.forEach(L=>{const m=getMask(L,fi);if(m)setMask(L,fi+1,m.slice());});
@@ -3516,7 +3539,8 @@ function openDestructiveAdjust(type){
   adjToolType=type;const cel=activeCel();const base=cel.slice();const mask=selection?selection.mask:null;
   const params=adjDefaults(type);
   const apply=p=>{cel.set(base);applyAdjustBuf(type,p,cel,mask);render();updateCelThumbThrottled();};
-  const commit=()=>{cel.set(base);pushUndo();applyAdjustBuf(type,params,cel,mask);render();updateCelThumb(activeLayer,activeFrame);toast('色調補正を適用');};
+  // (activeCel() is asked for again after pushUndo: the old reference now belongs to history)
+  const commit=()=>{cel.set(base);pushUndo();applyAdjustBuf(type,params,activeCel(),mask);render();updateCelThumb(activeLayer,activeFrame);toast('色調補正を適用');};
   const cancel=()=>{cel.set(base);render();updateCelThumb(activeLayer,activeFrame);};
   apply(params);openAdjustEditor({type,params,apply,commit,cancel,layerMode:false});
 }
@@ -3544,7 +3568,7 @@ function updateAdjustPanelForLayer(){
 // colour-replace tool: tap a colour on the active layer to swap it for the current colour
 function replaceColorAt(x,y){if(!inBounds(x,y))return;
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
-  const cel=activeCel();const target=cel[y*W+x];pushUndo();
+  const target=activeCel()[y*W+x];pushUndo();const cel=activeCel();
   const repl=withOpacity(color,opacity),tol=QUICKTOL,mask=selection?selection.mask:null;
   const tr=target&255,tg=(target>>8)&255,tb=(target>>16)&255,ta=(target>>>24)&255;
   for(let i=0;i<cel.length;i++){if(mask&&!mask[i])continue;const p=cel[i];
@@ -3945,7 +3969,7 @@ $('#sizeOk').onclick=()=>{const w=Math.max(1,Math.min(2048,+$('#newW').value|0))
 function resizeCanvas(nw,nh,ax=0,ay=0){const ox=Math.round((nw-W)*ax),oy=Math.round((nh-H)*ay);
   cropCanvas(-ox,-oy,nw,nh,'サイズ変更 '+nw+'×'+nh+'（'+ANCHOR_NAMES[ax+','+ay]+'基準）');}
 // New canvas = the nw×nh window whose top-left is old (x0,y0); may reach outside the old canvas (transparent).
-function cropCanvas(x0,y0,nw,nh,msg){pushUndo();const ow=W,oh=H,nm=new Map();
+function cropCanvas(x0,y0,nw,nh,msg){pushUndo();const ow=W,oh=H,nm=new CelMap();
   const ox=-x0,oy=-y0;   // where the old (0,0) lands in the new canvas
   const copy=(src,dst,fillv)=>{if(fillv)dst.fill(fillv);
     for(let y=0;y<oh;y++){const ny=y+oy;if(ny<0||ny>=nh)continue;
@@ -4535,7 +4559,7 @@ async function loadAse(ab){
   // Commit into the document model
   W=w;H=h;
   doc={layers:ourLayers.length?ourLayers:[{id:uid(),name:'レイヤー 1',visible:true,opacity:255,locked:false}],
-       frames:[],cels:new Map()};
+       frames:[],cels:new CelMap()};
   for(let f=0;f<nFrames;f++)doc.frames.push({id:uid(),duration:frameDur[f]||125});
   for(const [key,buf] of celBuf){const [li,fr]=key.split(':').map(Number);const our=aseLayers[li];
     if(our==null)continue;doc.cels.set(doc.layers[our].id+':'+fr,buf);}
@@ -4660,13 +4684,13 @@ async function parseProjectBytes(u8){
   if(u8[0]===0x50&&u8[1]===0x58&&u8[2]===0x50&&u8[3]===0x4a){
     const dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength);const jsonLen=dv.getUint32(8,true),base=dv.getUint32(12,true);
     const h=JSON.parse(new TextDecoder().decode(u8.subarray(16,16+jsonLen)));
-    const cels=new Map(),masks=new Map();
+    const cels=new CelMap(),masks=new Map();
     (h.cels||[]).forEach(c=>cels.set(c.k,new Uint32Array(u8.buffer.slice(u8.byteOffset+base+c.o,u8.byteOffset+base+c.o+c.n*4))));
     (h.masks||[]).forEach(m=>masks.set(m.k,u8.slice(base+m.o,base+m.o+m.n)));
     return {W:h.W,H:h.H,palette:h.palette,layers:h.layers,frames:h.frames,tags:h.tags||null,cels,masks,activeLayer:h.activeLayer||0,activeFrame:h.activeFrame||0,convert:h.convert||null};}
   return parseLegacyProject(u8);}
 function legacyFromObj(d){if(!d||!Array.isArray(d.layers)||!Array.isArray(d.frames)||!d.cels)throw new Error('プロジェクト形式ではありません');
-  const cels=d.cels instanceof Map?d.cels:new Map(Object.keys(d.cels).map(k=>[k,u32FromB64(d.cels[k])]));
+  const cels=d.cels instanceof CelMap?d.cels:new CelMap(d.cels instanceof Map?[...d.cels]:Object.keys(d.cels).map(k=>[k,u32FromB64(d.cels[k])]));
   return {W:d.W,H:d.H,palette:d.palette,layers:d.layers,frames:d.frames,tags:d.tags||null,cels,masks:masksFromB64(d.masks),
     activeLayer:d.activeLayer||0,activeFrame:d.activeFrame||0,convert:d.convert||null};}
 // v1 text: small files go through JSON.parse; big ones have their "cels":{...} block decoded
@@ -4826,20 +4850,22 @@ let autosaveOn=true, autosaveTimer=null;
 function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open(IDB_NAME,1);
   r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains(IDB_STORE))db.createObjectStore(IDB_STORE);};
   r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
-function serializeDoc(d){const cels={};d.cels.forEach((v,k)=>{cels[k]=v.buffer.slice(0);});
-  const masks={};if(d.masks)d.masks.forEach((v,k)=>{masks[k]=v.buffer.slice(0);});
+// IndexedDB clones the buffers itself while put() runs, so the live arrays go in as they are (no extra copy)
+function serializeDoc(d){const cels={};d.cels.forEach((v,k)=>{cels[k]=v;});
+  const masks={};if(d.masks)d.masks.forEach((v,k)=>{masks[k]=v;});
   return {layers:JSON.parse(JSON.stringify(d.layers)),frames:JSON.parse(JSON.stringify(d.frames)),
     cels,masks,convert:d.convert||null,tags:d.tags?JSON.parse(JSON.stringify(d.tags)):null};}
 function serializeTab(t){return {name:t.name,W:t.W,H:t.H,activeLayer:t.activeLayer,activeFrame:t.activeFrame,
   palette:t.palette?t.palette.slice():DEFAULT_PAL.slice(),doc:serializeDoc(t.doc)};}
-function deserializeTab(s){const cels=new Map();for(const k in s.doc.cels)cels.set(k,new Uint32Array(s.doc.cels[k]));
+function deserializeTab(s){const cels=new CelMap();for(const k in s.doc.cels)cels.set(k,new Uint32Array(s.doc.cels[k]));
   const masks=new Map();if(s.doc.masks)for(const k in s.doc.masks)masks.set(k,new Uint8Array(s.doc.masks[k]));
   const doc={layers:s.doc.layers,frames:s.doc.frames,cels,masks,convert:s.doc.convert||null,tags:s.doc.tags||null};
   return {doc,W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
     selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};}
-function scheduleAutosave(){if(typeof cloudTouch==='function')cloudTouch();
-  if(!autosaveOn)return;clearTimeout(autosaveTimer);autosaveTimer=setTimeout(autosaveNow,1200);}
-async function autosaveNow(){if(!autosaveOn||!docTabs.length)return;
+let autosaveDirty=false;
+function scheduleAutosave(){if(typeof cloudTouch==='function')cloudTouch();autosaveDirty=true;
+  if(!autosaveOn)return;clearTimeout(autosaveTimer);autosaveTimer=setTimeout(autosaveNow,2500);}
+async function autosaveNow(){if(!autosaveOn||!docTabs.length||!autosaveDirty)return;autosaveDirty=false;
   try{saveCurrentTab();const tabs=docTabs.map(serializeTab);const db=await idbOpen();
     await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readwrite');
       tx.objectStore(IDB_STORE).put({tabs,curTab,savedAt:Date.now()},IDB_KEY);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
@@ -4939,7 +4965,7 @@ function cloudSnapshot(){saveCurrentTab();
       palette:t.palette?t.palette.slice():DEFAULT_PAL.slice(),layers:t.doc.layers,frames:t.doc.frames,
       tags:t.doc.tags||null,convert:t.doc.convert||null,cels,masks:masksB64(t.doc)};})};}
 function cloudApply(snap){
-  docTabs=snap.tabs.map(s=>{const cels=new Map();for(const k in s.cels)cels.set(k,u32FromB64(s.cels[k]));
+  docTabs=snap.tabs.map(s=>{const cels=new CelMap();for(const k in s.cels)cels.set(k,u32FromB64(s.cels[k]));
     return {doc:{layers:s.layers,frames:s.frames,cels,masks:masksFromB64(s.masks),convert:s.convert||null,tags:s.tags||null},
       W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
       selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};});

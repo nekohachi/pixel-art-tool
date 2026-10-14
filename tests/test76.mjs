@@ -18,11 +18,11 @@ await page.evaluate(()=>{window.T={R:packHex('#ff0000',255)>>>0,B:packHex('#0000
     stage.dispatchEvent(new PointerEvent('pointerdown',o('pointerdown')));stage.dispatchEvent(new PointerEvent('pointerup',o('pointerup')));}};});
 
 // 1) alpha lock
-const A=await page.evaluate(()=>{newDoc(8,8);fitView();setTool('pencil');brushSize=1;brushSizes.pencil=1;const c=getCel(0,0);c[2*8+2]=T.R;c[3*8+3]=packHex('#ff0000',128);
+const A=await page.evaluate(()=>{newDoc(8,8);fitView();setTool('pencil');brushSize=1;brushSizes.pencil=1;const c0=getCel(0,0);c0[2*8+2]=T.R;c0[3*8+3]=packHex('#ff0000',128);const c=()=>getCel(0,0);   // re-fetch: history is copy-on-write
   toggleAlphaLock(0);setColorHex('#0000ff');opacity=255;T.tap(0,0);T.tap(2,2);opacity=255;T.tap(3,3);
-  const out={transparentStays:c[0]===0,recoloured:(c[2*8+2]>>>0)===T.B,alphaKept:(c[3*8+3]>>>24)===128&&(c[3*8+3]&0xff0000)!==0,btn:!!$('#tlGrid .lbtn.lock.alpha')};
-  setTool('eraser');T.tap(2,2);out.eraseNoop=(c[2*8+2]>>>0)===T.B;
-  setTool('bucket');setColorHex('#00ff00');T.tap(5,5);out.fillNoop=c[5*8+5]===0;T.tap(2,2);out.fillKeeps=(c[2*8+2]>>>0)===T.G;
+  const out={transparentStays:c()[0]===0,recoloured:(c()[2*8+2]>>>0)===T.B,alphaKept:(c()[3*8+3]>>>24)===128&&(c()[3*8+3]&0xff0000)!==0,btn:!!$('#tlGrid .lbtn.lock.alpha')};
+  setTool('eraser');T.tap(2,2);out.eraseNoop=(c()[2*8+2]>>>0)===T.B;
+  setTool('bucket');setColorHex('#00ff00');T.tap(5,5);out.fillNoop=c()[5*8+5]===0;T.tap(2,2);out.fillKeeps=(c()[2*8+2]>>>0)===T.G;
   toggleAlphaLock(0);setTool('pencil');return out;});
 ok('透明保護: paints only on existing pixels, keeps their alpha; eraser/bucket on transparent do nothing',A.transparentStays&&A.recoloured&&A.alphaKept&&A.btn&&A.eraseNoop&&A.fillNoop&&A.fillKeeps);
 
@@ -52,7 +52,7 @@ const Lk=await page.evaluate(()=>{newDoc(8,8);addFrame();addFrame();activeFrame=
   const out={shared:getCel(0,0)===getCel(0,2)&&(getCel(0,2)[0]>>>0)===T.R,key:doc.cels.has(L.id+':link')&&!doc.cels.has(celKey(L.id,1)),badge:$('#tlGrid .tl-lhead[data-li="0"]').classList.contains('linked')};
   getCel(0,2)[5]=T.B;out.editAnywhere=(getCel(0,0)[5]>>>0)===T.B;
   duplicateFrame(0);deleteFrame(1);moveFrame(0,2);insertFrameAt(1,null);out.survivesFrameOps=doc.cels.has(L.id+':link')&&(getCel(0,3)[5]>>>0)===T.B;
-  refreshTimeline();out.thumbShown=(()=>{const cv=$('#tlGrid .tl-cell[data-l="0"][data-f="3"] canvas.cthumb');const d=cv.getContext('2d').getImageData(5,0,1,1).data;return d[2]===255;})();
+  refreshTimeline();out.thumbShown=(()=>{const cv=$('#tlGrid .tl-cell[data-l="0"][data-f="3"] canvas.cthumb');const d=cv.getContext('2d').getImageData(Math.floor(5.5*cv.width/W),0,1,1).data;return d[2]===255;})();   // (thumb is thumbnail-sized)})();
   toggleLinked(0);out.unlinked=!L.linked&&getCel(0,0)!==getCel(0,1)&&(getCel(0,1)[5]>>>0)===T.B&&!doc.cels.has(L.id+':link');
   // project round-trip keeps a linked layer
   toggleLinked(0);const raw=projBinary();return {...out,raw:Array.from(raw)};});
