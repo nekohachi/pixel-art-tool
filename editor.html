@@ -1193,7 +1193,8 @@ function loadBundle(s){
   $('#docsize').textContent=W+'×'+H;
   const mr=document.getElementById('mReconvert');if(mr)mr.style.display=(doc&&doc.convert)?'':'none';
   ensureComp();renderPalette();refreshTimeline();render();updateUndoUI();updateSelModVisible();}
-function saveCurrentTab(){if(maskEdit!==null)syncMaskFromBuf();if(docTabs[curTab])docTabs[curTab]=bundleFromGlobals(docTabs[curTab].name);}
+function saveCurrentTab(){if(maskEdit!==null)syncMaskFromBuf();const old=docTabs[curTab];if(!old)return;
+  const nb=bundleFromGlobals(old.name);nb.uid=old.uid;docTabs[curTab]=nb;}
 function renderTabs(){const bar=$('#docTabbar');if(!bar)return;bar.innerHTML='';
   docTabs.forEach((t,i)=>{const el=document.createElement('div');el.className='dtab'+(i===curTab?' active':'');
     el.innerHTML='<span class="dt-name"></span>'+(docTabs.length>1?'<span class="dt-x" title="タブを閉じる">×</span>':'');
@@ -1326,13 +1327,33 @@ function groupOpacity(L){let m=1,p=L.parent;while(p){const g=layerById(p);if(!g)
 // A clipped layer (clip) only shows where the nearest non-clipped layer below it is opaque.
 // The same routine renders thumbnails through an index map (map[i] = full-res pixel index).
 function compositeFrame(frameIdx,ctxTarget){
-  const out=compositeGroup(null,frameIdx);
+  const out=strokeComposite(frameIdx)||compositeGroup(null,frameIdx);
   ctxTarget.putImageData(new ImageData(new Uint8ClampedArray(out.buffer),W,H),0,0);
 }
+/* While a stroke is in progress only the active cel changes, so the layers below it and the layers
+   above it are composited once at pen-down and reused for every redraw: 2 blends per frame instead of
+   one per layer. Only taken for a plain, visible root layer whose neighbours cannot depend on it
+   (no adjustment layer / pass-through group above, the layer above not clipped to it). */
+let strokeCache=null;
+function beginStrokeCache(){strokeCache=null;const li=activeLayer,L=doc.layers[li];
+  if(!L||L.group||L.adj||L.parent||L.clip||!L.visible)return;
+  let firstAbove=true;
+  for(let i=li+1;i<doc.layers.length;i++){const A=doc.layers[i];if((A.parent||null)!==null||!A.visible)continue;
+    if(A.adj||(A.group&&A.passThrough)||(firstAbove&&A.clip))return;firstAbove=false;}
+  const below=new Uint32Array(W*H);compositeScope(null,activeFrame,below,1,null,null,0,li);
+  const above=new Uint32Array(W*H);compositeScope(null,activeFrame,above,1,null,null,li+1,doc.layers.length);
+  strokeCache={fi:activeFrame,lid:L.id,W,H,below,above};}
+function endStrokeCache(){strokeCache=null;}
+function strokeComposite(fi){const c=strokeCache;if(!c||c.fi!==fi||c.W!==W||c.H!==H)return null;
+  const L=doc.layers[activeLayer];if(!L||L.id!==c.lid)return null;
+  const out=c.below.slice();const cel=doc.cels.peek(celKeyFor(L,fi));
+  if(cel)blendBufS(out,cel,L.opacity,L.maskOn===false?null:peekMask(L,fi),null,null,null);
+  blendBufS(out,c.above,255,null,null,null,null);return out;}
 function compositeGroup(parentId,fi){const out=new Uint32Array(W*H);compositeScope(parentId,fi,out,1,null,null);return out;}
-function compositeScope(parentId,fi,out,opMul,map,clipIn){
+function compositeScope(parentId,fi,out,opMul,map,clipIn,lo,hi){
   let clipBase=clipIn||null;   // {buf,map}: alpha source for clipped layers
-  for(let li=0;li<doc.layers.length;li++){
+  const end=hi===undefined?doc.layers.length:Math.min(hi,doc.layers.length);
+  for(let li=lo||0;li<end;li++){
     const L=doc.layers[li];if((L.parent||null)!==parentId||!L.visible)continue;
     const mk=L.maskOn===false?null:peekMask(L,fi);const cb=L.clip?clipBase:null;
     if(L.group){
@@ -1876,7 +1897,7 @@ function updateBrushCursor(){
   if(['pencil','eraser'].includes(tool)){const s=Math.max(1,brushSize)*zoom;bc.style.width=s+'px';bc.style.height=s+'px';}
 }
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
-function cancelStroke(){penLine=null;
+function cancelStroke(){penLine=null;endStrokeCache();
   if(drawing){drawing=false;previewCel=null;lassoPts=null;dragCur=null;
     if(undoStack.length)restore(undoStack.pop());redoStack=lastClearedRedo;updateUndoUI();}
 }
@@ -1931,7 +1952,7 @@ stage.addEventListener('pointerdown',e=>{
   if(doc.layers[activeLayer].group){toast('グループには描けません。中のレイヤーを選んでください');return;}
   if(doc.layers[activeLayer].locked){toast('レイヤーがロックされています');return;}
   strokeIsPen=(e.pointerType==='pen');strokePressure=(strokeIsPen&&e.pressure>0)?e.pressure:1;
-  pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];
+  pushUndo();drawing=true;startPix=lastPix={x,y};ppPrev=[];beginStrokeCache();
   const cel=activeCel();
   if(tool==='bucket'){floodFill(cel,x,y);drawing=false;render();updateCelThumb(activeLayer,activeFrame);return;}
   if(GRADTOOL.includes(tool)){previewCel=cel.slice();updateGradPreview(x,y);return;}
@@ -2072,7 +2093,7 @@ function finishAll(){
   if(panning)panning=false;
   if(moving)endMove(false);
   if(drawing){
-    drawing=false;
+    drawing=false;endStrokeCache();
     if(tool==='select'){
       if(dragCur&&startPix){
         if(curSelMode==='replace'&&startPix.x===dragCur.x&&startPix.y===dragCur.y)selection=null;
@@ -2855,7 +2876,7 @@ function refreshTimeline(){
         if(mode){loadCelSelection(li,fi,mode);return;}
         activeLayer=li;activeFrame=fi;selLayers=new Set([li]);selFrames=new Set([fi]);
         if(maskEdit!==null){exitMaskEdit();return;}   // tapping the image thumb leaves mask editing
-        refreshTimeline();render();};
+        lightTimeline();render();};
       bindCellLong(cell,li,fi);
       row.appendChild(cell);
     });
@@ -3327,7 +3348,10 @@ function frameMenu(fi){activeFrame=fi;refreshTimeline();
   if(confirm('フレーム '+(fi+1)+' を削除しますか？（キャンセルで複製）'))deleteFrame(fi);else duplicateFrame(fi);}
 // Frame navigation (Aseprite-style): first / prev / next / last
 function gotoFrame(fi){activeFrame=Math.max(0,Math.min(doc.frames.length-1,fi));
-  selFrames=new Set([activeFrame]);refreshTimeline();render();}
+  selFrames=new Set([activeFrame]);lightTimeline();render();}
+// frame / cel switch: just move the highlight unless mask editing changed state (then the thumbs need redrawing)
+function lightTimeline(){const before=maskEdit+':'+maskEditFi;checkMaskEdit();
+  if(before!==maskEdit+':'+maskEditFi)refreshTimeline();else highlightTimeline();}
 function gotoLayer(li){activeLayer=Math.max(0,Math.min(doc.layers.length-1,li));
   selLayers=new Set([activeLayer]);refreshTimeline();render();}
 $('#frFirst').onclick=()=>gotoFrame(0);
@@ -4845,7 +4869,11 @@ function lzwEncode(indices,minCodeSize){const clearCode=1<<minCodeSize,eoiCode=c
   emit(dict.get(w));emit(eoiCode);if(curBits>0)out.push(cur&255);return out;}
 
 /* ================= Autosave (IndexedDB) ================= */
-const IDB_NAME='pxeditor', IDB_STORE='session', IDB_KEY='autosave';
+const IDB_NAME='pxeditor', IDB_STORE='session', IDB_KEY='autosave', IDB_META='autosave-meta';
+// one record per tab ('tab:<uid>') + a small meta record. A bundle object that was already written and
+// has not been replaced since (the current tab's bundle is rebuilt on every save) is not written again.
+const idbSaved=new WeakSet();
+function tabUid(t){if(!t.uid)t.uid=Date.now().toString(36)+Math.random().toString(36).slice(2,8);return t.uid;}
 let autosaveOn=true, autosaveTimer=null;
 function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open(IDB_NAME,1);
   r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains(IDB_STORE))db.createObjectStore(IDB_STORE);};
@@ -4866,22 +4894,30 @@ let autosaveDirty=false;
 function scheduleAutosave(){if(typeof cloudTouch==='function')cloudTouch();autosaveDirty=true;
   if(!autosaveOn)return;clearTimeout(autosaveTimer);autosaveTimer=setTimeout(autosaveNow,2500);}
 async function autosaveNow(){if(!autosaveOn||!docTabs.length||!autosaveDirty)return;autosaveDirty=false;
-  try{saveCurrentTab();const tabs=docTabs.map(serializeTab);const db=await idbOpen();
-    await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readwrite');
-      tx.objectStore(IDB_STORE).put({tabs,curTab,savedAt:Date.now()},IDB_KEY);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
+  try{saveCurrentTab();const order=docTabs.map(tabUid);const db=await idbOpen();
+    await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readwrite');const st=tx.objectStore(IDB_STORE);
+      docTabs.forEach(t=>{if(!idbSaved.has(t))st.put(serializeTab(t),'tab:'+tabUid(t));});
+      st.put({order,curTab,savedAt:Date.now()},IDB_META);st.delete(IDB_KEY);   // (old single-record form)
+      const rq=st.getAllKeys();rq.onsuccess=()=>{rq.result.forEach(k=>{if(typeof k==='string'&&k.startsWith('tab:')&&!order.includes(k.slice(4)))st.delete(k);});};
+      tx.oncomplete=()=>{docTabs.forEach(t=>idbSaved.add(t));res();};tx.onerror=()=>rej(tx.error);});
     db.close();}catch(e){/* storage unavailable (private mode etc.) — ignore */}}
 async function autosaveLoad(){
   try{const db=await idbOpen();
-    const data=await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readonly');
-      const rq=tx.objectStore(IDB_STORE).get(IDB_KEY);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});
+    const data=await new Promise((res,rej)=>{const tx=db.transaction(IDB_STORE,'readonly');const st=tx.objectStore(IDB_STORE);
+      const rm=st.get(IDB_META);rm.onerror=()=>rej(rm.error);
+      rm.onsuccess=()=>{const meta=rm.result;
+        if(!meta||!meta.order||!meta.order.length){const rq=st.get(IDB_KEY);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);return;}
+        const tabs=[];let left=meta.order.length;
+        meta.order.forEach((uid,i)=>{const rq=st.get('tab:'+uid);rq.onerror=()=>rej(rq.error);
+          rq.onsuccess=()=>{if(rq.result){rq.result.uid=uid;tabs[i]=rq.result;}if(--left===0)res({tabs:tabs.filter(Boolean),curTab:meta.curTab});};});};});
     db.close();if(!data||!data.tabs||!data.tabs.length)return false;
-    docTabs=data.tabs.map(deserializeTab);curTab=Math.min(data.curTab||0,docTabs.length-1);
+    docTabs=data.tabs.map(s=>{const t=deserializeTab(s);if(s.uid)t.uid=s.uid;idbSaved.add(t);return t;});curTab=Math.min(data.curTab||0,docTabs.length-1);
     // bump the id counter past every restored id so new layers/frames don't collide
     let mx=0;docTabs.forEach(t=>{t.doc.layers.forEach(l=>{if(+l.id>mx)mx=+l.id;});t.doc.frames.forEach(f=>{if(+f.id>mx)mx=+f.id;});});
     nextId=mx+1;
     loadBundle(docTabs[curTab]);renderTabs();return true;}catch(e){return false;}}
 async function clearAutosave(){try{const db=await idbOpen();
-  await new Promise(res=>{const tx=db.transaction(IDB_STORE,'readwrite');tx.objectStore(IDB_STORE).delete(IDB_KEY);tx.oncomplete=res;tx.onerror=res;});db.close();}catch(e){}}
+  await new Promise(res=>{const tx=db.transaction(IDB_STORE,'readwrite');tx.objectStore(IDB_STORE).clear();tx.oncomplete=res;tx.onerror=res;});db.close();}catch(e){}}
 
 /* ---- Open a file by dropping it on the window (desktop browsers) ---- */
 function openDroppedFile(f){
@@ -4959,17 +4995,78 @@ async function cloudToken(){
   try{localStorage.setItem(CLOUD_RT,cloudTok.refresh);}catch(_){}return cloudTok.idToken;}
 function cloudUrl(path,tok){return cloud.dbUrl.replace(/\/+$/,'')+'/sync/'+cloudSanitizeKey(cloud.syncKey)+path+'.json?auth='+encodeURIComponent(tok);}
 // --- whole-workspace snapshot (JSON-safe, every tab) ---
-function cloudSnapshot(){saveCurrentTab();
-  return {v:1,curTab,tabs:docTabs.map(t=>{const cels={};t.doc.cels.forEach((v,k)=>{cels[k]=b64FromU32(v);});
+/* The cloud copy used to be JSON with every cel as base64 text, gzipped as text: for a 24-frame 512²
+   project that was ~2.5s of base64 + ~13s of JSON.stringify/gzip on the main thread, 4s after every
+   edit. Now all tabs go into one binary container ("PXTB": header JSON + raw pixel bytes, like .pxproj v2),
+   gzipped as bytes by the browser's streaming compressor. Old JSON snapshots are still readable. */
+function tabsBinaryBlob(list,ct){const b=tabsBinaryParts(list,ct);return new Blob([b.head,...b.parts]);}
+function tabsBinaryParts(list,ct){if(!list){saveCurrentTab();list=docTabs;ct=curTab;}const parts=[];let off=0;
+  const put=v=>{const o=off;parts.push(v);off+=v.byteLength;const pad=PX_ALIGN(off)-off;if(pad){parts.push(new Uint8Array(pad));off+=pad;}return o;};
+  const tabs=list.map(t=>{const cels=[],masks=[];
+    t.doc.cels.forEach((v,k)=>cels.push({k,o:put(v),n:v.length}));
+    if(t.doc.masks)t.doc.masks.forEach((v,k)=>masks.push({k,o:put(v),n:v.length}));
     return {name:t.name,W:t.W,H:t.H,activeLayer:t.activeLayer,activeFrame:t.activeFrame,
       palette:t.palette?t.palette.slice():DEFAULT_PAL.slice(),layers:t.doc.layers,frames:t.doc.frames,
-      tags:t.doc.tags||null,convert:t.doc.convert||null,cels,masks:masksB64(t.doc)};})};}
-function cloudApply(snap){
-  docTabs=snap.tabs.map(s=>{const cels=new CelMap();for(const k in s.cels)cels.set(k,u32FromB64(s.cels[k]));
-    return {doc:{layers:s.layers,frames:s.frames,cels,masks:masksFromB64(s.masks),convert:s.convert||null,tags:s.tags||null},
-      W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
-      selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};});
-  curTab=Math.max(0,Math.min(snap.curTab||0,docTabs.length-1));
+      tags:t.doc.tags||null,convert:t.doc.convert||null,cels,masks};});
+  const json=new TextEncoder().encode(JSON.stringify({v:2,curTab:ct||0,tabs}));const dataStart=16+PX_ALIGN(json.length);
+  const head=new Uint8Array(dataStart);const dv=new DataView(head.buffer);
+  head.set([0x50,0x58,0x54,0x42]);dv.setUint32(4,2,true);dv.setUint32(8,json.length,true);dv.setUint32(12,dataStart,true);head.set(json,16);
+  return {head,parts};}   // Blob / postMessage copy the parts: later edits never leak into a pending upload
+function parseTabsBinary(u8){
+  if(!(u8[0]===0x50&&u8[1]===0x58&&u8[2]===0x54&&u8[3]===0x42))throw new Error('同期データの形式が不明です');
+  const dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength);const jsonLen=dv.getUint32(8,true),base=dv.getUint32(12,true);
+  const h=JSON.parse(new TextDecoder().decode(u8.subarray(16,16+jsonLen)));
+  const tabs=h.tabs.map(s=>{const cels=new CelMap(),masks=new Map();
+    s.cels.forEach(c=>cels.set(c.k,new Uint32Array(u8.buffer.slice(u8.byteOffset+base+c.o,u8.byteOffset+base+c.o+c.n*4))));
+    s.masks.forEach(m=>masks.set(m.k,u8.slice(base+m.o,base+m.o+m.n)));
+    return bundleFromCloud(s,cels,masks);});
+  return {curTab:h.curTab||0,tabs};}
+function bundleFromCloud(s,cels,masks){
+  return {doc:{layers:s.layers,frames:s.frames,cels,masks,convert:s.convert||null,tags:s.tags||null},
+    W:s.W,H:s.H,activeLayer:s.activeLayer,activeFrame:s.activeFrame,undoStack:[],redoStack:[],
+    selection:null,palette:s.palette||DEFAULT_PAL.slice(),activeSwatch:18,zoom:8,panX:0,panY:0,name:s.name};}
+async function packBlob(blob){
+  if(typeof CompressionStream==='undefined')return 'binraw:'+b64FromBytes(new Uint8Array(await blob.arrayBuffer()));
+  const gz=await new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+  return 'bin:'+b64FromBytes(new Uint8Array(gz));}
+// Building the Blob and gzipping it both block the main thread (≈2s for a 120MB project), so the bytes
+// are handed to a worker (one structured-clone copy) and come back as the finished base64 string.
+const PACK_WORKER_SRC=`function b64(u8){let s='';const C=0x8000;for(let i=0;i<u8.length;i+=C)s+=String.fromCharCode.apply(null,u8.subarray(i,i+C));return btoa(s);}
+self.onmessage=async e=>{const{id,head,parts}=e.data;try{const blob=new Blob([head,...parts]);let out;
+  if(typeof CompressionStream==='undefined')out='binraw:'+b64(new Uint8Array(await blob.arrayBuffer()));
+  else{const gz=await new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();out='bin:'+b64(new Uint8Array(gz));}
+  postMessage({id,out});}catch(err){postMessage({id,err:String(err)});}};`;
+let packWorker=null,packSeq=0;const packWaiting=new Map();
+function getPackWorker(){if(packWorker!==null)return packWorker||null;
+  try{const w=new Worker(URL.createObjectURL(new Blob([PACK_WORKER_SRC],{type:'text/javascript'})));
+    w.onmessage=e=>{const p=packWaiting.get(e.data.id);if(!p)return;packWaiting.delete(e.data.id);if(e.data.err)p.rej(new Error(e.data.err));else p.res(e.data.out);};
+    w.onerror=()=>{packWaiting.forEach(p=>p.rej(new Error('pack worker failed')));packWaiting.clear();try{w.terminate();}catch(_){}packWorker=false;};
+    packWorker=w;return w;}catch(_){packWorker=false;return null;}}
+async function packParts(b){const w=getPackWorker();
+  if(w){try{return await new Promise((res,rej)=>{const id=++packSeq;packWaiting.set(id,{res,rej});w.postMessage({id,head:b.head,parts:b.parts});});}
+    catch(_){/* fall through to the main thread */}}
+  return packBlob(new Blob([b.head,...b.parts]));}
+async function unpackBin(str){let u8=bytesFromB64(str.slice(str.indexOf(':')+1));
+  if(str.startsWith('bin:'))u8=new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+  return parseTabsBinary(u8);}
+// one packed chunk per tab, cached on the tab bundle: tabs that were not touched since the last push
+// are not re-encoded at all (the current tab's bundle is rebuilt on every save, so it always re-packs)
+const cloudTabCache=new WeakMap();
+async function cloudPack(){saveCurrentTab();const tabs=[];
+  for(const t of docTabs){let p=cloudTabCache.get(t);if(!p){p=await packParts(tabsBinaryParts([t],0));cloudTabCache.set(t,p);}tabs.push(p);}
+  return 'tabs:'+JSON.stringify({curTab,tabs});}
+async function cloudUnpackApply(str){
+  if(typeof str!=='string'){cloudApply(await gzUnpack(str));return;}
+  if(str.startsWith('tabs:')){const d=JSON.parse(str.slice(5));const tabs=[];
+    for(const p of d.tabs){const u=await unpackBin(p);tabs.push(u.tabs[0]);}cloudApplyBundles(tabs,d.curTab);return;}
+  if(str.startsWith('bin:')||str.startsWith('binraw:')){const d=await unpackBin(str);cloudApplyBundles(d.tabs,d.curTab);return;}
+  cloudApply(await gzUnpack(str));}   // legacy JSON snapshot
+function cloudApply(snap){   // legacy: cels as base64 strings
+  cloudApplyBundles(snap.tabs.map(s=>{const cels=new CelMap();for(const k in s.cels)cels.set(k,u32FromB64(s.cels[k]));
+    return bundleFromCloud(s,cels,masksFromB64(s.masks));}),snap.curTab||0);}
+function cloudApplyBundles(bundles,ct){
+  docTabs=bundles;
+  curTab=Math.max(0,Math.min(ct||0,docTabs.length-1));
   let mx=0;docTabs.forEach(t=>{t.doc.layers.forEach(l=>{if(+l.id>mx)mx=+l.id;});t.doc.frames.forEach(fr=>{if(+fr.id>mx)mx=+fr.id;});});
   nextId=Math.max(nextId,mx+1);
   loadBundle(docTabs[curTab]);renderTabs();fitView();render();}
@@ -4978,7 +5075,7 @@ function cloudPush(force){return cloudSerial(()=>cloudPushNow(force));}
 async function cloudPushNow(force){
   if(!cloudReady()||!cloud.on)return false;
   if(!force&&!cloudDirty)return false;
-  try{const tok=await cloudToken();const blob=await gzPack(cloudSnapshot());
+  try{const tok=await cloudToken();const blob=await cloudPack();
     const rev=cloudRev+1, updatedAt=Date.now();
     const r=await fetch(cloudUrl('/doc',tok),{method:'PUT',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({meta:{rev,updatedAt,deviceId},blob})});
@@ -4993,16 +5090,16 @@ async function cloudPullNow(meta){
     if(!meta||typeof meta!=='object')return false;
     if(meta.deviceId===deviceId){if(meta.rev>cloudRev)cloudRev=meta.rev;return false;}
     if(!(meta.rev>cloudRev))return false;
-    const stashed=cloudDirty;if(stashed)cloudStash=cloudSnapshot();   // keep the version we are about to lose
+    const stashed=cloudDirty;if(stashed)cloudStash=tabsBinaryBlob();   // keep the version we are about to lose
     const r2=await fetch(cloudUrl('/doc/blob',tok));if(!r2.ok)throw new Error('取得に失敗 (HTTP '+r2.status+')');
-    const snap=await gzUnpack(await r2.json());
-    cloudApply(snap);cloudRev=meta.rev;cloudDirty=false;cloudLastSync=meta.updatedAt||Date.now();
+    await cloudUnpackApply(await r2.json());cloudRev=meta.rev;cloudDirty=false;cloudLastSync=meta.updatedAt||Date.now();
     autosaveNow();cloudStatus();
     toast(stashed?'別の端末の変更を反映（上書き前に戻せます）':'別の端末の変更を反映しました');
     return true;
   }catch(e){cloudStatus('エラー: '+(e.message||e));return false;}}
-function cloudRestoreStash(){if(!cloudStash)return;const snap=cloudStash;cloudStash=null;
-  cloudApply(snap);cloudDirty=true;autosaveNow();cloudPush(true);cloudStatus();toast('上書き前の状態に戻しました');}
+async function cloudRestoreStash(){if(!cloudStash)return;const blob=cloudStash;cloudStash=null;
+  const d=parseTabsBinary(new Uint8Array(await blob.arrayBuffer()));cloudApplyBundles(d.tabs,d.curTab);
+  cloudDirty=true;autosaveNow();cloudPush(true);cloudStatus();toast('上書き前の状態に戻しました');}
 // --- watch: server-sent events, falling back to polling ---
 function cloudUnwatch(){if(cloudES){try{cloudES.close();}catch(_){}cloudES=null;}
   if(cloudPollT){clearInterval(cloudPollT);cloudPollT=null;}}
