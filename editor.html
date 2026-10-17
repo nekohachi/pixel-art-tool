@@ -1084,6 +1084,12 @@ function enterMaskEdit(li,fi){const L=doc.layers[li];if(fi===undefined)fi=active
   activeLayer=li;selLayers=new Set([li]);activeFrame=fi;selFrames=new Set([fi]);maskEdit=L.id;maskEditFi=fi;maskBufFromMask();
   refreshTimeline();render();toast('マスク編集（フレーム '+(fi+1)+'）：描く＝表示 / 消す・黒＝隠す');}
 function exitMaskEdit(){if(maskEdit===null)return;syncMaskFromBuf();maskEdit=null;maskBuf=null;refreshTimeline();render();}
+// Photoshop: selecting a mask switches the colours to black (hide) / white (show); going back to the image
+// restores whatever was picked before. Checked on every render so every way of leaving mask editing counts.
+let maskColorSave=null;
+function syncMaskColors(){
+  if(maskEdit!==null&&!maskColorSave){maskColorSave={color,sub:subColor};setColorHex('#000000');subColor=packHex('#ffffff',255);updateSubColorUI();}
+  else if(maskEdit===null&&maskColorSave){const sv=maskColorSave;maskColorSave=null;setColorHex(toHex(sv.color));subColor=sv.sub;updateSubColorUI();}}
 // keep the edit state honest after any structural change (layer gone, other layer picked, mask removed,
 // frame changed: follow the frame when it has a mask of its own, otherwise leave mask editing)
 function checkMaskEdit(){if(maskEdit===null)return;const L=doc.layers[activeLayer];
@@ -1390,7 +1396,7 @@ function blendBufS(dst,src,op,mk,srcMap,mkMap,cb){
 // renderView() = paint only, reusing the cached composite (use for pan/zoom/
 // selection animation) so view changes stay O(1) on big canvases.
 let compDirty=true;
-function render(){if(maskEdit!==null)syncMaskFromBuf();compDirty=true;paintView();}
+function render(){if(maskEdit!==null)syncMaskFromBuf();syncMaskColors();compDirty=true;paintView();}
 // renderSoon(): same as render() but coalesced to one recomposite per animation frame. Used on pointermove,
 // where a pen can report 120–240 events a second — recompositing every layer for each one is wasted work.
 let renderQueued=false;
