@@ -590,6 +590,7 @@
   <div class="xfbar" id="xfBar">
     <button class="xfmod" id="xfShiftBtn" title="縦横比を保持／回転は15°刻み（Shift）">⇧ 比率</button>
     <button class="xfmod" id="xfCtrlBtn" title="角を単独で動かす自由変形（Ctrl）">⌃ 自由</button>
+    <button class="xfmod" id="xfWarpBtn" title="ワープ：4×4 の制御点でメッシュを曲げる（Photoshop のワープ）。もう一度押すと自由変形に戻る">ワープ</button>
     <button class="xfmod" id="xfRsBtn" title="RotSprite：Scale2x で8倍に拡大してから変形し、ドット絵の輪郭と色を保つ（離した時・確定時に適用）">RotSprite</button>
     <button class="xfok" id="xfOk" title="確定">✓</button>
     <button class="xfcancel" id="xfCancel" title="取消">✕</button>
@@ -2338,7 +2339,8 @@ function beginTransform(){
   const parts=targets.map(T=>{const cel=celOf(T,activeFrame);const srcBuf=new Uint32Array(w*h);   // one patch per layer, moved as one
     for(let y=0;y<h;y++)for(let x=0;x<w;x++){const si=(y0+y)*W+(x0+x);if(m[si])srcBuf[y*w+x]=cel[si];}
     const base=cel.slice();for(let i=0;i<W*H;i++)if(m[i])base[i]=0;return {lid:T.id,srcBuf,base};});
-  xf={srcW:w,srcH:h,fi:activeFrame,parts,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}],hist:[],redo:[]};
+  xf={srcW:w,srcH:h,fi:activeFrame,parts,corners:[{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h}],hist:[],redo:[],warp:null,uv:null};
+  $('#xfWarpBtn').classList.remove('on');
   applyTransformRender(true);
   $('#xfBar').classList.add('show');$('#xfOverlay').classList.add('show');$('#xfBtn').classList.add('on');
   updateSelModVisible();drawXfOverlay();toast('変形：外側ドラッグで回転 / 長押しで反転・90°');
@@ -2371,7 +2373,42 @@ function scale2x(src,w,h){const W2=w*2,out=new Uint32Array(W2*h*2);
 function rsScaleFor(w,h){const n=w*h;return n*64<=12e6?8:n*16<=12e6?4:2;}   // keep the big buffer under ~48MB
 function rsBig(P){if(P.big)return P.big;const{srcW,srcH}=xf;let b=P.srcBuf,bw=srcW,bh=srcH;const S=rsScaleFor(srcW,srcH);
   for(let k=1;k<S;k*=2){b=scale2x(b,bw,bh);bw*=2;bh*=2;}P.bigS=S;P.big=b;return b;}
+/* ---- Warp (Photoshop-style): a bicubic Bézier surface over a 4×4 grid of control points. The surface is
+   cut into small cells; every canvas pixel inside a cell is mapped back (inverse bilinear within the
+   cell) to a source sample, so there are never holes, however far the mesh is pulled. ---- */
+function warpFromCorners(c){const pts=[];   // bilinear seed: the mesh starts as the current free-transform box
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){const u=j/3,v=i/3;
+    const tx=c[0].x+(c[1].x-c[0].x)*u,ty=c[0].y+(c[1].y-c[0].y)*u,bx=c[3].x+(c[2].x-c[3].x)*u,by=c[3].y+(c[2].y-c[3].y)*u;
+    pts.push({x:tx+(bx-tx)*v,y:ty+(by-ty)*v});}return pts;}
+function bez3(t){const s=1-t;return [s*s*s,3*s*s*t,3*s*t*t,t*t*t];}
+function warpPoint(u,v,pts){const bu=bez3(u),bv=bez3(v);let x=0,y=0;
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){const w=bv[i]*bu[j];const p=pts[i*4+j];x+=w*p.x;y+=w*p.y;}return {x,y};}
+function invBilinear(q,px,py){let s=0.5,t=0.5;   // Newton on p = bilerp(q0..q3; s,t)
+  for(let k=0;k<6;k++){const a=1-s,b=1-t;
+    const fx=a*b*q[0].x+s*b*q[1].x+s*t*q[2].x+a*t*q[3].x-px,fy=a*b*q[0].y+s*b*q[1].y+s*t*q[2].y+a*t*q[3].y-py;
+    const dxs=-b*q[0].x+b*q[1].x+t*q[2].x-t*q[3].x,dys=-b*q[0].y+b*q[1].y+t*q[2].y-t*q[3].y;
+    const dxt=-a*q[0].x-s*q[1].x+s*q[2].x+a*q[3].x,dyt=-a*q[0].y-s*q[1].y+s*q[2].y+a*q[3].y;
+    const det=dxs*dyt-dxt*dys;if(Math.abs(det)<1e-9)break;
+    s-=(fx*dyt-fy*dxt)/det;t-=(dxs*fy-dys*fx)/det;}
+  return {s:s<0?0:s>1?1:s,t:t<0?0:t>1?1:t};}
+function warpStamp(cel,P,fillMask,hq,srcMap){const pts=xf.warp;const{srcW,srcH}=xf;
+  const buf=hq?rsBig(P):P.srcBuf,S=hq?P.bigS:1,bw=srcW*S,bh=srcH*S;
+  const N=Math.max(4,Math.min(160,srcW*2)),M=Math.max(4,Math.min(160,srcH*2));
+  const G=new Array((N+1)*(M+1));for(let i=0;i<=M;i++)for(let j=0;j<=N;j++)G[i*(N+1)+j]=warpPoint(j/N,i/M,pts);
+  const uv=xf.uv=new Float32Array(W*H*2).fill(-1);
+  for(let i=0;i<M;i++)for(let j=0;j<N;j++){const q=[G[i*(N+1)+j],G[i*(N+1)+j+1],G[(i+1)*(N+1)+j+1],G[(i+1)*(N+1)+j]];
+    let minx=W,miny=H,maxx=-1,maxy=-1;for(const p of q){if(p.x<minx)minx=p.x;if(p.x>maxx)maxx=p.x;if(p.y<miny)miny=p.y;if(p.y>maxy)maxy=p.y;}
+    const x0=Math.max(0,Math.floor(minx)),x1=Math.min(W-1,Math.ceil(maxx)),y0=Math.max(0,Math.floor(miny)),y1=Math.min(H-1,Math.ceil(maxy));
+    for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const dx=x+0.5,dy=y+0.5;if(!pointInQuad(dx,dy,q))continue;
+      const{s,t}=invBilinear(q,dx,dy);const u=(j+s)/N,v=(i+t)/M;const k=y*W+x;uv[k*2]=u;uv[k*2+1]=v;
+      const sx=Math.min(bw-1,Math.max(0,Math.floor(u*bw))),sy=Math.min(bh-1,Math.max(0,Math.floor(v*bh)));
+      const px=buf[sy*bw+sx];if(px){cel[k]=px;if(fillMask)fillMask[k]=1;if(srcMap)srcMap[k]=((sy/S)|0)*srcW+((sx/S)|0)+1;}}}}
+// where does canvas pixel (x,y) come from, in source units 0..1? (free transform: the homography; warp: the map)
+function xfSourceUV(inv,x,y){if(xf.warp){const uv=xf.uv;if(!uv)return null;const k=(y*W+x)*2;const u=uv[k],v=uv[k+1];return u<0?null:{u,v};}
+  if(!inv)return null;const dx=x+0.5,dy=y+0.5,wt=inv[6]*dx+inv[7]*dy+inv[8];if(!wt)return null;
+  const u=(inv[0]*dx+inv[1]*dy+inv[2])/wt,v=(inv[3]*dx+inv[4]*dy+inv[5])/wt;return (u<0||v<0||u>=1||v>=1)?null:{u,v};}
 function xfStamp(cel,P,fillMask,hq,srcMap){
+  if(xf.warp){warpStamp(cel,P,fillMask,hq,srcMap);return;}
   const inv=inv3(xfHomography(xf.corners));if(!inv)return;
   let minx=W,miny=H,maxx=0,maxy=0;for(const p of xf.corners){minx=Math.min(minx,p.x);miny=Math.min(miny,p.y);maxx=Math.max(maxx,p.x);maxy=Math.max(maxy,p.y);}
   minx=Math.max(0,Math.floor(minx));miny=Math.max(0,Math.floor(miny));maxx=Math.min(W-1,Math.ceil(maxx));maxy=Math.min(H-1,Math.ceil(maxy));
@@ -2403,11 +2440,10 @@ function xfPaint(cel,P,nm,hq){
 // connected, and that has a partner of its colour two pixels away with nothing between, gets
 // bridged by the in-between pixel whose 8× neighbourhood holds the most of that colour.
 function rsGapFill(cel,fm,sm,P){const{srcW,srcH}=xf,src=P.srcBuf,big=rsBig(P),S=P.bigS,bw=srcW*S,bh=srcH*S;
-  const inv=inv3(xfHomography(xf.corners));if(!inv)return 0;
+  const inv=xf.warp?null:inv3(xfHomography(xf.corners));if(!inv&&!xf.warp)return 0;
   const same=(buf,w_,h_,x,y,c)=>{let n=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;
     if(nx<0||ny<0||nx>=w_||ny>=h_)continue;if((buf[ny*w_+nx]>>>0)===c)n++;}return n;};
-  const score=(x,y,c)=>{const dx=x+0.5,dy=y+0.5,wt=inv[6]*dx+inv[7]*dy+inv[8];if(!wt)return -1;
-    const u=(inv[0]*dx+inv[1]*dy+inv[2])/wt,v=(inv[3]*dx+inv[4]*dy+inv[5])/wt;if(u<0||v<0||u>=1||v>=1)return -1;
+  const score=(x,y,c)=>{const s=xfSourceUV(inv,x,y);if(!s)return -1;const u=s.u,v=s.v;
     const cx=Math.floor(u*bw),cy=Math.floor(v*bh);let n=0;const r=Math.max(1,S>>1);
     for(let yy=cy-r;yy<=cy+r;yy++)for(let xx=cx-r;xx<=cx+r;xx++){if(xx<0||yy<0||xx>=bw||yy>=bh)continue;if((big[yy*bw+xx]>>>0)===c)n++;}return n;};
   let added=0;
@@ -2453,9 +2489,17 @@ function xfLocal(p){return {x:panX+p.x*zoom,y:panY+p.y*zoom};}
 function xfHandlePts(){const c=xf.corners.map(xfLocal);
   const mid=(p,q)=>({x:(p.x+q.x)/2,y:(p.y+q.y)/2});
   return {c,edges:[mid(c[0],c[1]),mid(c[1],c[2]),mid(c[2],c[3]),mid(c[3],c[0])]};}
+function drawWarpOverlay(g){const pts=xf.warp;const P=pts.map(xfLocal);
+  g.lineWidth=1.2;g.strokeStyle='#5ab0ff';g.setLineDash([]);
+  const curve=(fn)=>{g.beginPath();for(let k=0;k<=24;k++){const t=k/24;const p=xfLocal(fn(t));if(k)g.lineTo(p.x,p.y);else g.moveTo(p.x,p.y);}g.stroke();};
+  for(const a of [0,1/3,2/3,1]){curve(t=>warpPoint(t,a,pts));curve(t=>warpPoint(a,t,pts));}   // 4 rows + 4 columns of the mesh
+  g.strokeStyle='#5ab0ff88';for(const[a,b]of[[0,1],[0,4],[3,2],[3,7],[12,8],[12,13],[15,11],[15,14]]){g.beginPath();g.moveTo(P[a].x,P[a].y);g.lineTo(P[b].x,P[b].y);g.stroke();}
+  P.forEach((p,k)=>{const corner=k===0||k===3||k===12||k===15;g.fillStyle=corner?'#ffffff':'#5ab0ff';g.strokeStyle='#fff';g.lineWidth=2;
+    g.beginPath();if(corner)g.rect(p.x-7,p.y-7,14,14);else g.arc(p.x,p.y,6,0,Math.PI*2);g.fill();g.stroke();});}
 function drawXfOverlay(){const cv=$('#xfOverlay');const r=stage.getBoundingClientRect();
   if(cv.width!==Math.round(r.width)||cv.height!==Math.round(r.height)){cv.width=Math.round(r.width);cv.height=Math.round(r.height);}
   const g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);if(!xf)return;
+  if(xf.warp){drawWarpOverlay(g);return;}
   const{c,edges}=xfHandlePts();
   g.lineWidth=1.5;g.strokeStyle='#5ab0ff';g.setLineDash([5,4]);
   g.beginPath();g.moveTo(c[0].x,c[0].y);for(let i=1;i<4;i++)g.lineTo(c[i].x,c[i].y);g.closePath();g.stroke();
@@ -2466,7 +2510,18 @@ function pointInQuad(px,py,c){let inside=false;for(let i=0,j=3;i<4;j=i++){
   const xi=c[i].x,yi=c[i].y,xj=c[j].x,yj=c[j].y;
   if(((yi>py)!==(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))inside=!inside;}return inside;}
 // Photoshop: handles scale, inside moves, ANYWHERE OUTSIDE the box rotates.
-function xfHitTest(lx,ly){const{c,edges}=xfHandlePts();
+function warpOutline(){const pts=xf.warp,out=[];const n=12;   // the mesh boundary as a polygon (local px)
+  for(let k=0;k<n;k++)out.push(warpPoint(k/n,0,pts));for(let k=0;k<n;k++)out.push(warpPoint(1,k/n,pts));
+  for(let k=0;k<n;k++)out.push(warpPoint(1-k/n,1,pts));for(let k=0;k<n;k++)out.push(warpPoint(0,1-k/n,pts));return out.map(xfLocal);}
+function pointInPoly(px,py,poly){let inside=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+  const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+  if(((yi>py)!==(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))inside=!inside;}return inside;}
+function xfHitTest(lx,ly){
+  if(xf.warp){const P=xf.warp.map(xfLocal);let best=-1,bd=XF_HIT;
+    P.forEach((p,k)=>{const d=Math.hypot(lx-p.x,ly-p.y);if(d<bd){bd=d;best=k;}});
+    if(best>=0)return{mode:'warp',idx:best};
+    return pointInPoly(lx,ly,warpOutline())?{mode:'move'}:{mode:'none'};}   // outside the mesh: nothing (no rotate in warp)
+  const{c,edges}=xfHandlePts();
   for(let i=0;i<4;i++)if(Math.hypot(lx-c[i].x,ly-c[i].y)<XF_HIT)return{mode:'corner',idx:i};
   for(let i=0;i<4;i++)if(Math.hypot(lx-edges[i].x,ly-edges[i].y)<XF_HIT)return{mode:'edge',idx:i};
   if(pointInQuad(lx,ly,c))return{mode:'move'};
@@ -2512,17 +2567,36 @@ function xfScaleEdge(start,e,P){
   xf.corners=xfFromOUV(nO,nU,nV);}
 // --- in-transform history: every drag / flip / quarter-turn is one step for Ctrl+Z / Ctrl+Y ---
 function xfCopy(c){return c.map(p=>({x:p.x,y:p.y}));}
-function xfMark(){xf.hist.push(xfCopy(xf.corners));xf.redo=[];if(xf.hist.length>200)xf.hist.shift();}
+// one history step = box corners + warp mesh (or null) + the source patches (leaving warp bakes a new source)
+function xfSnap(){return {corners:xfCopy(xf.corners),warp:xf.warp?xfCopy(xf.warp):null,srcW:xf.srcW,srcH:xf.srcH,bufs:xf.parts.map(P=>P.srcBuf)};}
+function xfRestore(s){xf.corners=xfCopy(s.corners);xf.warp=s.warp?xfCopy(s.warp):null;xf.srcW=s.srcW;xf.srcH=s.srcH;
+  xf.parts.forEach((P,k)=>{if(P.srcBuf!==s.bufs[k]){P.srcBuf=s.bufs[k];P.big=null;}});$('#xfWarpBtn').classList.toggle('on',!!xf.warp);}
+function xfMark(){xf.hist.push(xfSnap());xf.redo=[];if(xf.hist.length>200)xf.hist.shift();}
 function xfUndo(){if(!xf)return;if(!xf.hist.length){toast('変形前の状態です');return;}
-  xf.redo.push(xfCopy(xf.corners));xf.corners=xf.hist.pop();applyTransformRender(true);drawXfOverlay();toast('変形を1段階戻す');}
+  xf.redo.push(xfSnap());xfRestore(xf.hist.pop());applyTransformRender(true);drawXfOverlay();toast('変形を1段階戻す');}
 function xfRedo(){if(!xf)return;if(!xf.redo.length)return;
-  xf.hist.push(xfCopy(xf.corners));xf.corners=xf.redo.pop();applyTransformRender(true);drawXfOverlay();toast('変形をやり直し');}
+  xf.hist.push(xfSnap());xfRestore(xf.redo.pop());applyTransformRender(true);drawXfOverlay();toast('変形をやり直し');}
+// --- warp ⇄ free transform ---
+function enterWarp(){if(!xf||xf.warp)return;xfMark();xf.warp=warpFromCorners(xf.corners);$('#xfWarpBtn').classList.add('on');
+  applyTransformRender(true);drawXfOverlay();toast('ワープ：制御点をドラッグ。もう一度押すと自由変形に戻る');}
+// back to free transform: the warped image becomes the new source patch (what you see is what you keep on)
+function exitWarp(){if(!xf||!xf.warp)return;xfMark();
+  let minx=W,miny=H,maxx=-1,maxy=-1;const tmps=xf.parts.map(P=>{const t=new Uint32Array(W*H);xfStamp(t,P,null,rotSprite,null);
+    for(let i=0;i<t.length;i++)if(t[i]){const x=i%W,y=(i/W)|0;if(x<minx)minx=x;if(x>maxx)maxx=x;if(y<miny)miny=y;if(y>maxy)maxy=y;}return t;});
+  if(maxx<0){xf.warp=null;$('#xfWarpBtn').classList.remove('on');applyTransformRender(true);drawXfOverlay();return;}
+  const w=maxx-minx+1,h=maxy-miny+1;
+  xf.parts.forEach((P,k)=>{const nb=new Uint32Array(w*h);const t=tmps[k];for(let y=0;y<h;y++)for(let x=0;x<w;x++)nb[y*w+x]=t[(miny+y)*W+minx+x];P.srcBuf=nb;P.big=null;});
+  xf.srcW=w;xf.srcH=h;xf.corners=[{x:minx,y:miny},{x:minx+w,y:miny},{x:minx+w,y:miny+h},{x:minx,y:miny+h}];xf.warp=null;xf.uv=null;
+  $('#xfWarpBtn').classList.remove('on');applyTransformRender(true);drawXfOverlay();toast('自由変形（ワープ結果を元にして続行）');}
+function toggleWarp(){if(!xf)return;if(xf.warp)exitWarp();else enterWarp();}
 // --- flip / quarter-turns from the long-press radial ---
 function xfFlip(horiz){if(!xf)return;xfMark();const c=xf.corners;
+  if(xf.warp){const cen=xfCentroid(xf.corners);xf.warp=xf.warp.map(p=>horiz?{x:2*cen.x-p.x,y:p.y}:{x:p.x,y:2*cen.y-p.y});}
   xf.corners=horiz?[c[1],c[0],c[3],c[2]]:[c[3],c[2],c[1],c[0]];
   applyTransformRender(true);drawXfOverlay();toast(horiz?'左右反転':'上下反転');}
 function xfRotateQuarter(q){if(!xf)return;xfMark();const c=xfCentroid(xf.corners),a=q*Math.PI/2,co=Math.cos(a),si=Math.sin(a);
-  xf.corners=xf.corners.map(p=>{const dx=p.x-c.x,dy=p.y-c.y;return{x:c.x+dx*co-dy*si,y:c.y+dx*si+dy*co};});
+  const rot=p=>{const dx=p.x-c.x,dy=p.y-c.y;return{x:c.x+dx*co-dy*si,y:c.y+dx*si+dy*co};};
+  xf.corners=xf.corners.map(rot);if(xf.warp)xf.warp=xf.warp.map(rot);
   applyTransformRender(true);drawXfOverlay();toast(q===2?'180°回転':(q===1?'90°回転（時計）':'90°回転（反時計）'));}
 // empty space of the timeline (no cell / header / tag under the finger): long-press → the same menu while transforming
 function bindTimelineXfLong(){const sc=document.querySelector('.tl-scroll');if(!sc)return;
@@ -2543,18 +2617,26 @@ function openXfRadial(cx,cy){showRadial(cx,cy,[
   {icon:'↺',label:'90°反時計',fn:()=>xfRotateQuarter(-1)},
 ]);}
 function startXfDrag(hit,cx,cy,allowMenu){
-  const start=xf.corners.map(p=>({x:p.x,y:p.y}));const p0=screenToPixF(cx,cy);
+  const start=xf.corners.map(p=>({x:p.x,y:p.y}));const p0=screenToPixF(cx,cy);const snap0=xfSnap();
+  const startW=xf.warp?xfCopy(xf.warp):null;
   const cen=xfCentroid(start);const ang0=Math.atan2(p0.y-cen.y,p0.x-cen.x);
   let moved=false;
   // hold still OUTSIDE the image -> flip / quarter-turn menu (the drag is rolled back). Inside the image a
   // slow, careful nudge must never pop a menu, so no timer there (the timeline's empty space offers it too)
   const lt=allowMenu?setTimeout(()=>{if(moved)return;
-    xf.corners=start.map(q=>({x:q.x,y:q.y}));applyTransformRender();drawXfOverlay();
+    xfRestore(snap0);applyTransformRender();drawXfOverlay();
     up();openXfRadial(cx,cy);},430):null;
   const move=ev=>{
-    if(!moved&&Math.hypot(ev.clientX-cx,ev.clientY-cy)>10){moved=true;clearTimeout(lt);xf.hist.push(xfCopy(start));xf.redo=[];}   // one history step per drag
+    if(hit.mode==='none')return;
+    if(!moved&&Math.hypot(ev.clientX-cx,ev.clientY-cy)>10){moved=true;clearTimeout(lt);xf.hist.push(snap0);xf.redo=[];}   // one history step per drag
     const p=screenToPixF(ev.clientX,ev.clientY);
-    if(hit.mode==='move'){const dx=p.x-p0.x,dy=p.y-p0.y;xf.corners=start.map(q=>({x:q.x+dx,y:q.y+dy}));}
+    if(hit.mode==='warp'){const dx=p.x-p0.x,dy=p.y-p0.y;const k=hit.idx;const nw=xfCopy(startW);
+      const mv=idx=>{nw[idx]={x:startW[idx].x+dx,y:startW[idx].y+dy};};mv(k);
+      const r=(k/4)|0,c=k%4;   // a corner anchor carries its two handles along (Photoshop)
+      if((r===0||r===3)&&(c===0||c===3)){mv(r*4+(c===0?1:2));mv((r===0?1:2)*4+c);}
+      xf.warp=nw;}
+    else if(hit.mode==='move'){const dx=p.x-p0.x,dy=p.y-p0.y;xf.corners=start.map(q=>({x:q.x+dx,y:q.y+dy}));
+      if(startW)xf.warp=startW.map(q=>({x:q.x+dx,y:q.y+dy}));}
     else if(hit.mode==='rotate'){let a=Math.atan2(p.y-cen.y,p.x-cen.x)-ang0;
       if(xfProp())a=Math.round(a/(Math.PI/12))*(Math.PI/12);        // Shift = 15° steps
       const co=Math.cos(a),si=Math.sin(a);
@@ -3562,6 +3644,7 @@ $('#xfShiftBtn').onclick=()=>{xfShift=!xfShift;$('#xfShiftBtn').classList.toggle
 $('#xfRsBtn').onclick=()=>{rotSprite=!rotSprite;try{localStorage.setItem('pxeditor-rotsprite',rotSprite?'1':'0');}catch(_){}
   $('#xfRsBtn').classList.toggle('on',rotSprite);if(xf)applyTransformRender(true);toast(rotSprite?'RotSprite：輪郭を保って変形':'最近傍で変形');};
 $('#xfRsBtn').classList.toggle('on',rotSprite);
+$('#xfWarpBtn').onclick=toggleWarp;
 $('#xfCtrlBtn').onclick=()=>{xfCtrl=!xfCtrl;$('#xfCtrlBtn').classList.toggle('on',xfCtrl);};
 // 色域許容 only affects the color-range (色域指定) tool: re-pick globally as it changes
 $('#rangeTol').oninput=e=>{rangeTol=+e.target.value;$('#rangeTolV').textContent=rangeTol;
@@ -3735,7 +3818,7 @@ $('#selDel').onclick=deleteOrClear;
 // one undo step (firstPush only on press).
 // while transforming, nudging moves the transform box (rotation and all), like Photoshop
 function xfNudge(dx,dy,firstPush){if(!xf)return;if(firstPush)xfMark();
-  xf.corners=xf.corners.map(p=>({x:p.x+dx,y:p.y+dy}));applyTransformRender(true);drawXfOverlay();}
+  xf.corners=xf.corners.map(p=>({x:p.x+dx,y:p.y+dy}));if(xf.warp)xf.warp=xf.warp.map(p=>({x:p.x+dx,y:p.y+dy}));applyTransformRender(true);drawXfOverlay();}
 function nudgeStep(dx,dy,firstPush){
   if(xf){xfNudge(dx,dy,firstPush);return;}
   if(!selection)return;
