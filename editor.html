@@ -602,6 +602,15 @@
     <button class="xfok" id="cropOk" title="確定 (Enter)">✓</button>
     <button class="xfcancel" id="cropCancel" title="取消 (Esc)">✕</button>
   </div>
+  <!-- Selection modify bar (Photoshop 選択範囲 → 変更): amount stepper with live preview -->
+  <div class="xfbar" id="selModBar">
+    <span class="cropsize" id="selModLabel">拡張</span>
+    <button class="xfmod" id="selModMinus" title="1px 減らす">−</button>
+    <span class="cropsize" id="selModVal" style="min-width:52px">1 px</span>
+    <button class="xfmod" id="selModPlus" title="1px 増やす">＋</button>
+    <button class="xfok" id="selModOk" title="確定 (Enter)">✓</button>
+    <button class="xfcancel" id="selModCancel" title="取消 (Esc)">✕</button>
+  </div>
   <button class="seldeselect" id="selDeselect" title="選択解除">⬚</button>
   <!-- Regular-shape toggle: appears while a shape tool is active (Shift shortcut) -->
   <button class="shapereg" id="shapeReg" title="正方形・正円・正多角形で描く（Shift）">⬜<span class="sr-k">⇧</span></button>
@@ -2296,6 +2305,49 @@ function pasteSelectionPixels(){
   render();updateCelThumb(activeLayer,activeFrame);updateSelModVisible();toast('貼り付けました（移動できます）');
 }
 // Long-press the stage OUTSIDE the image → radial with copy / paste
+/* ---- 選択範囲の変更 (Photoshop: expand / contract / border / smooth). Expand and contract are exact
+   Euclidean dilations / erosions via a distance transform (O(W×H), so the live preview stays instant at
+   any radius); the canvas edge counts as "selected" for contraction, as in Photoshop. ---- */
+function edt1d(f,n,d,v,z){let k=0;v[0]=0;z[0]=-1e30;z[1]=1e30;
+  for(let q=1;q<n;q++){let s=((f[q]+q*q)-(f[v[k]]+v[k]*v[k]))/(2*q-2*v[k]);
+    while(s<=z[k]){k--;s=((f[q]+q*q)-(f[v[k]]+v[k]*v[k]))/(2*q-2*v[k]);}
+    k++;v[k]=q;z[k]=s;z[k+1]=1e30;}
+  k=0;for(let q=0;q<n;q++){while(z[k+1]<q)k++;d[q]=(q-v[k])*(q-v[k])+f[v[k]];}}
+function edt2(inside){   // squared distance from every pixel to the nearest pixel where inside(i) is true
+  const INF=1e12,f=new Float64Array(W*H);for(let i=0;i<W*H;i++)f[i]=inside(i)?0:INF;
+  const n=Math.max(W,H),a=new Float64Array(n),d=new Float64Array(n),v=new Int32Array(n),z=new Float64Array(n+1);
+  for(let x=0;x<W;x++){for(let y=0;y<H;y++)a[y]=f[y*W+x];edt1d(a,H,d,v,z);for(let y=0;y<H;y++)f[y*W+x]=d[y];}
+  for(let y=0;y<H;y++){for(let x=0;x<W;x++)a[x]=f[y*W+x];edt1d(a,W,d,v,z);for(let x=0;x<W;x++)f[y*W+x]=d[x];}
+  return f;}
+function selModCompute(base,kind,n){const out=new Uint8Array(W*H);const r2=(n+0.5)*(n+0.5);const M=selMod;
+  if(kind==='expand'){const d=M.dSel||(M.dSel=edt2(i=>base[i]));for(let i=0;i<W*H;i++)out[i]=d[i]<=r2?1:0;}
+  else if(kind==='contract'||kind==='border'){const d=M.dOut||(M.dOut=edt2(i=>!base[i]));
+    for(let i=0;i<W*H;i++){if(!base[i])continue;const inner=d[i]>r2;out[i]=(kind==='contract')===inner?1:0;}}
+  else{   // smooth: majority of the (2n+1)² window, via a summed-area table
+    const S=M.sat||(M.sat=(()=>{const t=new Int32Array((W+1)*(H+1));for(let y=1;y<=H;y++){let row=0;for(let x=1;x<=W;x++){row+=base[(y-1)*W+x-1];t[y*(W+1)+x]=t[(y-1)*(W+1)+x]+row;}}return t;})());
+    const sum=(x0,y0,x1,y1)=>S[y1*(W+1)+x1]-S[y0*(W+1)+x1]-S[y1*(W+1)+x0]+S[y0*(W+1)+x0];
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){const x0=Math.max(0,x-n),y0=Math.max(0,y-n),x1=Math.min(W,x+n+1),y1=Math.min(H,y+n+1);
+      out[y*W+x]=sum(x0,y0,x1,y1)*2>(x1-x0)*(y1-y0)?1:0;}}
+  return out;}
+let selMod=null;   // {kind,base,n,dSel,dOut,sat}
+const SELMOD_NAMES={expand:'拡張',contract:'縮小',border:'境界線（内側）',smooth:'滑らかに'};
+function openSelMod(kind){if(!selection)return;if(selMod)cancelSelMod();
+  selMod={kind,base:selection.mask.slice(),n:1};$('#selModLabel').textContent=SELMOD_NAMES[kind];
+  $('#selModBar').classList.add('show');selModPreview();}
+function selModPreview(){if(!selMod)return;$('#selModVal').textContent=selMod.n+' px';
+  const m=selModCompute(selMod.base,selMod.kind,selMod.n);let any=false;for(let i=0;i<m.length;i++)if(m[i]){any=true;break;}
+  selection={mask:any?m:selMod.base.slice()};computeSelBounds();renderView();}
+function selModStep(d){if(!selMod)return;selMod.n=Math.max(1,Math.min(64,selMod.n+d));selModPreview();}
+function commitSelMod(){if(!selMod)return;const M=selMod;selMod=null;$('#selModBar').classList.remove('show');
+  selection={mask:M.base};computeSelBounds();pushUndo();
+  selMod=M;const m=selModCompute(M.base,M.kind,M.n);selMod=null;   // (reuses the preview's distance caches)
+  let any=false;for(let i=0;i<m.length;i++)if(m[i]){any=true;break;}
+  if(any){selection={mask:m};computeSelBounds();toast(SELMOD_NAMES[M.kind]+' '+M.n+'px');}else{selection=null;toast('選択範囲がなくなったので解除しました');}
+  render();updateSelModVisible();}
+function cancelSelMod(){if(!selMod)return;const M=selMod;selMod=null;$('#selModBar').classList.remove('show');
+  selection={mask:M.base};computeSelBounds();renderView();}
+$('#selModMinus').onclick=()=>selModStep(-1);$('#selModPlus').onclick=()=>selModStep(1);
+$('#selModOk').onclick=commitSelMod;$('#selModCancel').onclick=cancelSelMod;
 function maybeStartOutsideMenu(e,x,y){
   if(pointers.size!==1||inBounds(x,y)||!(selection||pixClip))return;
   const sx=e.clientX,sy=e.clientY;
@@ -2305,6 +2357,13 @@ function maybeStartOutsideMenu(e,x,y){
     const items=[];
     if(selection)items.push({icon:'📋',label:'コピー',fn:copySelectionPixels});
     if(pixClip)items.push({icon:'📥',label:'貼付',fn:pasteSelectionPixels});
+    if(selection)items.push(   // Photoshop 選択範囲 → 変更
+      {icon:'⤢',label:'拡張',fn:()=>openSelMod('expand')},
+      {icon:'⤡',label:'縮小',fn:()=>openSelMod('contract')},
+      {icon:'▣',label:'境界線',fn:()=>openSelMod('border')},
+      {icon:'◠',label:'滑らか',fn:()=>openSelMod('smooth')},
+      {icon:'◩',label:'反転',fn:invertSelection},
+      {icon:'⬚',label:'解除',fn:()=>{deselect();updateSelModVisible();toast('選択解除');}});
     if(items.length)showRadial(sx,sy,items);
     cleanup();
   },430);
@@ -3791,6 +3850,7 @@ function updateSelBtns(){updatePenBtns();
   $('#selPlus').classList.toggle('on',add);$('#selMinus').classList.toggle('on',sub);
 }
 function updateSelModVisible(){
+  if(selMod){if(!selection){selMod=null;$('#selModBar').classList.remove('show');}else if(xf)cancelSelMod();}   // the modify bar never outlives its selection
   const t=!!xf;   // transforming: the transform toolbar replaces the selection controls
   const pen=tool==='pencil'||tool==='eraser';
   $('#penMod').classList.toggle('show',!t&&pen);   // pen line toggles sit where +/- live
@@ -4057,6 +4117,10 @@ document.addEventListener('keydown',e=>{
     if(k==='escape'){e.preventDefault();cancelTransform();return;}}
   if(crop){if(k==='enter'){e.preventDefault();commitCrop();return;}
     if(k==='escape'){e.preventDefault();cancelCrop();return;}}
+  if(selMod){if(k==='enter'){e.preventDefault();commitSelMod();return;}
+    if(k==='escape'){e.preventDefault();cancelSelMod();return;}
+    if(k==='arrowup'||k==='arrowright'){e.preventDefault();selModStep(1);return;}
+    if(k==='arrowdown'||k==='arrowleft'){e.preventDefault();selModStep(-1);return;}}
   if((e.ctrlKey||e.metaKey)&&k==='c'&&selection){e.preventDefault();copySelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='v'&&pixClip){e.preventDefault();pasteSelectionPixels();return;}
   if((e.ctrlKey||e.metaKey)&&k==='s'){e.preventDefault();saveProjectOverwrite();return;}
